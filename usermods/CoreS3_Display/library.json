@@ -1,0 +1,11 @@
+{
+  "name": "CoreS3_Display",
+  "version": "0.1.0",
+  "description": "M5Stack CoreS3 display usermod for WLED",
+  "build": {
+    "libArchive": false
+  },
+  "dependencies": {
+    "m5stack/M5GFX": "0.2.26"
+  }
+}
