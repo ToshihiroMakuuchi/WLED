@@ -17,8 +17,15 @@ private:
   bool lastWiFiConnected = false;
   String lastIPAddress = "";
 
+  bool readyScreenShown = false;
+  bool connectingScreenShown = false;
+
+  int8_t lastLedState = -1;
+  int lastBrightnessValue = -1;
+  int lastEffectMode = -1;
+
   // ---------------------------------------------------------
-  // Draw boot screen
+  // Boot screen
   // ---------------------------------------------------------
 
   void drawBootScreen()
@@ -46,7 +53,7 @@ private:
   }
 
   // ---------------------------------------------------------
-  // Draw Wi-Fi connecting screen
+  // Wi-Fi connecting screen
   // ---------------------------------------------------------
 
   void drawConnectingScreen()
@@ -77,10 +84,13 @@ private:
       screenWidth / 2,
       160
     );
+
+    connectingScreenShown = true;
+    readyScreenShown = false;
   }
 
   // ---------------------------------------------------------
-  // Draw ready screen
+  // Ready screen base
   // ---------------------------------------------------------
 
   void drawReadyScreen(const String& ipAddress)
@@ -90,50 +100,190 @@ private:
     display.setTextDatum(textdatum_t::middle_center);
     display.setTextColor(TFT_WHITE, TFT_BLACK);
 
-    // -------------------------------------------------------
     // Title
-    // -------------------------------------------------------
-
-    display.setTextSize(3);
+    display.setTextSize(2);
 
     display.drawString(
       "WLED CoreS3",
       screenWidth / 2,
-      45
+      22
     );
 
-    // -------------------------------------------------------
-    // Ready
-    // -------------------------------------------------------
-
-    display.setTextSize(2);
-
-    display.drawString(
-      "WLED Ready",
-      screenWidth / 2,
-      100
-    );
-
-    // -------------------------------------------------------
-    // Wi-Fi
-    // -------------------------------------------------------
-
-    display.drawString(
-      "Wi-Fi Connected",
-      screenWidth / 2,
-      140
-    );
-
-    // -------------------------------------------------------
     // IP address
-    // -------------------------------------------------------
-
-    display.setTextSize(2);
+    display.setTextSize(1);
 
     display.drawString(
       ipAddress,
       screenWidth / 2,
-      180
+      46
+    );
+
+    // Divider
+    display.drawFastHLine(
+      20,
+      62,
+      screenWidth - 40,
+      TFT_DARKGREY
+    );
+
+    readyScreenShown = true;
+    connectingScreenShown = false;
+
+    // Force all status fields to redraw
+    lastLedState = -1;
+    lastBrightnessValue = -1;
+    lastEffectMode = -1;
+  }
+
+  // ---------------------------------------------------------
+  // LED Power
+  // ---------------------------------------------------------
+
+  void drawLedPower(bool ledOn)
+  {
+    display.fillRect(
+      0,
+      70,
+      screenWidth,
+      40,
+      TFT_BLACK
+    );
+
+    display.setTextSize(2);
+
+    display.setTextDatum(textdatum_t::middle_left);
+    display.setTextColor(TFT_WHITE, TFT_BLACK);
+
+    display.drawString(
+      "LED Power:",
+      20,
+      90
+    );
+
+    display.setTextDatum(textdatum_t::middle_right);
+
+    if (ledOn)
+    {
+      display.setTextColor(TFT_GREEN, TFT_BLACK);
+
+      display.drawString(
+        "ON",
+        screenWidth - 20,
+        90
+      );
+    }
+    else
+    {
+      display.setTextColor(TFT_RED, TFT_BLACK);
+
+      display.drawString(
+        "OFF",
+        screenWidth - 20,
+        90
+      );
+    }
+  }
+
+  // ---------------------------------------------------------
+  // Brightness
+  //
+  // WLED native brightness value:
+  //   0   = OFF / minimum
+  //   255 = maximum
+  // ---------------------------------------------------------
+
+  void drawBrightness(int brightnessValue)
+  {
+    display.fillRect(
+      0,
+      110,
+      screenWidth,
+      40,
+      TFT_BLACK
+    );
+
+    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.setTextSize(2);
+
+    display.setTextDatum(textdatum_t::middle_left);
+
+    display.drawString(
+      "Brightness:",
+      20,
+      130
+    );
+
+    char text[16];
+
+    snprintf(
+      text,
+      sizeof(text),
+      "%d",
+      brightnessValue
+    );
+
+    display.setTextDatum(textdatum_t::middle_right);
+
+    display.drawString(
+      text,
+      screenWidth - 20,
+      130
+    );
+  }
+
+  // ---------------------------------------------------------
+  // Effect
+  // ---------------------------------------------------------
+
+  void drawEffect(uint8_t effectMode)
+  {
+    display.fillRect(
+      0,
+      150,
+      screenWidth,
+      85,
+      TFT_BLACK
+    );
+
+    display.setTextColor(TFT_WHITE, TFT_BLACK);
+
+    display.setTextSize(1);
+    display.setTextDatum(textdatum_t::middle_center);
+
+    display.drawString(
+      "Effect",
+      screenWidth / 2,
+      168
+    );
+
+    char effectName[64];
+
+    effectName[0] = '\0';
+
+    extractModeName(
+      effectMode,
+      nullptr,
+      effectName,
+      sizeof(effectName) - 1
+    );
+
+    // Protect the display from extremely long effect names
+    if (strlen(effectName) > 24)
+    {
+      effectName[24] = '\0';
+    }
+
+    if (strlen(effectName) == 0)
+    {
+      strcpy(effectName, "Unknown");
+    }
+
+    display.setTextSize(2);
+
+    display.drawString(
+      effectName,
+      screenWidth / 2,
+      205
     );
   }
 
@@ -146,11 +296,7 @@ public:
   void setup() override
   {
     Serial.println();
-    Serial.println(F("[CoreS3_Display] Phase 2 start"));
-
-    // -------------------------------------------------------
-    // Initialize CoreS3 display
-    // -------------------------------------------------------
+    Serial.println(F("[CoreS3_Display] Phase 3 start"));
 
     display.begin();
 
@@ -174,15 +320,7 @@ public:
       return;
     }
 
-    // -------------------------------------------------------
-    // Backlight
-    // -------------------------------------------------------
-
     display.setBrightness(128);
-
-    // -------------------------------------------------------
-    // Initial screen
-    // -------------------------------------------------------
 
     drawBootScreen();
 
@@ -193,14 +331,14 @@ public:
     );
 
     Serial.println(
-      F("[CoreS3_Display] Phase 2 setup complete")
+      F("[CoreS3_Display] Phase 3 setup complete")
     );
 
     Serial.println();
   }
 
   // ---------------------------------------------------------
-  // Loop
+  // Main loop
   // ---------------------------------------------------------
 
   void loop() override
@@ -210,8 +348,8 @@ public:
       return;
     }
 
-    // Update twice per second
-    if (millis() - lastUpdate < 500)
+    // Check status 4 times per second
+    if (millis() - lastUpdate < 250)
     {
       return;
     }
@@ -222,52 +360,102 @@ public:
       (WiFi.status() == WL_CONNECTED);
 
     // -------------------------------------------------------
+    // Wi-Fi not connected
+    // -------------------------------------------------------
+
+    if (!wifiConnected)
+    {
+      if (!connectingScreenShown)
+      {
+        drawConnectingScreen();
+      }
+
+      lastWiFiConnected = false;
+      lastIPAddress = "";
+
+      return;
+    }
+
+    // -------------------------------------------------------
     // Wi-Fi connected
     // -------------------------------------------------------
 
-    if (wifiConnected)
+    String currentIPAddress =
+      WiFi.localIP().toString();
+
+    if (
+      !lastWiFiConnected ||
+      !readyScreenShown ||
+      currentIPAddress != lastIPAddress
+    )
     {
-      String currentIPAddress =
-        WiFi.localIP().toString();
+      drawReadyScreen(currentIPAddress);
 
-      // Redraw only if state/IP changed
-      if (
-        !lastWiFiConnected ||
-        currentIPAddress != lastIPAddress
-      )
-      {
-        drawReadyScreen(currentIPAddress);
+      Serial.printf(
+        "[CoreS3_Display] Wi-Fi connected: %s\n",
+        currentIPAddress.c_str()
+      );
 
-        Serial.printf(
-          "[CoreS3_Display] Wi-Fi connected: %s\n",
-          currentIPAddress.c_str()
-        );
+      lastIPAddress = currentIPAddress;
+    }
 
-        lastIPAddress = currentIPAddress;
-      }
+    lastWiFiConnected = true;
+
+    // -------------------------------------------------------
+    // WLED Power state
+    //
+    // bri == 0 : OFF
+    // bri > 0  : ON
+    // -------------------------------------------------------
+
+    bool ledOn = (bri > 0);
+
+    if ((int8_t)ledOn != lastLedState)
+    {
+      drawLedPower(ledOn);
+
+      lastLedState = ledOn ? 1 : 0;
     }
 
     // -------------------------------------------------------
-    // Wi-Fi disconnected / connecting
+    // Brightness
+    //
+    // Display the native WLED value directly:
+    //   0 - 255
     // -------------------------------------------------------
 
-    else
-    {
-      if (lastWiFiConnected)
-      {
-        drawConnectingScreen();
+    int brightnessValue = bri;
 
-        Serial.println(
-          F("[CoreS3_Display] Wi-Fi disconnected")
-        );
-      }
+    if (brightnessValue != lastBrightnessValue)
+    {
+      drawBrightness(brightnessValue);
+
+      lastBrightnessValue =
+        brightnessValue;
     }
 
-    lastWiFiConnected = wifiConnected;
+    // -------------------------------------------------------
+    // Effect from the WLED main segment
+    // -------------------------------------------------------
+
+    uint8_t effectMode = 0;
+
+    if (strip.getSegmentsNum() > 0)
+    {
+      effectMode =
+        strip.getMainSegment().mode;
+    }
+
+    if ((int)effectMode != lastEffectMode)
+    {
+      drawEffect(effectMode);
+
+      lastEffectMode = effectMode;
+    }
   }
 
   // ---------------------------------------------------------
-  // WLED Info
+  // WLED Info page
   // ---------------------------------------------------------
 
   void addToJsonInfo(JsonObject& root) override
@@ -314,6 +502,18 @@ public:
     {
       wifiInfo.add("Not connected");
     }
+
+    JsonArray ledInfo =
+      user.createNestedArray("CoreS3 Display LED");
+
+    ledInfo.add(
+      bri > 0 ? "ON" : "OFF"
+    );
+
+    JsonArray brightnessInfo =
+      user.createNestedArray("CoreS3 Display Brightness");
+
+    brightnessInfo.add(bri);
   }
 };
 
