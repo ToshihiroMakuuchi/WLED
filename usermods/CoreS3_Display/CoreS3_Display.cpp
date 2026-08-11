@@ -18,6 +18,8 @@ private:
   unsigned long lastTouchAction = 0;
   unsigned long touchReleaseCandidate = 0;
 
+  unsigned long lastBrightnessAction = 0;
+
   bool lastWiFiConnected = false;
   String lastIPAddress = "";
 
@@ -28,64 +30,65 @@ private:
   int lastBrightnessValue = -1;
   int lastEffectMode = -1;
 
-  // ---------------------------------------------------------
+  // =========================================================
   // Touch state
-  // ---------------------------------------------------------
+  // =========================================================
+
+  enum TouchTarget
+  {
+    TOUCH_TARGET_NONE = 0,
+    TOUCH_TARGET_POWER,
+    TOUCH_TARGET_BRIGHTNESS
+  };
+
+  TouchTarget touchTarget =
+    TOUCH_TARGET_NONE;
 
   bool touchActive = false;
 
-  // Becomes true if the finger enters the Power button
-  // during the current touch gesture.
-  bool powerGestureArmed = false;
-
-  // Last valid touch sample was inside the Power hit area.
   bool lastTouchInsidePower = false;
-
-  // Current visual pressed state of the button.
   bool powerButtonVisualPressed = false;
 
   int16_t lastTouchX = -1;
   int16_t lastTouchY = -1;
 
-  // ---------------------------------------------------------
-  // Visible Power button
-  // ---------------------------------------------------------
+  int pendingBrightnessValue = -1;
+
+  // =========================================================
+  // Power button
+  // =========================================================
 
   static constexpr int16_t POWER_BUTTON_X = 30;
   static constexpr int16_t POWER_BUTTON_Y = 184;
   static constexpr int16_t POWER_BUTTON_W = 260;
   static constexpr int16_t POWER_BUTTON_H = 44;
 
-  // ---------------------------------------------------------
-  // Invisible enlarged touch area
+  // =========================================================
+  // Brightness slider
   //
-  // The visible button is:
-  //   X = 30 .. 289
-  //   Y = 184 .. 227
-  //
-  // Touch detection is intentionally larger:
-  //   X = 10 .. 309
-  //   Y = 168 .. 239
-  // ---------------------------------------------------------
+  // Visible area and touch area are identical.
+  // =========================================================
 
-  static constexpr int16_t POWER_TOUCH_X1 = 10;
-  static constexpr int16_t POWER_TOUCH_Y1 = 168;
-  static constexpr int16_t POWER_TOUCH_X2 = 309;
-  static constexpr int16_t POWER_TOUCH_Y2 = 239;
+  static constexpr int16_t BRIGHTNESS_SLIDER_X = 30;
+  static constexpr int16_t BRIGHTNESS_SLIDER_Y = 108;
+  static constexpr int16_t BRIGHTNESS_SLIDER_W = 260;
+  static constexpr int16_t BRIGHTNESS_SLIDER_H = 28;
 
-  // ---------------------------------------------------------
+  // =========================================================
   // Touch timing
-  // ---------------------------------------------------------
+  // =========================================================
 
-  // About 66 touch checks per second
+  // Approximately 66 checks per second.
   static constexpr unsigned long TOUCH_POLL_MS = 15;
 
-  // A short temporary loss of touch should not immediately
-  // be interpreted as finger release.
+  // Confirm that the finger has actually left the panel.
   static constexpr unsigned long TOUCH_RELEASE_CONFIRM_MS = 70;
 
-  // Prevent an accidental immediate second activation.
+  // Power button double-action prevention.
   static constexpr unsigned long TOUCH_ACTION_COOLDOWN_MS = 250;
+
+  // Limit WLED brightness updates while dragging.
+  static constexpr unsigned long BRIGHTNESS_UPDATE_MS = 50;
 
   // =========================================================
   // Boot screen
@@ -95,8 +98,14 @@ private:
   {
     display.fillScreen(TFT_BLACK);
 
-    display.setTextDatum(textdatum_t::middle_center);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize(3);
 
@@ -116,15 +125,21 @@ private:
   }
 
   // =========================================================
-  // Wi-Fi connecting screen
+  // Wi-Fi connecting
   // =========================================================
 
   void drawConnectingScreen()
   {
     display.fillScreen(TFT_BLACK);
 
-    display.setTextDatum(textdatum_t::middle_center);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize(3);
 
@@ -155,20 +170,25 @@ private:
   }
 
   // =========================================================
-  // Ready screen base
+  // Ready screen
   // =========================================================
 
-  void drawReadyScreen(const String& ipAddress)
+  void drawReadyScreen(
+    const String& ipAddress
+  )
   {
     display.fillScreen(TFT_BLACK);
 
-    display.setTextDatum(textdatum_t::middle_center);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    // -------------------------------------------------------
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
     // Title
-    // -------------------------------------------------------
-
     display.setTextSize(2);
 
     display.drawString(
@@ -177,10 +197,7 @@ private:
       18
     );
 
-    // -------------------------------------------------------
     // IP address
-    // -------------------------------------------------------
-
     display.setTextSize(1);
 
     display.drawString(
@@ -189,10 +206,7 @@ private:
       40
     );
 
-    // -------------------------------------------------------
     // Divider
-    // -------------------------------------------------------
-
     display.drawFastHLine(
       20,
       54,
@@ -203,7 +217,6 @@ private:
     readyScreenShown = true;
     connectingScreenShown = false;
 
-    // Force status fields to redraw
     lastLedState = -1;
     lastBrightnessValue = -1;
     lastEffectMode = -1;
@@ -212,31 +225,41 @@ private:
   }
 
   // =========================================================
-  // LED Power status
+  // LED Power
   // =========================================================
 
-  void drawLedPower(bool ledOn)
+  void drawLedPower(
+    bool ledOn
+  )
   {
     display.fillRect(
       0,
       58,
       screenWidth,
-      36,
+      30,
       TFT_BLACK
     );
 
     display.setTextSize(2);
 
-    display.setTextDatum(textdatum_t::middle_left);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.setTextDatum(
+      textdatum_t::middle_left
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.drawString(
       "LED Power:",
       20,
-      76
+      73
     );
 
-    display.setTextDatum(textdatum_t::middle_right);
+    display.setTextDatum(
+      textdatum_t::middle_right
+    );
 
     if (ledOn)
     {
@@ -248,7 +271,7 @@ private:
       display.drawString(
         "ON",
         screenWidth - 20,
-        76
+        73
       );
     }
     else
@@ -261,26 +284,40 @@ private:
       display.drawString(
         "OFF",
         screenWidth - 20,
-        76
+        73
       );
     }
   }
 
   // =========================================================
-  // Brightness
-  //
-  // Native WLED value:
-  //   0 - 255
+  // Brightness value + slider
   // =========================================================
 
-  void drawBrightness(int brightnessValue)
+  void drawBrightness(
+    int brightnessValue,
+    bool sliderActive = false
+  )
   {
+    // -------------------------------------------------------
+    // Clear brightness area
+    // -------------------------------------------------------
+
     display.fillRect(
       0,
-      94,
+      88,
       screenWidth,
-      36,
+      50,
       TFT_BLACK
+    );
+
+    // -------------------------------------------------------
+    // Label
+    // -------------------------------------------------------
+
+    display.setTextSize(1);
+
+    display.setTextDatum(
+      textdatum_t::middle_left
     );
 
     display.setTextColor(
@@ -288,30 +325,121 @@ private:
       TFT_BLACK
     );
 
-    display.setTextSize(2);
-    display.setTextDatum(textdatum_t::middle_left);
-
     display.drawString(
       "Brightness:",
-      20,
-      112
+      30,
+      98
     );
 
-    char text[16];
+    // -------------------------------------------------------
+    // Numeric value
+    // -------------------------------------------------------
+
+    char valueText[8];
 
     snprintf(
-      text,
-      sizeof(text),
+      valueText,
+      sizeof(valueText),
       "%d",
       brightnessValue
     );
 
-    display.setTextDatum(textdatum_t::middle_right);
+    display.setTextDatum(
+      textdatum_t::middle_right
+    );
 
     display.drawString(
-      text,
-      screenWidth - 20,
-      112
+      valueText,
+      screenWidth - 30,
+      98
+    );
+
+    // -------------------------------------------------------
+    // Slider frame
+    // -------------------------------------------------------
+
+    uint16_t sliderColor =
+      sliderActive ?
+      TFT_CYAN :
+      TFT_WHITE;
+
+    display.drawRect(
+      BRIGHTNESS_SLIDER_X,
+      BRIGHTNESS_SLIDER_Y,
+      BRIGHTNESS_SLIDER_W,
+      BRIGHTNESS_SLIDER_H,
+      sliderColor
+    );
+
+    display.drawRect(
+      BRIGHTNESS_SLIDER_X + 1,
+      BRIGHTNESS_SLIDER_Y + 1,
+      BRIGHTNESS_SLIDER_W - 2,
+      BRIGHTNESS_SLIDER_H - 2,
+      sliderColor
+    );
+
+    // -------------------------------------------------------
+    // Slider interior
+    // -------------------------------------------------------
+
+    const int16_t innerX =
+      BRIGHTNESS_SLIDER_X + 4;
+
+    const int16_t innerY =
+      BRIGHTNESS_SLIDER_Y + 7;
+
+    const int16_t innerW =
+      BRIGHTNESS_SLIDER_W - 8;
+
+    const int16_t innerH =
+      BRIGHTNESS_SLIDER_H - 14;
+
+    display.fillRect(
+      innerX,
+      innerY,
+      innerW,
+      innerH,
+      TFT_DARKGREY
+    );
+
+    // -------------------------------------------------------
+    // Filled portion
+    // -------------------------------------------------------
+
+    int16_t filledWidth =
+      (
+        (int32_t)innerW *
+        brightnessValue
+      ) / 255;
+
+    if (filledWidth > 0)
+    {
+      display.fillRect(
+        innerX,
+        innerY,
+        filledWidth,
+        innerH,
+        sliderColor
+      );
+    }
+
+    // -------------------------------------------------------
+    // Position marker
+    // -------------------------------------------------------
+
+    int16_t markerX =
+      innerX +
+      (
+        (int32_t)(innerW - 1) *
+        brightnessValue
+      ) / 255;
+
+    display.drawFastVLine(
+      markerX,
+      BRIGHTNESS_SLIDER_Y + 4,
+      BRIGHTNESS_SLIDER_H - 8,
+      sliderColor
     );
   }
 
@@ -319,13 +447,15 @@ private:
   // Effect
   // =========================================================
 
-  void drawEffect(uint8_t effectMode)
+  void drawEffect(
+    uint8_t effectMode
+  )
   {
     display.fillRect(
       0,
-      132,
+      138,
       screenWidth,
-      48,
+      42,
       TFT_BLACK
     );
 
@@ -334,13 +464,16 @@ private:
       TFT_BLACK
     );
 
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
     display.setTextSize(1);
-    display.setTextDatum(textdatum_t::middle_center);
 
     display.drawString(
       "Effect",
       screenWidth / 2,
-      140
+      146
     );
 
     char effectName[64];
@@ -354,13 +487,19 @@ private:
       sizeof(effectName) - 1
     );
 
-    // Avoid overflowing the screen
-    if (strlen(effectName) > 24)
+    if (
+      strlen(effectName) >
+      24
+    )
     {
-      effectName[24] = '\0';
+      effectName[24] =
+        '\0';
     }
 
-    if (strlen(effectName) == 0)
+    if (
+      strlen(effectName) ==
+      0
+    )
     {
       strcpy(
         effectName,
@@ -373,21 +512,12 @@ private:
     display.drawString(
       effectName,
       screenWidth / 2,
-      161
+      165
     );
   }
 
   // =========================================================
   // Power button
-  //
-  // pressed == false:
-  //   black background / colored border
-  //
-  // pressed == true:
-  //   colored background / black text
-  //
-  // This gives immediate visual feedback that the touch
-  // controller has recognized the finger.
   // =========================================================
 
   void drawPowerButton(
@@ -396,9 +526,10 @@ private:
   )
   {
     uint16_t actionColor =
-      ledOn ? TFT_RED : TFT_GREEN;
+      ledOn ?
+      TFT_RED :
+      TFT_GREEN;
 
-    // Clear button area first
     display.fillRect(
       POWER_BUTTON_X - 2,
       POWER_BUTTON_Y - 2,
@@ -470,9 +601,13 @@ private:
     display.setTextSize(2);
 
     display.drawString(
-      ledOn ? "TURN OFF" : "TURN ON",
-      POWER_BUTTON_X + (POWER_BUTTON_W / 2),
-      POWER_BUTTON_Y + (POWER_BUTTON_H / 2)
+      ledOn ?
+        "TURN OFF" :
+        "TURN ON",
+      POWER_BUTTON_X +
+        (POWER_BUTTON_W / 2),
+      POWER_BUTTON_Y +
+        (POWER_BUTTON_H / 2)
     );
 
     powerButtonVisualPressed =
@@ -480,7 +615,7 @@ private:
   }
 
   // =========================================================
-  // Enlarged Power touch area
+  // Hit testing
   // =========================================================
 
   bool isPowerButtonTouched(
@@ -489,79 +624,271 @@ private:
   )
   {
     return (
-      x >= POWER_TOUCH_X1 &&
-      x <= POWER_TOUCH_X2 &&
-      y >= POWER_TOUCH_Y1 &&
-      y <= POWER_TOUCH_Y2
+      x >= POWER_BUTTON_X &&
+      x <
+        POWER_BUTTON_X +
+        POWER_BUTTON_W &&
+      y >= POWER_BUTTON_Y &&
+      y <
+        POWER_BUTTON_Y +
+        POWER_BUTTON_H
+    );
+  }
+
+  bool isBrightnessSliderTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return (
+      x >= BRIGHTNESS_SLIDER_X &&
+      x <
+        BRIGHTNESS_SLIDER_X +
+        BRIGHTNESS_SLIDER_W &&
+      y >= BRIGHTNESS_SLIDER_Y &&
+      y <
+        BRIGHTNESS_SLIDER_Y +
+        BRIGHTNESS_SLIDER_H
     );
   }
 
   // =========================================================
-  // Reset touch gesture state
+  // Convert slider X coordinate to WLED 0 - 255
+  // =========================================================
+
+  int brightnessFromTouchX(
+    int16_t x
+  )
+  {
+    if (
+      x <=
+      BRIGHTNESS_SLIDER_X
+    )
+    {
+      return 0;
+    }
+
+    int16_t rightX =
+      BRIGHTNESS_SLIDER_X +
+      BRIGHTNESS_SLIDER_W -
+      1;
+
+    if (
+      x >=
+      rightX
+    )
+    {
+      return 255;
+    }
+
+    int32_t relativeX =
+      x -
+      BRIGHTNESS_SLIDER_X;
+
+    int32_t span =
+      BRIGHTNESS_SLIDER_W -
+      1;
+
+    return (
+      relativeX *
+      255 +
+      (span / 2)
+    ) / span;
+  }
+
+  // =========================================================
+  // Reset touch gesture
   // =========================================================
 
   void resetTouchGesture()
   {
-    touchActive = false;
+    touchActive =
+      false;
 
-    powerGestureArmed = false;
-    lastTouchInsidePower = false;
+    touchTarget =
+      TOUCH_TARGET_NONE;
 
-    powerButtonVisualPressed = false;
+    lastTouchInsidePower =
+      false;
 
-    touchReleaseCandidate = 0;
+    powerButtonVisualPressed =
+      false;
 
-    lastTouchX = -1;
-    lastTouchY = -1;
+    touchReleaseCandidate =
+      0;
+
+    lastTouchX =
+      -1;
+
+    lastTouchY =
+      -1;
+
+    pendingBrightnessValue =
+      -1;
   }
 
   // =========================================================
-  // Execute WLED Power toggle
+  // WLED Power toggle
   // =========================================================
 
   void toggleLedPowerFromTouch()
   {
     Serial.println(
-      F("[CoreS3_Display] Touch POWER action")
+      F(
+        "[CoreS3_Display] "
+        "Touch POWER action"
+      )
     );
 
-    // Same WLED power state mechanism used by
-    // the normal WLED button handling.
     toggleOnOff();
 
     stateUpdated(
       CALL_MODE_BUTTON
     );
 
-    // Force LCD values to refresh
-    lastLedState = -1;
-    lastBrightnessValue = -1;
+    lastLedState =
+      -1;
+
+    lastBrightnessValue =
+      -1;
 
     Serial.printf(
-      "[CoreS3_Display] WLED Power -> %s, Brightness=%u\n",
-      bri > 0 ? "ON" : "OFF",
+      "[CoreS3_Display] "
+      "WLED Power -> %s, "
+      "Brightness=%u\n",
+      bri > 0 ?
+        "ON" :
+        "OFF",
       bri
     );
   }
 
   // =========================================================
+  // Apply Brightness to WLED
+  //
+  // This follows WLED's normal brightness behavior:
+  //
+  // - 0 remembers the last non-zero brightness.
+  // - Going from 0 to a non-zero value restarts effect runtime.
+  // - stateUpdated() informs WLED interfaces.
+  // =========================================================
+
+  void applyBrightnessFromTouch(
+    int brightnessValue
+  )
+  {
+    brightnessValue =
+      constrain(
+        brightnessValue,
+        0,
+        255
+      );
+
+    if (
+      brightnessValue ==
+      bri
+    )
+    {
+      return;
+    }
+
+    // -------------------------------------------------------
+    // Move to OFF
+    // -------------------------------------------------------
+
+    if (
+      brightnessValue ==
+      0
+    )
+    {
+      if (bri > 0)
+      {
+        briLast =
+          bri;
+
+        bri =
+          0;
+      }
+    }
+
+    // -------------------------------------------------------
+    // Move to ON / change brightness
+    // -------------------------------------------------------
+
+    else
+    {
+      if (bri == 0)
+      {
+        strip.restartRuntime();
+      }
+
+      bri =
+        brightnessValue;
+    }
+
+    stateUpdated(
+      CALL_MODE_BUTTON
+    );
+
+    lastBrightnessValue =
+      bri;
+
+    lastLedState =
+      (bri > 0) ?
+      1 :
+      0;
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Brightness -> %u\n",
+      bri
+    );
+  }
+
+  // =========================================================
+  // Update brightness slider while finger is moving
+  // =========================================================
+
+  void updateBrightnessGesture(
+    int16_t touchX,
+    bool forceApply
+  )
+  {
+    int value =
+      brightnessFromTouchX(
+        touchX
+      );
+
+    pendingBrightnessValue =
+      value;
+
+    // Immediate local screen response.
+    drawBrightness(
+      value,
+      true
+    );
+
+    unsigned long now =
+      millis();
+
+    if (
+      forceApply ||
+      now -
+        lastBrightnessAction >=
+        BRIGHTNESS_UPDATE_MS
+    )
+    {
+      lastBrightnessAction =
+        now;
+
+      applyBrightnessFromTouch(
+        value
+      );
+    }
+  }
+
+  // =========================================================
   // Touch processing
-  //
-  // Improvements over Phase 4:
-  //
-  // 1. getTouch() directly returns display coordinates.
-  //
-  // 2. Finger position is tracked continuously.
-  //
-  // 3. A touch may START slightly outside the button.
-  //    If the finger enters the enlarged hit area,
-  //    the button becomes armed.
-  //
-  // 4. Temporary touch loss is ignored for 70 ms.
-  //
-  // 5. Action happens after confirmed release.
-  //
-  // 6. Pressed visual feedback is shown immediately.
   // =========================================================
 
   void handleTouch()
@@ -580,7 +907,8 @@ private:
       millis();
 
     if (
-      now - lastTouchPoll <
+      now -
+        lastTouchPoll <
       TOUCH_POLL_MS
     )
     {
@@ -590,15 +918,11 @@ private:
     lastTouchPoll =
       now;
 
-    // -------------------------------------------------------
-    // M5GFX getTouch()
-    //
-    // Unlike getTouchRaw(), this gives coordinates already
-    // converted to the current display orientation.
-    // -------------------------------------------------------
+    int16_t touchX =
+      -1;
 
-    int16_t touchX = -1;
-    int16_t touchY = -1;
+    int16_t touchY =
+      -1;
 
     bool touching =
       display.getTouch(
@@ -607,13 +931,13 @@ private:
       ) > 0;
 
     // =======================================================
-    // Finger is touching
+    // Finger touching
     // =======================================================
 
     if (touching)
     {
-      // Cancel an in-progress release decision.
-      touchReleaseCandidate = 0;
+      touchReleaseCandidate =
+        0;
 
       lastTouchX =
         touchX;
@@ -627,66 +951,113 @@ private:
           touchY
         );
 
+      bool insideBrightness =
+        isBrightnessSliderTouched(
+          touchX,
+          touchY
+        );
+
       // -----------------------------------------------------
-      // Start of a new gesture
+      // New gesture
       // -----------------------------------------------------
 
       if (!touchActive)
       {
-        touchActive = true;
+        touchActive =
+          true;
 
-        powerGestureArmed = false;
-        lastTouchInsidePower = false;
+        touchTarget =
+          TOUCH_TARGET_NONE;
 
         Serial.printf(
-          "[CoreS3_Display] Touch start X=%d Y=%d\n",
+          "[CoreS3_Display] "
+          "Touch start X=%d Y=%d\n",
           touchX,
           touchY
         );
       }
 
       // -----------------------------------------------------
-      // Important improvement:
+      // Select a control.
       //
-      // The first touch point does NOT need to be inside the
-      // button.
-      //
-      // If the finger moves into the button area while still
-      // touching, the gesture becomes armed.
+      // Once a control is selected for this gesture,
+      // it remains locked until release.
       // -----------------------------------------------------
-
-      if (insidePower)
-      {
-        powerGestureArmed = true;
-      }
-
-      lastTouchInsidePower =
-        insidePower;
-
-      // -----------------------------------------------------
-      // Visual feedback
-      // -----------------------------------------------------
-
-      bool shouldLookPressed =
-        powerGestureArmed &&
-        insidePower;
 
       if (
-        shouldLookPressed !=
-        powerButtonVisualPressed
+        touchTarget ==
+        TOUCH_TARGET_NONE
       )
       {
-        drawPowerButton(
-          bri > 0,
-          shouldLookPressed
+        if (insidePower)
+        {
+          touchTarget =
+            TOUCH_TARGET_POWER;
+        }
+        else if (
+          insideBrightness
+        )
+        {
+          touchTarget =
+            TOUCH_TARGET_BRIGHTNESS;
+
+          pendingBrightnessValue =
+            bri;
+        }
+      }
+
+      // =====================================================
+      // Power gesture
+      // =====================================================
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_POWER
+      )
+      {
+        lastTouchInsidePower =
+          insidePower;
+
+        if (
+          insidePower !=
+          powerButtonVisualPressed
+        )
+        {
+          drawPowerButton(
+            bri > 0,
+            insidePower
+          );
+        }
+
+        return;
+      }
+
+      // =====================================================
+      // Brightness gesture
+      //
+      // Once the slider has been selected, X continues to
+      // control brightness even if the finger moves slightly
+      // above or below the slider.
+      // =====================================================
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_BRIGHTNESS
+      )
+      {
+        updateBrightnessGesture(
+          touchX,
+          false
         );
+
+        return;
       }
 
       return;
     }
 
     // =======================================================
-    // No touch currently detected
+    // No touch
     // =======================================================
 
     if (!touchActive)
@@ -695,14 +1066,13 @@ private:
     }
 
     // -------------------------------------------------------
-    // First no-touch sample:
-    // Start release confirmation timer.
-    //
-    // This prevents one brief missed sample from being
-    // treated as an actual finger release.
+    // Start release confirmation
     // -------------------------------------------------------
 
-    if (touchReleaseCandidate == 0)
+    if (
+      touchReleaseCandidate ==
+      0
+    )
     {
       touchReleaseCandidate =
         now;
@@ -711,11 +1081,12 @@ private:
     }
 
     // -------------------------------------------------------
-    // Wait until release has remained stable.
+    // Confirm release
     // -------------------------------------------------------
 
     if (
-      now - touchReleaseCandidate <
+      now -
+        touchReleaseCandidate <
       TOUCH_RELEASE_CONFIRM_MS
     )
     {
@@ -723,30 +1094,45 @@ private:
     }
 
     // =======================================================
-    // Confirmed finger release
+    // Confirmed release
     // =======================================================
 
+    TouchTarget releasedTarget =
+      touchTarget;
+
     bool executePowerAction =
-      powerGestureArmed &&
+      (
+        releasedTarget ==
+        TOUCH_TARGET_POWER
+      ) &&
       lastTouchInsidePower &&
       (
-        now - lastTouchAction >=
+        now -
+          lastTouchAction >=
         TOUCH_ACTION_COOLDOWN_MS
       );
 
+    int finalBrightness =
+      pendingBrightnessValue;
+
     Serial.printf(
-      "[CoreS3_Display] Touch release X=%d Y=%d Armed=%s Inside=%s\n",
+      "[CoreS3_Display] "
+      "Touch release X=%d Y=%d "
+      "Target=%d\n",
       lastTouchX,
       lastTouchY,
-      powerGestureArmed ? "YES" : "NO",
-      lastTouchInsidePower ? "YES" : "NO"
+      (int)releasedTarget
     );
 
     // -------------------------------------------------------
-    // Return button to normal appearance first.
+    // Restore Power button appearance
     // -------------------------------------------------------
 
-    if (powerButtonVisualPressed)
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_POWER &&
+      powerButtonVisualPressed
+    )
     {
       drawPowerButton(
         bri > 0,
@@ -755,18 +1141,55 @@ private:
     }
 
     // -------------------------------------------------------
-    // Reset gesture before executing the WLED action.
+    // Apply final brightness exactly
     // -------------------------------------------------------
 
-    touchActive = false;
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_BRIGHTNESS &&
+      finalBrightness >= 0
+    )
+    {
+      applyBrightnessFromTouch(
+        finalBrightness
+      );
 
-    powerGestureArmed = false;
-    lastTouchInsidePower = false;
+      drawBrightness(
+        bri,
+        false
+      );
 
-    touchReleaseCandidate = 0;
+      lastBrightnessValue =
+        bri;
+    }
 
-    lastTouchX = -1;
-    lastTouchY = -1;
+    // -------------------------------------------------------
+    // Reset gesture
+    // -------------------------------------------------------
+
+    touchActive =
+      false;
+
+    touchTarget =
+      TOUCH_TARGET_NONE;
+
+    lastTouchInsidePower =
+      false;
+
+    powerButtonVisualPressed =
+      false;
+
+    touchReleaseCandidate =
+      0;
+
+    lastTouchX =
+      -1;
+
+    lastTouchY =
+      -1;
+
+    pendingBrightnessValue =
+      -1;
 
     // -------------------------------------------------------
     // Execute Power action
@@ -790,8 +1213,12 @@ public:
   void setup() override
   {
     Serial.println();
+
     Serial.println(
-      F("[CoreS3_Display] Phase 4.1 start")
+      F(
+        "[CoreS3_Display] "
+        "Phase 5 start"
+      )
     );
 
     // -------------------------------------------------------
@@ -800,7 +1227,9 @@ public:
 
     display.begin();
 
-    display.setRotation(1);
+    display.setRotation(
+      1
+    );
 
     screenWidth =
       display.width();
@@ -809,7 +1238,8 @@ public:
       display.height();
 
     Serial.printf(
-      "[CoreS3_Display] Display size: %d x %d\n",
+      "[CoreS3_Display] "
+      "Display size: %d x %d\n",
       screenWidth,
       screenHeight
     );
@@ -820,22 +1250,31 @@ public:
     )
     {
       Serial.println(
-        F("[CoreS3_Display] ERROR: Display not detected")
+        F(
+          "[CoreS3_Display] "
+          "ERROR: Display not detected"
+        )
       );
 
       return;
     }
 
     // -------------------------------------------------------
-    // Touch controller
+    // Touch
     // -------------------------------------------------------
 
     touchReady =
-      (display.touch() != nullptr);
+      (
+        display.touch() !=
+        nullptr
+      );
 
     Serial.printf(
-      "[CoreS3_Display] Touch: %s\n",
-      touchReady ? "READY" : "NOT FOUND"
+      "[CoreS3_Display] "
+      "Touch: %s\n",
+      touchReady ?
+        "READY" :
+        "NOT FOUND"
     );
 
     // -------------------------------------------------------
@@ -847,7 +1286,7 @@ public:
     );
 
     // -------------------------------------------------------
-    // Boot screen
+    // Boot
     // -------------------------------------------------------
 
     drawBootScreen();
@@ -856,11 +1295,17 @@ public:
       true;
 
     Serial.println(
-      F("[CoreS3_Display] Display initialized")
+      F(
+        "[CoreS3_Display] "
+        "Display initialized"
+      )
     );
 
     Serial.println(
-      F("[CoreS3_Display] Phase 4.1 setup complete")
+      F(
+        "[CoreS3_Display] "
+        "Phase 5 setup complete"
+      )
     );
 
     Serial.println();
@@ -877,22 +1322,19 @@ public:
       return;
     }
 
-    // -------------------------------------------------------
-    // Touch runs independently at a much faster interval
-    // than the status screen refresh.
-    // -------------------------------------------------------
-
+    // Fast touch processing.
     handleTouch();
-
-    // -------------------------------------------------------
-    // Status update every 250 ms
-    // -------------------------------------------------------
 
     unsigned long now =
       millis();
 
+    // -------------------------------------------------------
+    // Normal status refresh
+    // -------------------------------------------------------
+
     if (
-      now - lastUpdate <
+      now -
+        lastUpdate <
       250
     )
     {
@@ -947,7 +1389,8 @@ public:
       );
 
       Serial.printf(
-        "[CoreS3_Display] Wi-Fi connected: %s\n",
+        "[CoreS3_Display] "
+        "Wi-Fi connected: %s\n",
         currentIPAddress.c_str()
       );
 
@@ -974,9 +1417,10 @@ public:
         ledOn
       );
 
-      // Do not overwrite the pressed feedback while
-      // the user is actively touching the button.
-      if (!powerButtonVisualPressed)
+      if (
+        touchTarget !=
+        TOUCH_TARGET_POWER
+      )
       {
         drawPowerButton(
           ledOn,
@@ -985,23 +1429,31 @@ public:
       }
 
       lastLedState =
-        ledOn ? 1 : 0;
+        ledOn ?
+        1 :
+        0;
     }
 
     // =======================================================
     // Brightness
+    //
+    // Do not overwrite the user's local slider feedback while
+    // the finger is actively controlling the slider.
     // =======================================================
 
     int brightnessValue =
       bri;
 
     if (
+      touchTarget !=
+        TOUCH_TARGET_BRIGHTNESS &&
       brightnessValue !=
-      lastBrightnessValue
+        lastBrightnessValue
     )
     {
       drawBrightness(
-        brightnessValue
+        brightnessValue,
+        false
       );
 
       lastBrightnessValue =
@@ -1039,7 +1491,7 @@ public:
   }
 
   // =========================================================
-  // WLED Info page
+  // WLED Info
   // =========================================================
 
   void addToJsonInfo(
@@ -1052,13 +1504,12 @@ public:
     if (user.isNull())
     {
       user =
-        root.createNestedObject("u");
+        root.createNestedObject(
+          "u"
+        );
     }
 
-    // -------------------------------------------------------
     // Display
-    // -------------------------------------------------------
-
     JsonArray displayInfo =
       user.createNestedArray(
         "CoreS3 Display"
@@ -1087,25 +1538,19 @@ public:
       );
     }
 
-    // -------------------------------------------------------
     // Touch
-    // -------------------------------------------------------
-
     JsonArray touchInfo =
       user.createNestedArray(
         "CoreS3 Display Touch"
       );
 
     touchInfo.add(
-      touchReady
-        ? "READY"
-        : "NOT FOUND"
+      touchReady ?
+        "READY" :
+        "NOT FOUND"
     );
 
-    // -------------------------------------------------------
     // Wi-Fi
-    // -------------------------------------------------------
-
     JsonArray wifiInfo =
       user.createNestedArray(
         "CoreS3 Display WiFi"
@@ -1127,25 +1572,19 @@ public:
       );
     }
 
-    // -------------------------------------------------------
     // LED
-    // -------------------------------------------------------
-
     JsonArray ledInfo =
       user.createNestedArray(
         "CoreS3 Display LED"
       );
 
     ledInfo.add(
-      bri > 0
-        ? "ON"
-        : "OFF"
+      bri > 0 ?
+        "ON" :
+        "OFF"
     );
 
-    // -------------------------------------------------------
     // Brightness
-    // -------------------------------------------------------
-
     JsonArray brightnessInfo =
       user.createNestedArray(
         "CoreS3 Display Brightness"
