@@ -1,0 +1,8 @@
+{
+  "name": "CoreS3_Power",
+  "version": "0.1.0",
+  "description": "M5Stack CoreS3 power management usermod for WLED",
+  "build": {
+    "libArchive": false
+  }
+}
