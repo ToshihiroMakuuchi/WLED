@@ -61,7 +61,6 @@ private:
   //   -> Fade In
   //   -> wait until finger is released
   //   -> ACTIVE
-  //
   // =========================================================
 
   static constexpr unsigned long DISPLAY_SLEEP_TIMEOUT_MS = 30000;
@@ -197,6 +196,14 @@ private:
   bool saturationButtonVisualPressed = false;
 
   bool brightnessLongPressActive = false;
+
+  // =========================================================
+  // Phase 8.3.1
+  // Effect long press
+  // =========================================================
+
+  bool effectLongPressActive = false;
+
   bool hueLongPressActive = false;
   bool saturationLongPressActive = false;
 
@@ -205,6 +212,14 @@ private:
 
   unsigned long controlPressStartTime = 0;
   unsigned long lastBrightnessRepeat = 0;
+
+  // =========================================================
+  // Phase 8.3.1
+  // Effect timing state
+  // =========================================================
+
+  unsigned long effectPressStartTime = 0;
+  unsigned long lastEffectRepeat = 0;
 
   unsigned long huePressStartTime = 0;
   unsigned long lastHueRepeat = 0;
@@ -264,7 +279,6 @@ private:
   static constexpr int16_t BRI_BUTTON_Y = 82;
   static constexpr int16_t FX_BUTTON_Y = 138;
 
-  // Phase 8.1
   static constexpr int16_t COLOR_BUTTON_X = 16;
   static constexpr int16_t COLOR_BUTTON_Y = 188;
   static constexpr int16_t COLOR_BUTTON_W = 288;
@@ -302,6 +316,22 @@ private:
 
   static constexpr int BRI_SHORT_STEP = 1;
   static constexpr int BRI_LONG_STEP = 5;
+
+  // =========================================================
+  // Phase 8.3.1 - Effect behavior
+  //
+  // Short:
+  //   +/- 1 Effect
+  //
+  // Long:
+  //   start after 400ms
+  //   then +/- 1 Effect every 250ms
+  //
+  // Effect wraps around first/last.
+  // =========================================================
+
+  static constexpr unsigned long EFFECT_LONG_PRESS_MS = 400;
+  static constexpr unsigned long EFFECT_REPEAT_MS = 250;
 
   // =========================================================
   // Hue behavior
@@ -792,7 +822,6 @@ private:
         connectingScreenShown =
           false;
 
-        // Start 30 second inactivity timer here.
         lastUserActivityMs =
           now;
 
@@ -812,10 +841,7 @@ private:
   }
 
   // =========================================================
-  // Phase 8.3 - Wake touch polling
-  //
-  // Maintains last state between polls so a 15 ms throttle
-  // does not look like a false release.
+  // Wake touch polling
   // =========================================================
 
   bool pollWakeTouch(
@@ -851,7 +877,7 @@ private:
   }
 
   // =========================================================
-  // Redraw latest operational page before Wake
+  // Redraw latest page before Wake
   // =========================================================
 
   void redrawCurrentPageForWake()
@@ -916,10 +942,6 @@ private:
 
   // =========================================================
   // Start display wake
-  //
-  // IMPORTANT:
-  // The touch which wakes the display is NEVER passed to
-  // the normal control handler.
   // =========================================================
 
   void beginDisplayWake(
@@ -935,12 +957,10 @@ private:
 
     resetTouchGesture();
 
-    // Make redraw invisible.
     setDisplayBrightness(
       0
     );
 
-    // Refresh everything from current WLED state.
     redrawCurrentPageForWake();
 
     setDisplayBrightness(
@@ -956,16 +976,12 @@ private:
     wakeReleaseCandidate =
       0;
 
-    // Wake touch is deliberately consumed.
     lastUserActivityMs =
       now;
   }
 
   // =========================================================
-  // Phase 8.3 display power management
-  //
-  // Returns true while normal touch processing must remain
-  // blocked.
+  // Display power management
   // =========================================================
 
   bool handleDisplayPowerManagement()
@@ -1001,8 +1017,6 @@ private:
 
     // =======================================================
     // Fade Out
-    //
-    // A touch during Fade Out immediately becomes Wake only.
     // =======================================================
 
     if (
@@ -1052,7 +1066,7 @@ private:
     }
 
     // =======================================================
-    // Fully sleeping
+    // Sleeping
     // =======================================================
 
     if (
@@ -1076,8 +1090,6 @@ private:
 
     // =======================================================
     // Wake Fade In
-    //
-    // Ignore all touch input during Fade In.
     // =======================================================
 
     if (
@@ -1117,10 +1129,7 @@ private:
     }
 
     // =======================================================
-    // Wait for release
-    //
-    // The original Wake touch must be completely released
-    // before normal controls are allowed again.
+    // Wait Wake touch release
     // =======================================================
 
     if (
@@ -1223,7 +1232,7 @@ private:
   }
 
   // =========================================================
-  // Effect
+  // Current Effect
   // =========================================================
 
   uint8_t getCurrentEffectMode()
@@ -2534,7 +2543,7 @@ private:
   }
 
   // =========================================================
-  // Hit test
+  // Hit tests
   // =========================================================
 
   bool pointInsideRect(
@@ -2554,10 +2563,14 @@ private:
     );
   }
 
-  bool isPowerButtonTouched(int16_t x, int16_t y)
+  bool isPowerButtonTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       POWER_BUTTON_X,
       POWER_BUTTON_Y,
       POWER_BUTTON_W,
@@ -2565,10 +2578,14 @@ private:
     );
   }
 
-  bool isBrightnessDownTouched(int16_t x, int16_t y)
+  bool isBrightnessDownTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       CONTROL_LEFT_X,
       BRI_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2576,10 +2593,14 @@ private:
     );
   }
 
-  bool isBrightnessUpTouched(int16_t x, int16_t y)
+  bool isBrightnessUpTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       CONTROL_RIGHT_X,
       BRI_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2587,10 +2608,14 @@ private:
     );
   }
 
-  bool isEffectPrevTouched(int16_t x, int16_t y)
+  bool isEffectPrevTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       CONTROL_LEFT_X,
       FX_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2598,10 +2623,14 @@ private:
     );
   }
 
-  bool isEffectNextTouched(int16_t x, int16_t y)
+  bool isEffectNextTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       CONTROL_RIGHT_X,
       FX_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2609,10 +2638,14 @@ private:
     );
   }
 
-  bool isColorButtonTouched(int16_t x, int16_t y)
+  bool isColorButtonTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       COLOR_BUTTON_X,
       COLOR_BUTTON_Y,
       COLOR_BUTTON_W,
@@ -2620,10 +2653,14 @@ private:
     );
   }
 
-  bool isBackButtonTouched(int16_t x, int16_t y)
+  bool isBackButtonTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       BACK_BUTTON_X,
       BACK_BUTTON_Y,
       BACK_BUTTON_W,
@@ -2631,10 +2668,14 @@ private:
     );
   }
 
-  bool isHueDownTouched(int16_t x, int16_t y)
+  bool isHueDownTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       CONTROL_LEFT_X,
       HUE_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2642,10 +2683,14 @@ private:
     );
   }
 
-  bool isHueUpTouched(int16_t x, int16_t y)
+  bool isHueUpTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       CONTROL_RIGHT_X,
       HUE_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2653,10 +2698,14 @@ private:
     );
   }
 
-  bool isSaturationDownTouched(int16_t x, int16_t y)
+  bool isSaturationDownTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       CONTROL_LEFT_X,
       SATURATION_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2664,10 +2713,14 @@ private:
     );
   }
 
-  bool isSaturationUpTouched(int16_t x, int16_t y)
+  bool isSaturationUpTouched(
+    int16_t x,
+    int16_t y
+  )
   {
     return pointInsideRect(
-      x, y,
+      x,
+      y,
       CONTROL_RIGHT_X,
       SATURATION_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2812,6 +2865,9 @@ private:
     brightnessLongPressActive =
       false;
 
+    effectLongPressActive =
+      false;
+
     hueLongPressActive =
       false;
 
@@ -2831,6 +2887,12 @@ private:
       0;
 
     lastBrightnessRepeat =
+      0;
+
+    effectPressStartTime =
+      0;
+
+    lastEffectRepeat =
       0;
 
     huePressStartTime =
@@ -3084,12 +3146,41 @@ private:
     {
       drawEffect(
         mainSegment.mode,
-        TOUCH_TARGET_NONE
+        touchTarget
       );
     }
 
     lastEffectMode =
       mainSegment.mode;
+  }
+
+  // =========================================================
+  // Phase 8.3.1
+  // Effect long press step
+  // =========================================================
+
+  void effectLongPressStep(
+    TouchTarget target
+  )
+  {
+    if (
+      target ==
+      TOUCH_TARGET_EFFECT_PREV
+    )
+    {
+      applyEffectStep(
+        -1
+      );
+    }
+    else if (
+      target ==
+      TOUCH_TARGET_EFFECT_NEXT
+    )
+    {
+      applyEffectStep(
+        1
+      );
+    }
   }
 
   // =========================================================
@@ -3675,7 +3766,7 @@ private:
 
     if (touching)
     {
-      // Every normal touch resets the 30 second timer.
+      // Any normal touch resets the 30 second sleep timer.
       lastUserActivityMs =
         now;
 
@@ -3778,6 +3869,10 @@ private:
           );
       }
 
+      // -----------------------------------------------------
+      // New gesture
+      // -----------------------------------------------------
+
       if (!touchActive)
       {
         touchActive =
@@ -3787,6 +3882,9 @@ private:
           TOUCH_TARGET_NONE;
 
         brightnessLongPressActive =
+          false;
+
+        effectLongPressActive =
           false;
 
         hueLongPressActive =
@@ -3849,6 +3947,11 @@ private:
               now;
           }
 
+          // =================================================
+          // Phase 8.3.1
+          // Effect PREV touch start
+          // =================================================
+
           else if (insideEffectPrev)
           {
             touchTarget =
@@ -3856,7 +3959,21 @@ private:
 
             lastTouchInsideEffect =
               true;
+
+            effectPressStartTime =
+              now;
+
+            lastEffectRepeat =
+              now;
+
+            effectLongPressActive =
+              false;
           }
+
+          // =================================================
+          // Phase 8.3.1
+          // Effect NEXT touch start
+          // =================================================
 
           else if (insideEffectNext)
           {
@@ -3865,6 +3982,15 @@ private:
 
             lastTouchInsideEffect =
               true;
+
+            effectPressStartTime =
+              now;
+
+            lastEffectRepeat =
+              now;
+
+            effectLongPressActive =
+              false;
           }
 
           else if (insideColor)
@@ -3961,9 +4087,9 @@ private:
         }
       }
 
-      // -----------------------------------------------------
+      // =====================================================
       // Power
-      // -----------------------------------------------------
+      // =====================================================
 
       if (
         touchTarget ==
@@ -3987,9 +4113,9 @@ private:
         return;
       }
 
-      // -----------------------------------------------------
+      // =====================================================
       // Brightness
-      // -----------------------------------------------------
+      // =====================================================
 
       if (
         touchTarget ==
@@ -4066,9 +4192,10 @@ private:
         return;
       }
 
-      // -----------------------------------------------------
-      // Effect
-      // -----------------------------------------------------
+      // =====================================================
+      // Phase 8.3.1
+      // Effect short / long press
+      // =====================================================
 
       if (
         touchTarget ==
@@ -4102,12 +4229,65 @@ private:
             insideSelectedButton;
         }
 
+        // Finger moved outside the visible Effect button.
+        // Do not advance Effect while outside.
+        if (!insideSelectedButton)
+        {
+          return;
+        }
+
+        // ---------------------------------------------------
+        // Long press starts after 400 ms.
+        //
+        // Perform first step immediately at 400 ms.
+        // ---------------------------------------------------
+
+        if (
+          !effectLongPressActive &&
+          now -
+          effectPressStartTime >=
+          EFFECT_LONG_PRESS_MS
+        )
+        {
+          effectLongPressActive =
+            true;
+
+          lastEffectRepeat =
+            now;
+
+          effectLongPressStep(
+            touchTarget
+          );
+
+          return;
+        }
+
+        // ---------------------------------------------------
+        // Once long press is active:
+        // advance one Effect every 250 ms.
+        // ---------------------------------------------------
+
+        if (
+          effectLongPressActive &&
+          now -
+          lastEffectRepeat >=
+          EFFECT_REPEAT_MS
+        )
+        {
+          lastEffectRepeat =
+            now;
+
+          effectLongPressStep(
+            touchTarget
+          );
+        }
+
         return;
       }
 
-      // -----------------------------------------------------
+      // =====================================================
       // COLOR open
-      // -----------------------------------------------------
+      // =====================================================
 
       if (
         touchTarget ==
@@ -4131,9 +4311,9 @@ private:
         return;
       }
 
-      // -----------------------------------------------------
+      // =====================================================
       // Back
-      // -----------------------------------------------------
+      // =====================================================
 
       if (
         touchTarget ==
@@ -4156,9 +4336,9 @@ private:
         return;
       }
 
-      // -----------------------------------------------------
+      // =====================================================
       // Hue
-      // -----------------------------------------------------
+      // =====================================================
 
       if (
         touchTarget ==
@@ -4235,9 +4415,9 @@ private:
         return;
       }
 
-      // -----------------------------------------------------
+      // =====================================================
       // Saturation
-      // -----------------------------------------------------
+      // =====================================================
 
       if (
         touchTarget ==
@@ -4346,11 +4526,25 @@ private:
       return;
     }
 
+    // =======================================================
+    // Confirmed release
+    // =======================================================
+
     TouchTarget releasedTarget =
       touchTarget;
 
     bool wasBrightnessLongPress =
       brightnessLongPressActive;
+
+    // =======================================================
+    // Phase 8.3.1
+    //
+    // Remember whether Effect became a long press.
+    // If true, release must NOT advance another Effect.
+    // =======================================================
+
+    bool wasEffectLongPress =
+      effectLongPressActive;
 
     bool wasHueLongPress =
       hueLongPressActive;
@@ -4380,6 +4574,12 @@ private:
       lastTouchInsideBrightness &&
       !wasBrightnessLongPress;
 
+    // =======================================================
+    // Phase 8.3.1
+    //
+    // Only execute Effect on release when it was a SHORT press.
+    // =======================================================
+
     bool executeEffectAction =
       (
         releasedTarget ==
@@ -4387,7 +4587,8 @@ private:
         releasedTarget ==
           TOUCH_TARGET_EFFECT_NEXT
       ) &&
-      lastTouchInsideEffect;
+      lastTouchInsideEffect &&
+      !wasEffectLongPress;
 
     bool executeColorOpen =
       (
@@ -4424,7 +4625,7 @@ private:
       !wasSaturationLongPress;
 
     // -------------------------------------------------------
-    // Restore visuals
+    // Restore Power visual
     // -------------------------------------------------------
 
     if (
@@ -4438,6 +4639,10 @@ private:
         false
       );
     }
+
+    // -------------------------------------------------------
+    // Restore Brightness visual
+    // -------------------------------------------------------
 
     if (
       (
@@ -4455,6 +4660,10 @@ private:
       );
     }
 
+    // -------------------------------------------------------
+    // Restore Effect visual
+    // -------------------------------------------------------
+
     if (
       (
         releasedTarget ==
@@ -4471,6 +4680,10 @@ private:
       );
     }
 
+    // -------------------------------------------------------
+    // Restore COLOR visual
+    // -------------------------------------------------------
+
     if (
       releasedTarget ==
         TOUCH_TARGET_COLOR_OPEN &&
@@ -4483,6 +4696,10 @@ private:
       );
     }
 
+    // -------------------------------------------------------
+    // Restore Back visual
+    // -------------------------------------------------------
+
     if (
       releasedTarget ==
         TOUCH_TARGET_BACK &&
@@ -4493,6 +4710,10 @@ private:
         false
       );
     }
+
+    // -------------------------------------------------------
+    // Restore Hue visual
+    // -------------------------------------------------------
 
     if (
       (
@@ -4510,6 +4731,10 @@ private:
       );
     }
 
+    // -------------------------------------------------------
+    // Restore Saturation visual
+    // -------------------------------------------------------
+
     if (
       (
         releasedTarget ==
@@ -4526,9 +4751,9 @@ private:
       );
     }
 
-    // -------------------------------------------------------
-    // Save edit states
-    // -------------------------------------------------------
+    // =======================================================
+    // Save Hue edit state
+    // =======================================================
 
     bool savedHueEditValid =
       hueEditValid;
@@ -4542,6 +4767,10 @@ private:
     uint8_t savedHueEditWhite =
       hueEditWhite;
 
+    // =======================================================
+    // Save Saturation edit state
+    // =======================================================
+
     bool savedSaturationEditValid =
       saturationEditValid;
 
@@ -4554,7 +4783,15 @@ private:
     uint8_t savedSaturationEditWhite =
       saturationEditWhite;
 
+    // =======================================================
+    // Reset gesture
+    // =======================================================
+
     resetTouchGesture();
+
+    // =======================================================
+    // Restore edit state for short-release action
+    // =======================================================
 
     hueEditValid =
       savedHueEditValid;
@@ -4580,9 +4817,9 @@ private:
     saturationEditWhite =
       savedSaturationEditWhite;
 
-    // -------------------------------------------------------
-    // Execute
-    // -------------------------------------------------------
+    // =======================================================
+    // Execute Power
+    // =======================================================
 
     if (executePowerAction)
     {
@@ -4599,6 +4836,10 @@ private:
 
       return;
     }
+
+    // =======================================================
+    // Execute Brightness short press
+    // =======================================================
 
     if (executeBrightnessShortPress)
     {
@@ -4623,6 +4864,13 @@ private:
       return;
     }
 
+    // =======================================================
+    // Execute Effect SHORT press only
+    //
+    // Long press already applied all Effect changes while
+    // the finger was held, so release does nothing.
+    // =======================================================
+
     if (executeEffectAction)
     {
       if (
@@ -4641,6 +4889,12 @@ private:
         );
       }
 
+      // Restore unpressed visual after short press.
+      drawEffect(
+        getCurrentEffectMode(),
+        TOUCH_TARGET_NONE
+      );
+
       hueEditValid =
         false;
 
@@ -4649,6 +4903,10 @@ private:
 
       return;
     }
+
+    // =======================================================
+    // Open COLOR
+    // =======================================================
 
     if (executeColorOpen)
     {
@@ -4662,6 +4920,10 @@ private:
 
       return;
     }
+
+    // =======================================================
+    // Back
+    // =======================================================
 
     if (executeBack)
     {
@@ -4677,6 +4939,10 @@ private:
 
       return;
     }
+
+    // =======================================================
+    // Hue short press
+    // =======================================================
 
     if (executeHueShortPress)
     {
@@ -4703,6 +4969,10 @@ private:
       return;
     }
 
+    // =======================================================
+    // Saturation short press
+    // =======================================================
+
     if (executeSaturationShortPress)
     {
       saturationShortPress(
@@ -4728,6 +4998,7 @@ private:
       return;
     }
 
+    // Long press actions already completed while held.
     hueEditValid =
       false;
 
@@ -4748,7 +5019,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 8.3 start"
+        "Phase 8.3.1 start"
       )
     );
 
@@ -4839,7 +5110,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 8.3 setup complete"
+        "Phase 8.3.1 setup complete"
       )
     );
 
@@ -4872,11 +5143,8 @@ public:
     }
 
     // =======================================================
-    // Display is ACTIVE:
-    //
-    // Process normal touch first so a touch exactly at the
-    // 30 second boundary counts as user activity instead of
-    // accidentally starting sleep.
+    // ACTIVE display:
+    // process normal touch first.
     // =======================================================
 
     if (
@@ -4888,9 +5156,7 @@ public:
     }
 
     // =======================================================
-    // Sleep / Wake state machine
-    //
-    // If not ACTIVE, this consumes the entire touch cycle.
+    // Sleep / Wake
     // =======================================================
 
     if (
@@ -5107,6 +5373,11 @@ public:
             TOUCH_TARGET_EFFECT_NEXT
         );
 
+      // -----------------------------------------------------
+      // Don't overwrite pressed Effect visual while finger
+      // is on the Effect button.
+      // -----------------------------------------------------
+
       if (
         !effectTouchActive &&
         (int)effectMode !=
@@ -5199,7 +5470,7 @@ public:
   }
 
   // =========================================================
-  // Info
+  // WLED Info
   // =========================================================
 
   void addToJsonInfo(
@@ -5218,6 +5489,10 @@ public:
           "u"
         );
     }
+
+    // -------------------------------------------------------
+    // Display
+    // -------------------------------------------------------
 
     JsonArray displayInfo =
       user.createNestedArray(
@@ -5247,6 +5522,10 @@ public:
       );
     }
 
+    // -------------------------------------------------------
+    // Touch
+    // -------------------------------------------------------
+
     JsonArray touchInfo =
       user.createNestedArray(
         "CoreS3 Display Touch"
@@ -5257,6 +5536,10 @@ public:
         ? "READY"
         : "NOT FOUND"
     );
+
+    // -------------------------------------------------------
+    // Wi-Fi
+    // -------------------------------------------------------
 
     JsonArray wifiInfo =
       user.createNestedArray(
@@ -5279,6 +5562,10 @@ public:
       );
     }
 
+    // -------------------------------------------------------
+    // LED
+    // -------------------------------------------------------
+
     JsonArray ledInfo =
       user.createNestedArray(
         "CoreS3 Display LED"
@@ -5290,6 +5577,10 @@ public:
         : "OFF"
     );
 
+    // -------------------------------------------------------
+    // Brightness
+    // -------------------------------------------------------
+
     JsonArray brightnessInfo =
       user.createNestedArray(
         "CoreS3 Display Brightness"
@@ -5298,6 +5589,10 @@ public:
     brightnessInfo.add(
       bri
     );
+
+    // -------------------------------------------------------
+    // Effect
+    // -------------------------------------------------------
 
     JsonArray effectInfo =
       user.createNestedArray(
@@ -5327,6 +5622,10 @@ public:
         "No segment"
       );
     }
+
+    // -------------------------------------------------------
+    // Primary Color
+    // -------------------------------------------------------
 
     JsonArray colorInfo =
       user.createNestedArray(
@@ -5363,6 +5662,10 @@ public:
       );
     }
 
+    // -------------------------------------------------------
+    // Hue
+    // -------------------------------------------------------
+
     JsonArray hueInfo =
       user.createNestedArray(
         "CoreS3 Display Hue"
@@ -5383,6 +5686,10 @@ public:
         "No segment"
       );
     }
+
+    // -------------------------------------------------------
+    // Saturation
+    // -------------------------------------------------------
 
     JsonArray saturationInfo =
       user.createNestedArray(
@@ -5405,6 +5712,10 @@ public:
       );
     }
 
+    // -------------------------------------------------------
+    // Page
+    // -------------------------------------------------------
+
     JsonArray pageInfo =
       user.createNestedArray(
         "CoreS3 Display Page"
@@ -5417,6 +5728,10 @@ public:
         : "COLOR"
     );
 
+    // -------------------------------------------------------
+    // Startup
+    // -------------------------------------------------------
+
     JsonArray startupInfo =
       user.createNestedArray(
         "CoreS3 Display Startup"
@@ -5428,6 +5743,10 @@ public:
         ? "DONE"
         : "ACTIVE"
     );
+
+    // -------------------------------------------------------
+    // Display Power State
+    // -------------------------------------------------------
 
     JsonArray powerStateInfo =
       user.createNestedArray(
@@ -5469,6 +5788,10 @@ public:
         break;
     }
 
+    // -------------------------------------------------------
+    // Sleep timeout
+    // -------------------------------------------------------
+
     JsonArray sleepInfo =
       user.createNestedArray(
         "CoreS3 Display Sleep"
@@ -5476,6 +5799,19 @@ public:
 
     sleepInfo.add(
       "30 sec"
+    );
+
+    // -------------------------------------------------------
+    // Phase
+    // -------------------------------------------------------
+
+    JsonArray phaseInfo =
+      user.createNestedArray(
+        "CoreS3 Display Phase"
+      );
+
+    phaseInfo.add(
+      "8.3.1"
     );
   }
 };
