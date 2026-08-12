@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 9.1
+// Phase 9.2.1
 //
 // MAIN
 //   Power
@@ -22,6 +22,11 @@
 // EFFECT
 //   Speed
 //   Intensity
+//   Palette
+//
+// Phase 9.2.1
+//   Palette visible button size is unchanged.
+//   Only Palette touch hit area is expanded.
 //
 // Common
 //   Startup animation
@@ -76,6 +81,8 @@ private:
 
   int lastSpeedValue = -1;
   int lastIntensityValue = -1;
+
+  int lastPaletteValue = -1;
 
   int lastHueValue = -1;
   int lastSaturationValue = -1;
@@ -214,7 +221,10 @@ private:
     TOUCH_TARGET_SPEED_UP,
 
     TOUCH_TARGET_INTENSITY_DOWN,
-    TOUCH_TARGET_INTENSITY_UP
+    TOUCH_TARGET_INTENSITY_UP,
+
+    TOUCH_TARGET_PALETTE_PREV,
+    TOUCH_TARGET_PALETTE_NEXT
   };
 
   TouchTarget touchTarget =
@@ -242,6 +252,8 @@ private:
   bool lastTouchInsideSpeed = false;
   bool lastTouchInsideIntensity = false;
 
+  bool lastTouchInsidePalette = false;
+
   // =========================================================
   // Visual pressed state
   // =========================================================
@@ -262,6 +274,8 @@ private:
   bool speedButtonVisualPressed = false;
   bool intensityButtonVisualPressed = false;
 
+  bool paletteButtonVisualPressed = false;
+
   // =========================================================
   // Long press state
   // =========================================================
@@ -274,6 +288,8 @@ private:
 
   bool speedLongPressActive = false;
   bool intensityLongPressActive = false;
+
+  bool paletteLongPressActive = false;
 
   int16_t lastTouchX = -1;
   int16_t lastTouchY = -1;
@@ -307,7 +323,6 @@ private:
   unsigned long lastSaturationRepeat = 0;
 
   // =========================================================
-  // Phase 9.1
   // Speed timing
   // =========================================================
 
@@ -315,12 +330,18 @@ private:
   unsigned long lastSpeedRepeat = 0;
 
   // =========================================================
-  // Phase 9.1
   // Intensity timing
   // =========================================================
 
   unsigned long intensityPressStartTime = 0;
   unsigned long lastIntensityRepeat = 0;
+
+  // =========================================================
+  // Palette timing
+  // =========================================================
+
+  unsigned long palettePressStartTime = 0;
+  unsigned long lastPaletteRepeat = 0;
 
   // =========================================================
   // Hue gesture
@@ -378,11 +399,6 @@ private:
   static constexpr int16_t BRI_BUTTON_Y = 82;
   static constexpr int16_t FX_BUTTON_Y = 138;
 
-  // =========================================================
-  // Phase 9.1
-  // Center Effect Detail button
-  // =========================================================
-
   static constexpr int16_t EFFECT_DETAIL_X = 88;
   static constexpr int16_t EFFECT_DETAIL_Y = 138;
   static constexpr int16_t EFFECT_DETAIL_W = 144;
@@ -417,13 +433,58 @@ private:
   static constexpr int16_t SATURATION_BUTTON_Y = 204;
 
   // =========================================================
-  // Phase 9.1
   // EFFECT detail layout
   // =========================================================
 
   static constexpr int16_t SPEED_BUTTON_Y = 82;
 
   static constexpr int16_t INTENSITY_BUTTON_Y = 140;
+
+  // =========================================================
+  // Palette visible layout
+  //
+  // IMPORTANT:
+  // These values are unchanged from Phase 9.2.
+  // =========================================================
+
+  static constexpr int16_t PALETTE_LABEL_Y = 188;
+  static constexpr int16_t PALETTE_BUTTON_Y = 198;
+
+  // =========================================================
+  // Phase 9.2.1
+  // Palette TOUCH areas
+  //
+  // Visible buttons remain:
+  //
+  // Left:
+  //   X = 16 ... 79
+  //   Y = 198 ... 231
+  //
+  // Right:
+  //   X = 240 ... 303
+  //   Y = 198 ... 231
+  //
+  // Touch areas are expanded to:
+  //
+  // Left:
+  //   X = 8 ... 87
+  //   Y = 188 ... 239
+  //
+  // Right:
+  //   X = 232 ... 311
+  //   Y = 188 ... 239
+  //
+  // This improves touch reliability near the bottom edge
+  // without changing any visual layout.
+  // =========================================================
+
+  static constexpr int16_t PALETTE_TOUCH_LEFT_X = 8;
+  static constexpr int16_t PALETTE_TOUCH_RIGHT_X = 232;
+
+  static constexpr int16_t PALETTE_TOUCH_Y = 188;
+
+  static constexpr int16_t PALETTE_TOUCH_W = 80;
+  static constexpr int16_t PALETTE_TOUCH_H = 52;
 
   // =========================================================
   // Touch timing
@@ -473,7 +534,6 @@ private:
   static constexpr int SATURATION_LONG_STEP = 5;
 
   // =========================================================
-  // Phase 9.1
   // Speed behavior
   // =========================================================
 
@@ -484,7 +544,6 @@ private:
   static constexpr int SPEED_LONG_STEP = 5;
 
   // =========================================================
-  // Phase 9.1
   // Intensity behavior
   // =========================================================
 
@@ -493,6 +552,13 @@ private:
 
   static constexpr int INTENSITY_SHORT_STEP = 1;
   static constexpr int INTENSITY_LONG_STEP = 5;
+
+  // =========================================================
+  // Palette behavior
+  // =========================================================
+
+  static constexpr unsigned long PALETTE_LONG_PRESS_MS = 400;
+  static constexpr unsigned long PALETTE_REPEAT_MS = 250;
 
   // =========================================================
   // Normal LCD brightness
@@ -1431,7 +1497,6 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
   // Effect Speed
   // =========================================================
 
@@ -1450,7 +1515,6 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
   // Effect Intensity
   // =========================================================
 
@@ -1466,6 +1530,199 @@ private:
     }
 
     return 0;
+  }
+
+  // =========================================================
+  // Current Palette
+  // =========================================================
+
+  uint8_t getCurrentPalette()
+  {
+    if (
+      strip.getSegmentsNum() >
+      0
+    )
+    {
+      return
+        strip.getMainSegment().palette;
+    }
+
+    return 0;
+  }
+
+  // =========================================================
+  // Palette count
+  // =========================================================
+
+  size_t getSelectablePaletteCount()
+  {
+    return
+      FIXED_PALETTE_COUNT +
+      customPalettes.size() +
+      usermodPalettes.size();
+  }
+
+  // =========================================================
+  // Logical Palette index -> WLED Palette ID
+  // =========================================================
+
+  uint8_t paletteIdFromSequenceIndex(
+    size_t sequenceIndex
+  )
+  {
+    if (
+      sequenceIndex <
+      FIXED_PALETTE_COUNT
+    )
+    {
+      return
+        (uint8_t)sequenceIndex;
+    }
+
+    sequenceIndex -=
+      FIXED_PALETTE_COUNT;
+
+    if (
+      sequenceIndex <
+      customPalettes.size()
+    )
+    {
+      return
+        (uint8_t)(
+          WLED_CUSTOM_PALETTE_ID_BASE -
+          sequenceIndex
+        );
+    }
+
+    sequenceIndex -=
+      customPalettes.size();
+
+    if (
+      sequenceIndex <
+      usermodPalettes.size()
+    )
+    {
+      return
+        (uint8_t)(
+          WLED_USERMOD_PALETTE_ID_BASE -
+          sequenceIndex
+        );
+    }
+
+    return 0;
+  }
+
+  // =========================================================
+  // WLED Palette ID -> Logical Palette index
+  // =========================================================
+
+  int findPaletteSequenceIndex(
+    uint8_t paletteId
+  )
+  {
+    if (
+      paletteId <
+      FIXED_PALETTE_COUNT
+    )
+    {
+      return
+        paletteId;
+    }
+
+    if (
+      paletteId >
+      WLED_CUSTOM_PALETTE_ID_BASE
+    )
+    {
+      size_t usermodIndex =
+        WLED_USERMOD_PALETTE_ID_BASE -
+        paletteId;
+
+      if (
+        usermodIndex <
+        usermodPalettes.size()
+      )
+      {
+        return
+          (int)(
+            FIXED_PALETTE_COUNT +
+            customPalettes.size() +
+            usermodIndex
+          );
+      }
+
+      return -1;
+    }
+
+    if (
+      paletteId >=
+      FIXED_PALETTE_COUNT &&
+      paletteId <=
+      WLED_CUSTOM_PALETTE_ID_BASE
+    )
+    {
+      size_t customIndex =
+        WLED_CUSTOM_PALETTE_ID_BASE -
+        paletteId;
+
+      if (
+        customIndex <
+        customPalettes.size()
+      )
+      {
+        return
+          (int)(
+            FIXED_PALETTE_COUNT +
+            customIndex
+          );
+      }
+
+      return -1;
+    }
+
+    return -1;
+  }
+
+  // =========================================================
+  // Palette name
+  // =========================================================
+
+  void getPaletteName(
+    uint8_t paletteId,
+    char* paletteName,
+    size_t paletteNameSize
+  )
+  {
+    if (
+      paletteName == nullptr ||
+      paletteNameSize == 0
+    )
+    {
+      return;
+    }
+
+    paletteName[0] =
+      '\0';
+
+    extractModeName(
+      paletteId,
+      JSON_palette_names,
+      paletteName,
+      paletteNameSize - 1
+    );
+
+    if (
+      strlen(paletteName) ==
+      0
+    )
+    {
+      snprintf(
+        paletteName,
+        paletteNameSize,
+        "Palette %u",
+        paletteId
+      );
+    }
   }
 
   // =========================================================
@@ -2025,8 +2282,7 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
-  // Central Effect Detail button
+  // Effect Detail button
   // =========================================================
 
   void drawEffectDetailButton(
@@ -2615,7 +2871,6 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
   // Speed row
   // =========================================================
 
@@ -2689,7 +2944,6 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
   // Intensity row
   // =========================================================
 
@@ -2763,7 +3017,109 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
+  // Palette row
+  //
+  // Visible button coordinates remain unchanged.
+  // =========================================================
+
+  void drawPalette(
+    uint8_t paletteId,
+    TouchTarget pressedTarget =
+      TOUCH_TARGET_NONE
+  )
+  {
+    display.fillRect(
+      0,
+      180,
+      screenWidth,
+      60,
+      TFT_BLACK
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Palette",
+      screenWidth / 2,
+      PALETTE_LABEL_Y
+    );
+
+    // Visible LEFT button unchanged.
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      PALETTE_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_PALETTE_PREV
+    );
+
+    // Visible RIGHT button unchanged.
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      PALETTE_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_PALETTE_NEXT
+    );
+
+    char paletteName[64];
+
+    getPaletteName(
+      paletteId,
+      paletteName,
+      sizeof(paletteName)
+    );
+
+    if (
+      strlen(paletteName) >
+      22
+    )
+    {
+      paletteName[22] =
+        '\0';
+    }
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    if (
+      strlen(paletteName) <=
+      10
+    )
+    {
+      display.setTextSize(
+        2
+      );
+    }
+    else
+    {
+      display.setTextSize(
+        1
+      );
+    }
+
+    display.drawString(
+      paletteName,
+      screenWidth / 2,
+      PALETTE_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
+    );
+  }
+
+  // =========================================================
   // EFFECT page effect name
   // =========================================================
 
@@ -2913,6 +3269,9 @@ private:
     lastIntensityValue =
       getCurrentIntensity();
 
+    lastPaletteValue =
+      getCurrentPalette();
+
     lastPrimaryColor =
       primaryColor;
 
@@ -3026,7 +3385,6 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
   // EFFECT detail screen
   // =========================================================
 
@@ -3095,6 +3453,9 @@ private:
     uint8_t intensityValue =
       getCurrentIntensity();
 
+    uint8_t paletteValue =
+      getCurrentPalette();
+
     drawSpeed(
       speedValue,
       TOUCH_TARGET_NONE
@@ -3102,6 +3463,11 @@ private:
 
     drawIntensity(
       intensityValue,
+      TOUCH_TARGET_NONE
+    );
+
+    drawPalette(
+      paletteValue,
       TOUCH_TARGET_NONE
     );
 
@@ -3118,6 +3484,9 @@ private:
 
     lastIntensityValue =
       intensityValue;
+
+    lastPaletteValue =
+      paletteValue;
   }
 
   // =========================================================
@@ -3325,11 +3694,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Phase 9.1
-  // Speed hit tests
-  // =========================================================
-
   bool isSpeedDownTouched(
     int16_t x,
     int16_t y
@@ -3360,11 +3724,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Phase 9.1
-  // Intensity hit tests
-  // =========================================================
-
   bool isIntensityDownTouched(
     int16_t x,
     int16_t y
@@ -3392,6 +3751,46 @@ private:
       INTENSITY_BUTTON_Y,
       CONTROL_BUTTON_W,
       CONTROL_BUTTON_H
+    );
+  }
+
+  // =========================================================
+  // Phase 9.2.1
+  // Palette hit tests
+  //
+  // IMPORTANT:
+  // Unlike all other controls, these use the enlarged
+  // invisible touch regions rather than the visible button
+  // rectangle.
+  // =========================================================
+
+  bool isPalettePrevTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PALETTE_TOUCH_LEFT_X,
+      PALETTE_TOUCH_Y,
+      PALETTE_TOUCH_W,
+      PALETTE_TOUCH_H
+    );
+  }
+
+  bool isPaletteNextTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PALETTE_TOUCH_RIGHT_X,
+      PALETTE_TOUCH_Y,
+      PALETTE_TOUCH_W,
+      PALETTE_TOUCH_H
     );
   }
 
@@ -3517,6 +3916,9 @@ private:
     lastTouchInsideIntensity =
       false;
 
+    lastTouchInsidePalette =
+      false;
+
     powerButtonVisualPressed =
       false;
 
@@ -3547,6 +3949,9 @@ private:
     intensityButtonVisualPressed =
       false;
 
+    paletteButtonVisualPressed =
+      false;
+
     brightnessLongPressActive =
       false;
 
@@ -3563,6 +3968,9 @@ private:
       false;
 
     intensityLongPressActive =
+      false;
+
+    paletteLongPressActive =
       false;
 
     hueEditValid =
@@ -3608,6 +4016,12 @@ private:
       0;
 
     lastIntensityRepeat =
+      0;
+
+    palettePressStartTime =
+      0;
+
+    lastPaletteRepeat =
       0;
 
     lastTouchX =
@@ -3861,6 +4275,9 @@ private:
 
     lastIntensityValue =
       mainSegment.intensity;
+
+    lastPaletteValue =
+      mainSegment.palette;
   }
 
   void effectLongPressStep(
@@ -3888,7 +4305,6 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
   // Speed actions
   // =========================================================
 
@@ -4012,7 +4428,6 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
   // Intensity actions
   // =========================================================
 
@@ -4131,6 +4546,174 @@ private:
     {
       applyIntensityStep(
         INTENSITY_LONG_STEP
+      );
+    }
+  }
+
+  // =========================================================
+  // Palette actions
+  // =========================================================
+
+  bool applyPaletteValue(
+    uint8_t newPalette
+  )
+  {
+    if (
+      strip.getSegmentsNum() ==
+      0
+    )
+    {
+      return false;
+    }
+
+    Segment& mainSegment =
+      strip.getMainSegment();
+
+    if (
+      newPalette ==
+      mainSegment.palette
+    )
+    {
+      return false;
+    }
+
+    mainSegment.setPalette(
+      newPalette
+    );
+
+    stateUpdated(
+      CALL_MODE_BUTTON
+    );
+
+    if (
+      currentPage ==
+      SCREEN_EFFECT
+    )
+    {
+      drawPalette(
+        mainSegment.palette,
+        touchTarget
+      );
+    }
+
+    lastPaletteValue =
+      mainSegment.palette;
+
+    return true;
+  }
+
+  // =========================================================
+  // Move Palette by logical sequence
+  // =========================================================
+
+  void applyPaletteStep(
+    int step
+  )
+  {
+    size_t paletteCount =
+      getSelectablePaletteCount();
+
+    if (
+      paletteCount ==
+      0
+    )
+    {
+      return;
+    }
+
+    uint8_t currentPalette =
+      getCurrentPalette();
+
+    int currentIndex =
+      findPaletteSequenceIndex(
+        currentPalette
+      );
+
+    if (
+      currentIndex <
+      0
+    )
+    {
+      currentIndex =
+        0;
+    }
+
+    int newIndex =
+      currentIndex +
+      step;
+
+    while (
+      newIndex <
+      0
+    )
+    {
+      newIndex +=
+        (int)paletteCount;
+    }
+
+    while (
+      newIndex >=
+      (int)paletteCount
+    )
+    {
+      newIndex -=
+        (int)paletteCount;
+    }
+
+    uint8_t newPalette =
+      paletteIdFromSequenceIndex(
+        (size_t)newIndex
+      );
+
+    applyPaletteValue(
+      newPalette
+    );
+  }
+
+  void paletteShortPress(
+    TouchTarget target
+  )
+  {
+    if (
+      target ==
+      TOUCH_TARGET_PALETTE_PREV
+    )
+    {
+      applyPaletteStep(
+        -1
+      );
+    }
+    else if (
+      target ==
+      TOUCH_TARGET_PALETTE_NEXT
+    )
+    {
+      applyPaletteStep(
+        1
+      );
+    }
+  }
+
+  void paletteLongPressStep(
+    TouchTarget target
+  )
+  {
+    if (
+      target ==
+      TOUCH_TARGET_PALETTE_PREV
+    )
+    {
+      applyPaletteStep(
+        -1
+      );
+    }
+    else if (
+      target ==
+      TOUCH_TARGET_PALETTE_NEXT
+    )
+    {
+      applyPaletteStep(
+        1
       );
     }
   }
@@ -4682,7 +5265,6 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
   // Selected Speed button
   // =========================================================
 
@@ -4719,7 +5301,6 @@ private:
   }
 
   // =========================================================
-  // Phase 9.1
   // Selected Intensity button
   // =========================================================
 
@@ -4747,6 +5328,47 @@ private:
     {
       return
         isIntensityUpTouched(
+          x,
+          y
+        );
+    }
+
+    return false;
+  }
+
+  // =========================================================
+  // Phase 9.2.1
+  // Selected Palette button
+  //
+  // Uses expanded touch area during initial press AND while
+  // holding, so small finger movement near the bottom edge
+  // will not prematurely stop the long press.
+  // =========================================================
+
+  bool isInsideSelectedPaletteButton(
+    int16_t x,
+    int16_t y
+  )
+  {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_PALETTE_PREV
+    )
+    {
+      return
+        isPalettePrevTouched(
+          x,
+          y
+        );
+    }
+
+    if (
+      touchTarget ==
+      TOUCH_TARGET_PALETTE_NEXT
+    )
+    {
+      return
+        isPaletteNextTouched(
           x,
           y
         );
@@ -4935,6 +5557,9 @@ private:
       bool insideIntensityDown = false;
       bool insideIntensityUp = false;
 
+      bool insidePalettePrev = false;
+      bool insidePaletteNext = false;
+
       if (
         currentPage ==
         SCREEN_EFFECT
@@ -4969,6 +5594,20 @@ private:
             touchX,
             touchY
           );
+
+        // Phase 9.2.1:
+        // These now use expanded invisible hit regions.
+        insidePalettePrev =
+          isPalettePrevTouched(
+            touchX,
+            touchY
+          );
+
+        insidePaletteNext =
+          isPaletteNextTouched(
+            touchX,
+            touchY
+          );
       }
 
       // =====================================================
@@ -4999,6 +5638,9 @@ private:
           false;
 
         intensityLongPressActive =
+          false;
+
+        paletteLongPressActive =
           false;
       }
 
@@ -5202,7 +5844,6 @@ private:
         }
 
         // ===================================================
-        // Phase 9.1
         // EFFECT
         // ===================================================
 
@@ -5278,6 +5919,42 @@ private:
 
             lastIntensityRepeat =
               now;
+          }
+
+          else if (insidePalettePrev)
+          {
+            touchTarget =
+              TOUCH_TARGET_PALETTE_PREV;
+
+            lastTouchInsidePalette =
+              true;
+
+            palettePressStartTime =
+              now;
+
+            lastPaletteRepeat =
+              now;
+
+            paletteLongPressActive =
+              false;
+          }
+
+          else if (insidePaletteNext)
+          {
+            touchTarget =
+              TOUCH_TARGET_PALETTE_NEXT;
+
+            lastTouchInsidePalette =
+              true;
+
+            palettePressStartTime =
+              now;
+
+            lastPaletteRepeat =
+              now;
+
+            paletteLongPressActive =
+              false;
           }
         }
       }
@@ -5467,8 +6144,7 @@ private:
       }
 
       // =====================================================
-      // Phase 9.1
-      // Effect Detail button
+      // Effect Detail
       // =====================================================
 
       if (
@@ -5500,7 +6176,7 @@ private:
       }
 
       // =====================================================
-      // COLOR open
+      // COLOR
       // =====================================================
 
       if (
@@ -5709,7 +6385,6 @@ private:
       }
 
       // =====================================================
-      // Phase 9.1
       // Speed
       // =====================================================
 
@@ -5789,7 +6464,6 @@ private:
       }
 
       // =====================================================
-      // Phase 9.1
       // Intensity
       // =====================================================
 
@@ -5868,6 +6542,89 @@ private:
         return;
       }
 
+      // =====================================================
+      // Phase 9.2.1
+      // Palette
+      //
+      // Initial selection and continued long-press tracking
+      // both use the enlarged invisible hit area.
+      // =====================================================
+
+      if (
+        touchTarget ==
+          TOUCH_TARGET_PALETTE_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_PALETTE_NEXT
+      )
+      {
+        bool insideSelectedButton =
+          isInsideSelectedPaletteButton(
+            touchX,
+            touchY
+          );
+
+        lastTouchInsidePalette =
+          insideSelectedButton;
+
+        if (
+          insideSelectedButton !=
+          paletteButtonVisualPressed
+        )
+        {
+          drawPalette(
+            getCurrentPalette(),
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
+
+          paletteButtonVisualPressed =
+            insideSelectedButton;
+        }
+
+        if (!insideSelectedButton)
+        {
+          return;
+        }
+
+        if (
+          !paletteLongPressActive &&
+          now -
+          palettePressStartTime >=
+          PALETTE_LONG_PRESS_MS
+        )
+        {
+          paletteLongPressActive =
+            true;
+
+          lastPaletteRepeat =
+            now;
+
+          paletteLongPressStep(
+            touchTarget
+          );
+
+          return;
+        }
+
+        if (
+          paletteLongPressActive &&
+          now -
+          lastPaletteRepeat >=
+          PALETTE_REPEAT_MS
+        )
+        {
+          lastPaletteRepeat =
+            now;
+
+          paletteLongPressStep(
+            touchTarget
+          );
+        }
+
+        return;
+      }
+
       return;
     }
 
@@ -5924,6 +6681,9 @@ private:
 
     bool wasIntensityLongPress =
       intensityLongPressActive;
+
+    bool wasPaletteLongPress =
+      paletteLongPressActive;
 
     // =======================================================
     // Determine actions
@@ -6021,6 +6781,16 @@ private:
       ) &&
       lastTouchInsideIntensity &&
       !wasIntensityLongPress;
+
+    bool executePaletteShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PALETTE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PALETTE_NEXT
+      ) &&
+      lastTouchInsidePalette &&
+      !wasPaletteLongPress;
 
     // =======================================================
     // Restore visuals
@@ -6169,6 +6939,22 @@ private:
       );
     }
 
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PALETTE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PALETTE_NEXT
+      ) &&
+      paletteButtonVisualPressed
+    )
+    {
+      drawPalette(
+        getCurrentPalette(),
+        TOUCH_TARGET_NONE
+      );
+    }
+
     // =======================================================
     // Preserve HSV gesture state through reset
     // =======================================================
@@ -6307,7 +7093,6 @@ private:
     }
 
     // =======================================================
-    // Phase 9.1
     // Open Effect Detail
     // =======================================================
 
@@ -6419,7 +7204,6 @@ private:
     }
 
     // =======================================================
-    // Phase 9.1
     // Speed short
     // =======================================================
 
@@ -6447,7 +7231,6 @@ private:
     }
 
     // =======================================================
-    // Phase 9.1
     // Intensity short
     // =======================================================
 
@@ -6464,6 +7247,33 @@ private:
 
       lastIntensityValue =
         getCurrentIntensity();
+
+      hueEditValid =
+        false;
+
+      saturationEditValid =
+        false;
+
+      return;
+    }
+
+    // =======================================================
+    // Palette short
+    // =======================================================
+
+    if (executePaletteShortPress)
+    {
+      paletteShortPress(
+        releasedTarget
+      );
+
+      drawPalette(
+        getCurrentPalette(),
+        TOUCH_TARGET_NONE
+      );
+
+      lastPaletteValue =
+        getCurrentPalette();
 
       hueEditValid =
         false;
@@ -6670,10 +7480,6 @@ public:
     Print& settingsScript
   ) override
   {
-    // -------------------------------------------------------
-    // Sleep Timeout dropdown
-    // -------------------------------------------------------
-
     settingsScript.print(
       F(
         "cs3st=addDropdown("
@@ -6733,10 +7539,6 @@ public:
       )
     );
 
-    // -------------------------------------------------------
-    // LCD brightness helper
-    // -------------------------------------------------------
-
     settingsScript.print(
       F(
         "addInfo("
@@ -6746,10 +7548,6 @@ public:
         ");"
       )
     );
-
-    // -------------------------------------------------------
-    // Fade Duration dropdown
-    // -------------------------------------------------------
 
     settingsScript.print(
       F(
@@ -6812,7 +7610,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 9.1 start"
+        "Phase 9.2.1 start"
       )
     );
 
@@ -6879,10 +7677,6 @@ public:
         : "NOT FOUND"
     );
 
-    // -------------------------------------------------------
-    // Startup begins dark
-    // -------------------------------------------------------
-
     setDisplayBrightness(
       0
     );
@@ -6921,7 +7715,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 9.1 setup complete"
+        "Phase 9.2.1 setup complete"
       )
     );
 
@@ -7114,6 +7908,9 @@ public:
     uint8_t currentIntensity =
       getCurrentIntensity();
 
+    uint8_t currentPalette =
+      getCurrentPalette();
+
     // =======================================================
     // Primary Color
     // =======================================================
@@ -7214,6 +8011,18 @@ public:
 
         lastIntensityValue =
           currentIntensity;
+
+        lastPaletteValue =
+          currentPalette;
+      }
+
+      if (
+        (int)currentPalette !=
+        lastPaletteValue
+      )
+      {
+        lastPaletteValue =
+          currentPalette;
       }
 
       if (
@@ -7280,7 +8089,6 @@ public:
     }
 
     // =======================================================
-    // Phase 9.1
     // EFFECT
     // =======================================================
 
@@ -7305,13 +8113,15 @@ public:
             TOUCH_TARGET_INTENSITY_UP
         );
 
-      // -----------------------------------------------------
-      // Effect changed externally
-      //
-      // Redraw complete Effect page so name and settings are
-      // immediately synchronized.
-      // -----------------------------------------------------
+      bool paletteTouchActive =
+        (
+          touchTarget ==
+            TOUCH_TARGET_PALETTE_PREV ||
+          touchTarget ==
+            TOUCH_TARGET_PALETTE_NEXT
+        );
 
+      // Effect changed externally.
       if (
         touchTarget ==
           TOUCH_TARGET_NONE &&
@@ -7324,10 +8134,7 @@ public:
         return;
       }
 
-      // -----------------------------------------------------
-      // Speed changed externally
-      // -----------------------------------------------------
-
+      // Speed changed externally.
       if (
         !speedTouchActive &&
         (int)currentSpeed !=
@@ -7343,10 +8150,7 @@ public:
           currentSpeed;
       }
 
-      // -----------------------------------------------------
-      // Intensity changed externally
-      // -----------------------------------------------------
-
+      // Intensity changed externally.
       if (
         !intensityTouchActive &&
         (int)currentIntensity !=
@@ -7360,6 +8164,22 @@ public:
 
         lastIntensityValue =
           currentIntensity;
+      }
+
+      // Palette changed externally.
+      if (
+        !paletteTouchActive &&
+        (int)currentPalette !=
+          lastPaletteValue
+      )
+      {
+        drawPalette(
+          currentPalette,
+          TOUCH_TARGET_NONE
+        );
+
+        lastPaletteValue =
+          currentPalette;
       }
     }
 
@@ -7535,7 +8355,6 @@ public:
     }
 
     // -------------------------------------------------------
-    // Phase 9.1
     // Effect Speed
     // -------------------------------------------------------
 
@@ -7561,7 +8380,6 @@ public:
     }
 
     // -------------------------------------------------------
-    // Phase 9.1
     // Effect Intensity
     // -------------------------------------------------------
 
@@ -7585,6 +8403,78 @@ public:
         "No segment"
       );
     }
+
+    // -------------------------------------------------------
+    // Palette
+    // -------------------------------------------------------
+
+    JsonArray paletteInfo =
+      user.createNestedArray(
+        "CoreS3 Effect Palette"
+      );
+
+    if (
+      strip.getSegmentsNum() >
+      0
+    )
+    {
+      char paletteName[64];
+
+      getPaletteName(
+        getCurrentPalette(),
+        paletteName,
+        sizeof(paletteName)
+      );
+
+      paletteInfo.add(
+        paletteName
+      );
+    }
+    else
+    {
+      paletteInfo.add(
+        "No segment"
+      );
+    }
+
+    // -------------------------------------------------------
+    // Palette ID
+    // -------------------------------------------------------
+
+    JsonArray paletteIdInfo =
+      user.createNestedArray(
+        "CoreS3 Effect Palette ID"
+      );
+
+    if (
+      strip.getSegmentsNum() >
+      0
+    )
+    {
+      paletteIdInfo.add(
+        getCurrentPalette()
+      );
+    }
+    else
+    {
+      paletteIdInfo.add(
+        "No segment"
+      );
+    }
+
+    // -------------------------------------------------------
+    // Phase 9.2.1
+    // Palette touch area
+    // -------------------------------------------------------
+
+    JsonArray paletteTouchInfo =
+      user.createNestedArray(
+        "CoreS3 Palette Touch Area"
+      );
+
+    paletteTouchInfo.add(
+      "Expanded"
+    );
 
     // -------------------------------------------------------
     // Color
@@ -7841,7 +8731,7 @@ public:
       );
 
     phaseInfo.add(
-      "9.1"
+      "9.2.1"
     );
   }
 };
