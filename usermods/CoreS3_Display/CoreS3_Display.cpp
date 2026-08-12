@@ -44,25 +44,53 @@ private:
   uint8_t currentDisplayBrightness = 0;
 
   // =========================================================
+  // Phase 8.3 - Display suspend
+  //
+  // 30 seconds without touch:
+  //
+  // ACTIVE
+  //   -> Fade Out
+  //   -> Brightness 0
+  //   -> SLEEP
+  //
+  // First touch:
+  //
+  // SLEEP
+  //   -> consume first touch
+  //   -> redraw latest screen
+  //   -> Fade In
+  //   -> wait until finger is released
+  //   -> ACTIVE
+  //
+  // =========================================================
+
+  static constexpr unsigned long DISPLAY_SLEEP_TIMEOUT_MS = 30000;
+
+  static constexpr unsigned long DISPLAY_FADE_INTERVAL_MS = 8;
+  static constexpr uint8_t DISPLAY_FADE_STEP = 4;
+
+  enum DisplayPowerState : uint8_t
+  {
+    DISPLAY_POWER_ACTIVE = 0,
+    DISPLAY_POWER_SLEEP_FADE_OUT,
+    DISPLAY_POWER_SLEEPING,
+    DISPLAY_POWER_WAKE_FADE_IN,
+    DISPLAY_POWER_WAKE_WAIT_RELEASE
+  };
+
+  DisplayPowerState displayPowerState =
+    DISPLAY_POWER_ACTIVE;
+
+  unsigned long lastUserActivityMs = 0;
+  unsigned long displayFadeLastStep = 0;
+
+  unsigned long wakeTouchLastPoll = 0;
+  bool wakeTouchState = false;
+
+  unsigned long wakeReleaseCandidate = 0;
+
+  // =========================================================
   // Startup animation
-  //
-  // Flow:
-  //
-  //   Logo
-  //     ↓
-  //   Fade In
-  //     ↓
-  //   Wi-Fi Connecting...
-  //     ↓
-  //   Wi-Fi Connected + IP
-  //     ↓
-  //   Hold
-  //     ↓
-  //   Fade Out
-  //     ↓
-  //   MAIN screen
-  //     ↓
-  //   Fade In
   // =========================================================
 
   enum StartupState : uint8_t
@@ -93,13 +121,7 @@ private:
   static constexpr unsigned long STARTUP_DOTS_INTERVAL_MS = 350;
 
   // =========================================================
-  // Persistent logical HSV state
-  //
-  // Hue / SaturationはRGBから毎回逆算せず、
-  // CoreS3側で論理HSV値を保持します。
-  //
-  // Web UI等からPrimary Colorが外部変更された場合のみ
-  // RGB -> HSVを再同期します。
+  // Persistent logical HSV
   // =========================================================
 
   CHSV32 logicalColorHsv;
@@ -111,7 +133,7 @@ private:
   uint8_t logicalWhiteValue = 0;
 
   // =========================================================
-  // Screen pages
+  // Pages
   // =========================================================
 
   enum ScreenPage : uint8_t
@@ -191,7 +213,7 @@ private:
   unsigned long lastSaturationRepeat = 0;
 
   // =========================================================
-  // Hue gesture state
+  // Hue gesture
   // =========================================================
 
   CHSV32 hueEditHsv;
@@ -202,7 +224,7 @@ private:
   uint8_t hueEditWhite = 0;
 
   // =========================================================
-  // Saturation gesture state
+  // Saturation gesture
   // =========================================================
 
   CHSV32 saturationEditHsv;
@@ -213,17 +235,13 @@ private:
   uint8_t saturationEditWhite = 0;
 
   // =========================================================
-  // Power button
+  // Layout
   // =========================================================
 
   static constexpr int16_t POWER_BUTTON_X = 8;
   static constexpr int16_t POWER_BUTTON_Y = 8;
   static constexpr int16_t POWER_BUTTON_W = 44;
   static constexpr int16_t POWER_BUTTON_H = 44;
-
-  // =========================================================
-  // MAIN header
-  // =========================================================
 
   static constexpr int16_t HEADER_CONTENT_LEFT = 60;
   static constexpr int16_t HEADER_CONTENT_RIGHT = 312;
@@ -237,60 +255,30 @@ private:
   static constexpr int16_t HEADER_TITLE_Y = 18;
   static constexpr int16_t HEADER_IP_Y = 41;
 
-  // =========================================================
-  // Common LEFT / RIGHT controls
-  // =========================================================
-
   static constexpr int16_t CONTROL_LEFT_X = 16;
   static constexpr int16_t CONTROL_RIGHT_X = 240;
 
   static constexpr int16_t CONTROL_BUTTON_W = 64;
   static constexpr int16_t CONTROL_BUTTON_H = 34;
 
-  // =========================================================
-  // MAIN controls
-  // =========================================================
-
   static constexpr int16_t BRI_BUTTON_Y = 82;
   static constexpr int16_t FX_BUTTON_Y = 138;
 
-  // =========================================================
   // Phase 8.1
-  //
-  // COLOR button now uses the same outside edges as the
-  // Brightness / Effect buttons.
-  //
-  // X = 16
-  // right edge = 304
-  // width = 288
-  // =========================================================
-
   static constexpr int16_t COLOR_BUTTON_X = 16;
   static constexpr int16_t COLOR_BUTTON_Y = 188;
   static constexpr int16_t COLOR_BUTTON_W = 288;
   static constexpr int16_t COLOR_BUTTON_H = 40;
-
-  // =========================================================
-  // COLOR Back button
-  // =========================================================
 
   static constexpr int16_t BACK_BUTTON_X = 268;
   static constexpr int16_t BACK_BUTTON_Y = 8;
   static constexpr int16_t BACK_BUTTON_W = 44;
   static constexpr int16_t BACK_BUTTON_H = 44;
 
-  // =========================================================
-  // COLOR preview
-  // =========================================================
-
   static constexpr int16_t COLOR_PREVIEW_X = 92;
   static constexpr int16_t COLOR_PREVIEW_Y = 68;
   static constexpr int16_t COLOR_PREVIEW_W = 136;
   static constexpr int16_t COLOR_PREVIEW_H = 36;
-
-  // =========================================================
-  // Hue / Saturation
-  // =========================================================
 
   static constexpr int16_t HUE_BUTTON_Y = 151;
 
@@ -302,9 +290,7 @@ private:
   // =========================================================
 
   static constexpr unsigned long TOUCH_POLL_MS = 15;
-
   static constexpr unsigned long TOUCH_RELEASE_CONFIRM_MS = 70;
-
   static constexpr unsigned long TOUCH_ACTION_COOLDOWN_MS = 250;
 
   // =========================================================
@@ -338,7 +324,7 @@ private:
   static constexpr int SATURATION_LONG_STEP = 5;
 
   // =========================================================
-  // Display brightness helper
+  // Display brightness
   // =========================================================
 
   void setDisplayBrightness(
@@ -354,14 +340,15 @@ private:
   }
 
   // =========================================================
-  // Non-blocking Fade helper
-  //
-  // Returns true when target brightness has been reached.
+  // Generic non-blocking fade
   // =========================================================
 
   bool updateFade(
     uint8_t targetBrightness,
-    unsigned long now
+    unsigned long now,
+    unsigned long& lastFadeStep,
+    unsigned long fadeInterval,
+    uint8_t fadeStep
   )
   {
     if (
@@ -374,14 +361,14 @@ private:
 
     if (
       now -
-      startupLastFadeStep <
-      STARTUP_FADE_INTERVAL_MS
+      lastFadeStep <
+      fadeInterval
     )
     {
       return false;
     }
 
-    startupLastFadeStep =
+    lastFadeStep =
       now;
 
     if (
@@ -391,7 +378,7 @@ private:
     {
       int nextValue =
         currentDisplayBrightness +
-        STARTUP_FADE_STEP;
+        fadeStep;
 
       if (
         nextValue >
@@ -410,7 +397,7 @@ private:
     {
       int nextValue =
         currentDisplayBrightness -
-        STARTUP_FADE_STEP;
+        fadeStep;
 
       if (
         nextValue <
@@ -434,7 +421,7 @@ private:
   }
 
   // =========================================================
-  // Startup logo base
+  // Startup logo
   // =========================================================
 
   void drawStartupBase()
@@ -443,15 +430,6 @@ private:
       TFT_BLACK
     );
 
-    // -------------------------------------------------------
-    // WLED logo
-    //
-    // 304 x 95
-    //
-    // LCD width = 320
-    // left/right margin = 8
-    // -------------------------------------------------------
-
     bool logoResult =
       display.drawPng(
         CORES3_WLED_LOGO_PNG,
@@ -459,10 +437,6 @@ private:
         8,
         20
       );
-
-    // -------------------------------------------------------
-    // Fallback if PNG decoding fails.
-    // -------------------------------------------------------
 
     if (!logoResult)
     {
@@ -488,19 +462,18 @@ private:
       Serial.println(
         F(
           "[CoreS3_Display] "
-          "WARNING: WLED startup PNG draw failed"
+          "WARNING: startup PNG draw failed"
         )
       );
     }
   }
 
   // =========================================================
-  // Startup Connecting status
+  // Startup connecting
   // =========================================================
 
   void drawStartupConnectingStatus()
   {
-    // Only redraw lower status area.
     display.fillRect(
       0,
       125,
@@ -570,7 +543,7 @@ private:
   }
 
   // =========================================================
-  // Startup Connected status
+  // Startup connected
   // =========================================================
 
   void drawStartupConnectedStatus(
@@ -622,8 +595,6 @@ private:
 
   // =========================================================
   // Startup sequence
-  //
-  // Completely non-blocking.
   // =========================================================
 
   void handleStartupSequence()
@@ -639,9 +610,9 @@ private:
     unsigned long now =
       millis();
 
-    // =======================================================
-    // Fade logo in
-    // =======================================================
+    // -------------------------------------------------------
+    // Fade In
+    // -------------------------------------------------------
 
     if (
       startupState ==
@@ -651,7 +622,10 @@ private:
       if (
         updateFade(
           DISPLAY_NORMAL_BRIGHTNESS,
-          now
+          now,
+          startupLastFadeStep,
+          STARTUP_FADE_INTERVAL_MS,
+          STARTUP_FADE_STEP
         )
       )
       {
@@ -668,19 +642,15 @@ private:
       return;
     }
 
-    // =======================================================
-    // Wait for Wi-Fi
-    // =======================================================
+    // -------------------------------------------------------
+    // Wi-Fi wait
+    // -------------------------------------------------------
 
     if (
       startupState ==
       STARTUP_WAIT_WIFI
     )
     {
-      // -----------------------------------------------------
-      // Animate Connecting...
-      // -----------------------------------------------------
-
       if (
         now -
         startupLastDotsUpdate >=
@@ -704,10 +674,6 @@ private:
         drawStartupConnectingStatus();
       }
 
-      // -----------------------------------------------------
-      // Connected
-      // -----------------------------------------------------
-
       if (
         WiFi.status() ==
         WL_CONNECTED
@@ -720,12 +686,6 @@ private:
           startupIPAddress
         );
 
-        Serial.printf(
-          "[CoreS3_Display] "
-          "Startup Wi-Fi connected: %s\n",
-          startupIPAddress.c_str()
-        );
-
         startupState =
           STARTUP_CONNECTED_HOLD;
 
@@ -736,9 +696,9 @@ private:
       return;
     }
 
-    // =======================================================
-    // Hold connected status
-    // =======================================================
+    // -------------------------------------------------------
+    // Connected hold
+    // -------------------------------------------------------
 
     if (
       startupState ==
@@ -761,9 +721,9 @@ private:
       return;
     }
 
-    // =======================================================
-    // Fade startup logo out
-    // =======================================================
+    // -------------------------------------------------------
+    // Startup Fade Out
+    // -------------------------------------------------------
 
     if (
       startupState ==
@@ -773,15 +733,13 @@ private:
       if (
         updateFade(
           0,
-          now
+          now,
+          startupLastFadeStep,
+          STARTUP_FADE_INTERVAL_MS,
+          STARTUP_FADE_STEP
         )
       )
       {
-        // ---------------------------------------------------
-        // LCD is now dark.
-        // Draw MAIN behind the dark backlight.
-        // ---------------------------------------------------
-
         drawMainScreen(
           startupIPAddress
         );
@@ -800,9 +758,9 @@ private:
       return;
     }
 
-    // =======================================================
-    // Fade MAIN screen in
-    // =======================================================
+    // -------------------------------------------------------
+    // MAIN Fade In
+    // -------------------------------------------------------
 
     if (
       startupState ==
@@ -812,7 +770,10 @@ private:
       if (
         updateFade(
           DISPLAY_NORMAL_BRIGHTNESS,
-          now
+          now,
+          startupLastFadeStep,
+          STARTUP_FADE_INTERVAL_MS,
+          STARTUP_FADE_STEP
         )
       )
       {
@@ -831,6 +792,13 @@ private:
         connectingScreenShown =
           false;
 
+        // Start 30 second inactivity timer here.
+        lastUserActivityMs =
+          now;
+
+        displayPowerState =
+          DISPLAY_POWER_ACTIVE;
+
         Serial.println(
           F(
             "[CoreS3_Display] "
@@ -841,6 +809,381 @@ private:
 
       return;
     }
+  }
+
+  // =========================================================
+  // Phase 8.3 - Wake touch polling
+  //
+  // Maintains last state between polls so a 15 ms throttle
+  // does not look like a false release.
+  // =========================================================
+
+  bool pollWakeTouch(
+    unsigned long now
+  )
+  {
+    if (
+      now -
+      wakeTouchLastPoll <
+      TOUCH_POLL_MS
+    )
+    {
+      return
+        wakeTouchState;
+    }
+
+    wakeTouchLastPoll =
+      now;
+
+    int16_t x = -1;
+    int16_t y = -1;
+
+    wakeTouchState =
+      (
+        display.getTouch(
+          &x,
+          &y
+        ) > 0
+      );
+
+    return
+      wakeTouchState;
+  }
+
+  // =========================================================
+  // Redraw latest operational page before Wake
+  // =========================================================
+
+  void redrawCurrentPageForWake()
+  {
+    if (
+      WiFi.status() !=
+      WL_CONNECTED
+    )
+    {
+      drawConnectingScreen();
+
+      return;
+    }
+
+    if (
+      currentPage ==
+      SCREEN_COLOR
+    )
+    {
+      drawColorScreen();
+    }
+    else
+    {
+      drawMainScreen(
+        WiFi.localIP().toString()
+      );
+    }
+  }
+
+  // =========================================================
+  // Start display sleep
+  // =========================================================
+
+  void beginDisplaySleep(
+    unsigned long now
+  )
+  {
+    Serial.println(
+      F(
+        "[CoreS3_Display] "
+        "Display sleep start"
+      )
+    );
+
+    resetTouchGesture();
+
+    displayPowerState =
+      DISPLAY_POWER_SLEEP_FADE_OUT;
+
+    displayFadeLastStep =
+      now;
+
+    wakeTouchLastPoll =
+      0;
+
+    wakeTouchState =
+      false;
+
+    wakeReleaseCandidate =
+      0;
+  }
+
+  // =========================================================
+  // Start display wake
+  //
+  // IMPORTANT:
+  // The touch which wakes the display is NEVER passed to
+  // the normal control handler.
+  // =========================================================
+
+  void beginDisplayWake(
+    unsigned long now
+  )
+  {
+    Serial.println(
+      F(
+        "[CoreS3_Display] "
+        "Display wake start"
+      )
+    );
+
+    resetTouchGesture();
+
+    // Make redraw invisible.
+    setDisplayBrightness(
+      0
+    );
+
+    // Refresh everything from current WLED state.
+    redrawCurrentPageForWake();
+
+    setDisplayBrightness(
+      0
+    );
+
+    displayPowerState =
+      DISPLAY_POWER_WAKE_FADE_IN;
+
+    displayFadeLastStep =
+      now;
+
+    wakeReleaseCandidate =
+      0;
+
+    // Wake touch is deliberately consumed.
+    lastUserActivityMs =
+      now;
+  }
+
+  // =========================================================
+  // Phase 8.3 display power management
+  //
+  // Returns true while normal touch processing must remain
+  // blocked.
+  // =========================================================
+
+  bool handleDisplayPowerManagement()
+  {
+    unsigned long now =
+      millis();
+
+    // =======================================================
+    // ACTIVE
+    // =======================================================
+
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_ACTIVE
+    )
+    {
+      if (
+        !touchActive &&
+        now -
+        lastUserActivityMs >=
+        DISPLAY_SLEEP_TIMEOUT_MS
+      )
+      {
+        beginDisplaySleep(
+          now
+        );
+
+        return true;
+      }
+
+      return false;
+    }
+
+    // =======================================================
+    // Fade Out
+    //
+    // A touch during Fade Out immediately becomes Wake only.
+    // =======================================================
+
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_SLEEP_FADE_OUT
+    )
+    {
+      if (
+        pollWakeTouch(
+          now
+        )
+      )
+      {
+        beginDisplayWake(
+          now
+        );
+
+        return true;
+      }
+
+      if (
+        updateFade(
+          0,
+          now,
+          displayFadeLastStep,
+          DISPLAY_FADE_INTERVAL_MS,
+          DISPLAY_FADE_STEP
+        )
+      )
+      {
+        displayPowerState =
+          DISPLAY_POWER_SLEEPING;
+
+        setDisplayBrightness(
+          0
+        );
+
+        Serial.println(
+          F(
+            "[CoreS3_Display] "
+            "Display sleeping"
+          )
+        );
+      }
+
+      return true;
+    }
+
+    // =======================================================
+    // Fully sleeping
+    // =======================================================
+
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_SLEEPING
+    )
+    {
+      if (
+        pollWakeTouch(
+          now
+        )
+      )
+      {
+        beginDisplayWake(
+          now
+        );
+      }
+
+      return true;
+    }
+
+    // =======================================================
+    // Wake Fade In
+    //
+    // Ignore all touch input during Fade In.
+    // =======================================================
+
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_WAKE_FADE_IN
+    )
+    {
+      pollWakeTouch(
+        now
+      );
+
+      if (
+        updateFade(
+          DISPLAY_NORMAL_BRIGHTNESS,
+          now,
+          displayFadeLastStep,
+          DISPLAY_FADE_INTERVAL_MS,
+          DISPLAY_FADE_STEP
+        )
+      )
+      {
+        displayPowerState =
+          DISPLAY_POWER_WAKE_WAIT_RELEASE;
+
+        wakeReleaseCandidate =
+          0;
+
+        Serial.println(
+          F(
+            "[CoreS3_Display] "
+            "Display wake fade complete"
+          )
+        );
+      }
+
+      return true;
+    }
+
+    // =======================================================
+    // Wait for release
+    //
+    // The original Wake touch must be completely released
+    // before normal controls are allowed again.
+    // =======================================================
+
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_WAKE_WAIT_RELEASE
+    )
+    {
+      bool touching =
+        pollWakeTouch(
+          now
+        );
+
+      if (touching)
+      {
+        wakeReleaseCandidate =
+          0;
+
+        return true;
+      }
+
+      if (
+        wakeReleaseCandidate ==
+        0
+      )
+      {
+        wakeReleaseCandidate =
+          now;
+
+        return true;
+      }
+
+      if (
+        now -
+        wakeReleaseCandidate >=
+        TOUCH_RELEASE_CONFIRM_MS
+      )
+      {
+        displayPowerState =
+          DISPLAY_POWER_ACTIVE;
+
+        lastUserActivityMs =
+          now;
+
+        wakeReleaseCandidate =
+          0;
+
+        wakeTouchState =
+          false;
+
+        resetTouchGesture();
+
+        Serial.println(
+          F(
+            "[CoreS3_Display] "
+            "Display active"
+          )
+        );
+      }
+
+      return true;
+    }
+
+    return false;
   }
 
   // =========================================================
@@ -880,7 +1223,7 @@ private:
   }
 
   // =========================================================
-  // Current Effect
+  // Effect
   // =========================================================
 
   uint8_t getCurrentEffectMode()
@@ -947,7 +1290,7 @@ private:
   }
 
   // =========================================================
-  // Synchronize logical HSV from RGB
+  // Logical HSV sync
   // =========================================================
 
   void syncLogicalColorFromRgb(
@@ -983,21 +1326,7 @@ private:
 
     lastSaturationValue =
       logicalSaturationValue;
-
-    Serial.printf(
-      "[CoreS3_Display] "
-      "HSV sync from RGB: "
-      "H=%u S=%u V=%u W=%u\n",
-      logicalHueValue,
-      logicalSaturationValue,
-      logicalColorHsv.v,
-      logicalWhiteValue
-    );
   }
-
-  // =========================================================
-  // Displayed Hue
-  // =========================================================
 
   uint8_t getDisplayedHue()
   {
@@ -1020,10 +1349,6 @@ private:
         currentColor
       );
   }
-
-  // =========================================================
-  // Displayed Saturation
-  // =========================================================
 
   uint8_t getDisplayedSaturation()
   {
@@ -1048,10 +1373,7 @@ private:
   }
 
   // =========================================================
-  // Reconnect screen
-  //
-  // After normal operation, if Wi-Fi disconnects,
-  // use the same WLED branding.
+  // Wi-Fi reconnect screen
   // =========================================================
 
   void drawConnectingScreen()
@@ -1099,9 +1421,6 @@ private:
       screenWidth / 2,
       185
     );
-
-    currentPage =
-      SCREEN_MAIN;
 
     connectingScreenShown =
       true;
@@ -1243,7 +1562,7 @@ private:
   }
 
   // =========================================================
-  // Generic triangle button
+  // Triangle button
   // =========================================================
 
   void drawTriangleButton(
@@ -1412,17 +1731,13 @@ private:
       brightnessValue
     );
 
-    display.setTextDatum(
-      textdatum_t::middle_center
+    display.setTextSize(
+      2
     );
 
     display.setTextColor(
       TFT_WHITE,
       TFT_BLACK
-    );
-
-    display.setTextSize(
-      2
     );
 
     display.drawString(
@@ -1548,10 +1863,6 @@ private:
       sizeof(effectName)
     );
 
-    display.setTextDatum(
-      textdatum_t::middle_center
-    );
-
     display.setTextColor(
       TFT_WHITE,
       TFT_BLACK
@@ -1581,14 +1892,7 @@ private:
   }
 
   // =========================================================
-  // MAIN COLOR button
-  //
-  // Phase 8.1:
-  //
-  // Full-width visual alignment.
-  //
-  // The icon + "COLOR" text are treated as one centered
-  // visual group.
+  // COLOR button
   // =========================================================
 
   void drawColorButton(
@@ -1609,20 +1913,11 @@ private:
         ? TFT_BLACK
         : TFT_WHITE;
 
-    uint8_t r =
-      R(color);
-
-    uint8_t g =
-      G(color);
-
-    uint8_t b =
-      B(color);
-
     uint16_t previewColor =
       rgbTo565(
-        r,
-        g,
-        b
+        R(color),
+        G(color),
+        B(color)
       );
 
     display.fillRect(
@@ -1656,16 +1951,6 @@ private:
       COLOR_BUTTON_H - 2,
       buttonColor
     );
-
-    // -------------------------------------------------------
-    // Centered swatch + COLOR group
-    //
-    // Approximate group:
-    //
-    // [ swatch ]   COLOR
-    //
-    // X 110..210
-    // -------------------------------------------------------
 
     static constexpr int16_t SWATCH_X = 110;
     static constexpr int16_t SWATCH_W = 26;
@@ -1721,7 +2006,7 @@ private:
   }
 
   // =========================================================
-  // Back button
+  // Back
   // =========================================================
 
   void drawBackButton(
@@ -1784,13 +2069,10 @@ private:
     display.fillTriangle(
       centerX - 11,
       centerY,
-
       centerX - 1,
       centerY - 9,
-
       centerX - 1,
       centerY + 9,
-
       iconColor
     );
 
@@ -1807,7 +2089,7 @@ private:
   }
 
   // =========================================================
-  // COLOR details
+  // Color details
   // =========================================================
 
   void drawColorDetails(
@@ -1822,20 +2104,11 @@ private:
       TFT_BLACK
     );
 
-    uint8_t r =
-      R(color);
-
-    uint8_t g =
-      G(color);
-
-    uint8_t b =
-      B(color);
-
     uint16_t previewColor =
       rgbTo565(
-        r,
-        g,
-        b
+        R(color),
+        G(color),
+        B(color)
       );
 
     display.fillRect(
@@ -1868,9 +2141,9 @@ private:
       hexText,
       sizeof(hexText),
       "#%02X%02X%02X",
-      r,
-      g,
-      b
+      R(color),
+      G(color),
+      B(color)
     );
 
     display.setTextDatum(
@@ -1962,15 +2235,6 @@ private:
       hueValue
     );
 
-    display.setTextDatum(
-      textdatum_t::middle_center
-    );
-
-    display.setTextColor(
-      TFT_WHITE,
-      TFT_BLACK
-    );
-
     display.setTextSize(
       2
     );
@@ -2045,15 +2309,6 @@ private:
       saturationValue
     );
 
-    display.setTextDatum(
-      textdatum_t::middle_center
-    );
-
-    display.setTextColor(
-      TFT_WHITE,
-      TFT_BLACK
-    );
-
     display.setTextSize(
       2
     );
@@ -2067,7 +2322,7 @@ private:
   }
 
   // =========================================================
-  // MAIN screen
+  // MAIN
   // =========================================================
 
   void drawMainScreen(
@@ -2174,7 +2429,7 @@ private:
   }
 
   // =========================================================
-  // COLOR screen
+  // COLOR
   // =========================================================
 
   void drawColorScreen()
@@ -2279,7 +2534,7 @@ private:
   }
 
   // =========================================================
-  // Generic hit test
+  // Hit test
   // =========================================================
 
   bool pointInsideRect(
@@ -2299,18 +2554,10 @@ private:
     );
   }
 
-  // =========================================================
-  // Hit tests
-  // =========================================================
-
-  bool isPowerButtonTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isPowerButtonTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       POWER_BUTTON_X,
       POWER_BUTTON_Y,
       POWER_BUTTON_W,
@@ -2318,14 +2565,10 @@ private:
     );
   }
 
-  bool isBrightnessDownTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isBrightnessDownTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       CONTROL_LEFT_X,
       BRI_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2333,14 +2576,10 @@ private:
     );
   }
 
-  bool isBrightnessUpTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isBrightnessUpTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       CONTROL_RIGHT_X,
       BRI_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2348,14 +2587,10 @@ private:
     );
   }
 
-  bool isEffectPrevTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isEffectPrevTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       CONTROL_LEFT_X,
       FX_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2363,14 +2598,10 @@ private:
     );
   }
 
-  bool isEffectNextTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isEffectNextTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       CONTROL_RIGHT_X,
       FX_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2378,14 +2609,10 @@ private:
     );
   }
 
-  bool isColorButtonTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isColorButtonTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       COLOR_BUTTON_X,
       COLOR_BUTTON_Y,
       COLOR_BUTTON_W,
@@ -2393,14 +2620,10 @@ private:
     );
   }
 
-  bool isBackButtonTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isBackButtonTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       BACK_BUTTON_X,
       BACK_BUTTON_Y,
       BACK_BUTTON_W,
@@ -2408,14 +2631,10 @@ private:
     );
   }
 
-  bool isHueDownTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isHueDownTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       CONTROL_LEFT_X,
       HUE_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2423,14 +2642,10 @@ private:
     );
   }
 
-  bool isHueUpTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isHueUpTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       CONTROL_RIGHT_X,
       HUE_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2438,14 +2653,10 @@ private:
     );
   }
 
-  bool isSaturationDownTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isSaturationDownTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       CONTROL_LEFT_X,
       SATURATION_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2453,14 +2664,10 @@ private:
     );
   }
 
-  bool isSaturationUpTouched(
-    int16_t x,
-    int16_t y
-  )
+  bool isSaturationUpTouched(int16_t x, int16_t y)
   {
     return pointInsideRect(
-      x,
-      y,
+      x, y,
       CONTROL_RIGHT_X,
       SATURATION_BUTTON_Y,
       CONTROL_BUTTON_W,
@@ -2469,7 +2676,7 @@ private:
   }
 
   // =========================================================
-  // Begin Hue edit
+  // Begin Hue
   // =========================================================
 
   void beginHueEdit()
@@ -2506,13 +2713,10 @@ private:
 
     hueEditValid =
       true;
-
-    lastHueValue =
-      hueEditValue;
   }
 
   // =========================================================
-  // Begin Saturation edit
+  // Begin Saturation
   // =========================================================
 
   void beginSaturationEdit()
@@ -2549,13 +2753,10 @@ private:
 
     saturationEditValid =
       true;
-
-    lastSaturationValue =
-      saturationEditValue;
   }
 
   // =========================================================
-  // Reset touch gesture
+  // Reset touch
   // =========================================================
 
   void resetTouchGesture()
@@ -2652,7 +2853,7 @@ private:
   }
 
   // =========================================================
-  // Power
+  // Power action
   // =========================================================
 
   void toggleLedPowerFromTouch()
@@ -2671,7 +2872,7 @@ private:
   }
 
   // =========================================================
-  // Brightness
+  // Brightness actions
   // =========================================================
 
   bool applyBrightnessValue(
@@ -2740,7 +2941,8 @@ private:
   {
     int newValue =
       constrain(
-        (int)bri + step,
+        (int)bri +
+        step,
         0,
         255
       );
@@ -2816,7 +3018,7 @@ private:
   }
 
   // =========================================================
-  // Effect
+  // Effect actions
   // =========================================================
 
   void applyEffectStep(
@@ -2891,7 +3093,7 @@ private:
   }
 
   // =========================================================
-  // Hue
+  // Hue actions
   // =========================================================
 
   bool applyHueValue(
@@ -3094,7 +3296,7 @@ private:
   }
 
   // =========================================================
-  // Saturation
+  // Saturation actions
   // =========================================================
 
   bool applySaturationValue(
@@ -3425,7 +3627,7 @@ private:
   }
 
   // =========================================================
-  // Touch processing
+  // Normal touch processing
   // =========================================================
 
   void handleTouch()
@@ -3468,11 +3670,15 @@ private:
       ) > 0;
 
     // =======================================================
-    // Finger touching
+    // Touching
     // =======================================================
 
     if (touching)
     {
+      // Every normal touch resets the 30 second timer.
+      lastUserActivityMs =
+        now;
+
       touchReleaseCandidate =
         0;
 
@@ -3571,10 +3777,6 @@ private:
             touchY
           );
       }
-
-      // -----------------------------------------------------
-      // New gesture
-      // -----------------------------------------------------
 
       if (!touchActive)
       {
@@ -3759,9 +3961,9 @@ private:
         }
       }
 
-      // =====================================================
+      // -----------------------------------------------------
       // Power
-      // =====================================================
+      // -----------------------------------------------------
 
       if (
         touchTarget ==
@@ -3785,9 +3987,9 @@ private:
         return;
       }
 
-      // =====================================================
+      // -----------------------------------------------------
       // Brightness
-      // =====================================================
+      // -----------------------------------------------------
 
       if (
         touchTarget ==
@@ -3864,9 +4066,9 @@ private:
         return;
       }
 
-      // =====================================================
+      // -----------------------------------------------------
       // Effect
-      // =====================================================
+      // -----------------------------------------------------
 
       if (
         touchTarget ==
@@ -3903,9 +4105,9 @@ private:
         return;
       }
 
-      // =====================================================
+      // -----------------------------------------------------
       // COLOR open
-      // =====================================================
+      // -----------------------------------------------------
 
       if (
         touchTarget ==
@@ -3929,9 +4131,9 @@ private:
         return;
       }
 
-      // =====================================================
+      // -----------------------------------------------------
       // Back
-      // =====================================================
+      // -----------------------------------------------------
 
       if (
         touchTarget ==
@@ -3954,9 +4156,9 @@ private:
         return;
       }
 
-      // =====================================================
+      // -----------------------------------------------------
       // Hue
-      // =====================================================
+      // -----------------------------------------------------
 
       if (
         touchTarget ==
@@ -4033,9 +4235,9 @@ private:
         return;
       }
 
-      // =====================================================
+      // -----------------------------------------------------
       // Saturation
-      // =====================================================
+      // -----------------------------------------------------
 
       if (
         touchTarget ==
@@ -4143,10 +4345,6 @@ private:
     {
       return;
     }
-
-    // =======================================================
-    // Confirmed release
-    // =======================================================
 
     TouchTarget releasedTarget =
       touchTarget;
@@ -4329,7 +4527,7 @@ private:
     }
 
     // -------------------------------------------------------
-    // Preserve edit states for short-release actions
+    // Save edit states
     // -------------------------------------------------------
 
     bool savedHueEditValid =
@@ -4356,15 +4554,7 @@ private:
     uint8_t savedSaturationEditWhite =
       saturationEditWhite;
 
-    // -------------------------------------------------------
-    // Reset gesture
-    // -------------------------------------------------------
-
     resetTouchGesture();
-
-    // -------------------------------------------------------
-    // Restore edit state for action execution
-    // -------------------------------------------------------
 
     hueEditValid =
       savedHueEditValid;
@@ -4390,9 +4580,9 @@ private:
     saturationEditWhite =
       savedSaturationEditWhite;
 
-    // =======================================================
+    // -------------------------------------------------------
     // Execute
-    // =======================================================
+    // -------------------------------------------------------
 
     if (executePowerAction)
     {
@@ -4504,12 +4694,6 @@ private:
         TOUCH_TARGET_NONE
       );
 
-      lastHueValue =
-        logicalHueValue;
-
-      lastSaturationValue =
-        logicalSaturationValue;
-
       hueEditValid =
         false;
 
@@ -4534,12 +4718,6 @@ private:
         logicalSaturationValue,
         TOUCH_TARGET_NONE
       );
-
-      lastHueValue =
-        logicalHueValue;
-
-      lastSaturationValue =
-        logicalSaturationValue;
 
       hueEditValid =
         false;
@@ -4570,7 +4748,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 8.1 + 8.2 start"
+        "Phase 8.3 start"
       )
     );
 
@@ -4623,16 +4801,12 @@ public:
     );
 
     // -------------------------------------------------------
-    // Start completely dark.
+    // Startup begins completely dark
     // -------------------------------------------------------
 
     setDisplayBrightness(
       0
     );
-
-    // -------------------------------------------------------
-    // Draw logo while LCD backlight is dark.
-    // -------------------------------------------------------
 
     drawStartupBase();
 
@@ -4640,10 +4814,6 @@ public:
       3;
 
     drawStartupConnectingStatus();
-
-    // -------------------------------------------------------
-    // Start non-blocking Fade In.
-    // -------------------------------------------------------
 
     startupState =
       STARTUP_FADE_IN;
@@ -4657,13 +4827,19 @@ public:
     startupLastDotsUpdate =
       startupStateStart;
 
+    displayPowerState =
+      DISPLAY_POWER_ACTIVE;
+
+    lastUserActivityMs =
+      startupStateStart;
+
     displayReady =
       true;
 
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 8.1 + 8.2 setup complete"
+        "Phase 8.3 setup complete"
       )
     );
 
@@ -4682,10 +4858,7 @@ public:
     }
 
     // =======================================================
-    // Phase 8 startup animation
-    //
-    // Touch operations are intentionally disabled until
-    // startup animation is finished.
+    // Startup
     // =======================================================
 
     if (
@@ -4698,11 +4871,34 @@ public:
       return;
     }
 
-    // -------------------------------------------------------
-    // Normal touch processing
-    // -------------------------------------------------------
+    // =======================================================
+    // Display is ACTIVE:
+    //
+    // Process normal touch first so a touch exactly at the
+    // 30 second boundary counts as user activity instead of
+    // accidentally starting sleep.
+    // =======================================================
 
-    handleTouch();
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_ACTIVE
+    )
+    {
+      handleTouch();
+    }
+
+    // =======================================================
+    // Sleep / Wake state machine
+    //
+    // If not ACTIVE, this consumes the entire touch cycle.
+    // =======================================================
+
+    if (
+      handleDisplayPowerManagement()
+    )
+    {
+      return;
+    }
 
     unsigned long now =
       millis();
@@ -4726,7 +4922,7 @@ public:
       );
 
     // =======================================================
-    // Wi-Fi disconnected after normal operation
+    // Wi-Fi disconnected
     // =======================================================
 
     if (!wifiConnected)
@@ -4747,12 +4943,12 @@ public:
       return;
     }
 
+    String currentIPAddress =
+      WiFi.localIP().toString();
+
     // =======================================================
     // Reconnected
     // =======================================================
-
-    String currentIPAddress =
-      WiFi.localIP().toString();
 
     if (
       !lastWiFiConnected ||
@@ -4989,10 +5185,6 @@ public:
       }
     }
 
-    // =======================================================
-    // Save external color cache
-    // =======================================================
-
     if (
       primaryColorChanged &&
       primaryColorChangeHandled
@@ -5007,7 +5199,7 @@ public:
   }
 
   // =========================================================
-  // WLED Info
+  // Info
   // =========================================================
 
   void addToJsonInfo(
@@ -5117,13 +5309,10 @@ public:
       0
     )
     {
-      uint8_t effectMode =
-        strip.getMainSegment().mode;
-
       char effectName[64];
 
       getEffectName(
-        effectMode,
+        strip.getMainSegment().mode,
         effectName,
         sizeof(effectName)
       );
@@ -5238,6 +5427,55 @@ public:
         STARTUP_DONE
         ? "DONE"
         : "ACTIVE"
+    );
+
+    JsonArray powerStateInfo =
+      user.createNestedArray(
+        "CoreS3 Display Power State"
+      );
+
+    switch (
+      displayPowerState
+    )
+    {
+      case DISPLAY_POWER_ACTIVE:
+        powerStateInfo.add(
+          "ACTIVE"
+        );
+        break;
+
+      case DISPLAY_POWER_SLEEP_FADE_OUT:
+        powerStateInfo.add(
+          "SLEEP FADE OUT"
+        );
+        break;
+
+      case DISPLAY_POWER_SLEEPING:
+        powerStateInfo.add(
+          "SLEEPING"
+        );
+        break;
+
+      case DISPLAY_POWER_WAKE_FADE_IN:
+        powerStateInfo.add(
+          "WAKE FADE IN"
+        );
+        break;
+
+      case DISPLAY_POWER_WAKE_WAIT_RELEASE:
+        powerStateInfo.add(
+          "WAKE WAIT RELEASE"
+        );
+        break;
+    }
+
+    JsonArray sleepInfo =
+      user.createNestedArray(
+        "CoreS3 Display Sleep"
+      );
+
+    sleepInfo.add(
+      "30 sec"
     );
   }
 };
