@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.2.1
+// Phase 10.2.2
 //
 // MAIN
 //   Power
@@ -56,6 +56,15 @@
 //   Saving requires a 1 second hold confirmation.
 //   WLED standard asynchronous savePreset() is used.
 //   Phase 10.1.1 Preset cache behavior is preserved.
+//
+// Phase 10.2.2
+//   Existing Presets can be overwritten from CoreS3.
+//   OVERWRITE target is selected from the RAM Preset cache.
+//   Target selection never applies the Preset, so the current
+//   WLED state remains unchanged until it is saved.
+//   Existing Preset names are preserved.
+//   Overwrite requires a 1 second hold confirmation.
+//   Phase 10.2.1 SAVE NEW behavior is preserved.
 //
 // Common
 //   Startup animation
@@ -276,7 +285,7 @@ private:
     SCREEN_MAIN;
 
   // =========================================================
-  // Phase 10.2.1
+  // Phase 10.2.2
   // Preset sub pages
   // =========================================================
 
@@ -284,7 +293,8 @@ private:
   {
     PRESET_SUBPAGE_NAV = 0,
     PRESET_SUBPAGE_MANAGE,
-    PRESET_SUBPAGE_SAVE
+    PRESET_SUBPAGE_SAVE,
+    PRESET_SUBPAGE_OVERWRITE
   };
 
   PresetSubPage presetSubPage =
@@ -317,6 +327,16 @@ private:
 
   static constexpr unsigned long PRESET_SAVE_HOLD_MS = 1000;
   static constexpr unsigned long PRESET_SAVE_RESULT_HOLD_MS = 900;
+
+  // =========================================================
+  // Phase 10.2.2
+  // Existing Preset overwrite selection
+  // =========================================================
+
+  uint8_t presetOverwriteTargetId = 0;
+  String presetOverwriteTargetName = "";
+
+  bool presetSaveOperationIsOverwrite = false;
 
   // =========================================================
   // Touch targets
@@ -360,7 +380,12 @@ private:
 
     TOUCH_TARGET_PRESET_MANAGE,
     TOUCH_TARGET_PRESET_SAVE_NEW,
-    TOUCH_TARGET_PRESET_SAVE_HOLD
+    TOUCH_TARGET_PRESET_SAVE_HOLD,
+
+    TOUCH_TARGET_PRESET_OVERWRITE_OPEN,
+    TOUCH_TARGET_PRESET_OVERWRITE_PREV,
+    TOUCH_TARGET_PRESET_OVERWRITE_NEXT,
+    TOUCH_TARGET_PRESET_OVERWRITE_HOLD
   };
 
   TouchTarget touchTarget =
@@ -398,6 +423,10 @@ private:
   bool lastTouchInsidePresetSaveNew = false;
   bool lastTouchInsidePresetSaveHold = false;
 
+  bool lastTouchInsidePresetOverwriteOpen = false;
+  bool lastTouchInsidePresetOverwriteNav = false;
+  bool lastTouchInsidePresetOverwriteHold = false;
+
   // =========================================================
   // Visual pressed state
   // =========================================================
@@ -427,6 +456,10 @@ private:
   bool presetManageButtonVisualPressed = false;
   bool presetSaveNewButtonVisualPressed = false;
   bool presetSaveHoldButtonVisualPressed = false;
+
+  bool presetOverwriteOpenButtonVisualPressed = false;
+  bool presetOverwriteNavButtonVisualPressed = false;
+  bool presetOverwriteHoldButtonVisualPressed = false;
 
   // =========================================================
   // Long press state
@@ -701,6 +734,21 @@ private:
   static constexpr int16_t PRESET_SAVE_NEW_TOUCH_H = 72;
 
   // =========================================================
+  // Phase 10.2.2
+  // PRESET MANAGE OVERWRITE button
+  // =========================================================
+
+  static constexpr int16_t PRESET_OVERWRITE_BUTTON_X = 60;
+  static constexpr int16_t PRESET_OVERWRITE_BUTTON_Y = 176;
+  static constexpr int16_t PRESET_OVERWRITE_BUTTON_W = 200;
+  static constexpr int16_t PRESET_OVERWRITE_BUTTON_H = 48;
+
+  static constexpr int16_t PRESET_OVERWRITE_TOUCH_X = 48;
+  static constexpr int16_t PRESET_OVERWRITE_TOUCH_Y = 166;
+  static constexpr int16_t PRESET_OVERWRITE_TOUCH_W = 224;
+  static constexpr int16_t PRESET_OVERWRITE_TOUCH_H = 70;
+
+  // =========================================================
   // Phase 10.2.1
   // PRESET SAVE confirmation screen
   // =========================================================
@@ -714,6 +762,29 @@ private:
   static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_Y = 170;
   static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_W = 224;
   static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_H = 66;
+
+  // =========================================================
+  // Phase 10.2.2
+  // PRESET OVERWRITE selection / confirmation screen
+  // =========================================================
+
+  static constexpr int16_t PRESET_OVERWRITE_NAV_BUTTON_Y = 124;
+
+  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_LEFT_X = 8;
+  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_RIGHT_X = 232;
+  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_Y = 116;
+  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_W = 80;
+  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_H = 52;
+
+  static constexpr int16_t PRESET_OVERWRITE_HOLD_BUTTON_X = 60;
+  static constexpr int16_t PRESET_OVERWRITE_HOLD_BUTTON_Y = 194;
+  static constexpr int16_t PRESET_OVERWRITE_HOLD_BUTTON_W = 200;
+  static constexpr int16_t PRESET_OVERWRITE_HOLD_BUTTON_H = 40;
+
+  static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_X = 48;
+  static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_Y = 184;
+  static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_W = 224;
+  static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_H = 56;
 
   // =========================================================
   // Touch timing
@@ -1119,6 +1190,40 @@ private:
       preparePresetSaveCandidate();
       drawPresetSaveScreen();
     }
+    else if (
+      currentPage ==
+        SCREEN_PRESET &&
+      presetSubPage ==
+        PRESET_SUBPAGE_OVERWRITE &&
+      presetSaveOperationState ==
+        PRESET_SAVE_OP_IDLE &&
+      displayPowerState ==
+        DISPLAY_POWER_ACTIVE &&
+      touchTarget ==
+        TOUCH_TARGET_NONE
+    )
+    {
+      String refreshedName;
+
+      if (
+        presetOverwriteTargetId ==
+          0 ||
+        !getCachedPresetName(
+          presetOverwriteTargetId,
+          refreshedName
+        )
+      )
+      {
+        preparePresetOverwriteTarget();
+      }
+      else
+      {
+        presetOverwriteTargetName =
+          refreshedName;
+      }
+
+      drawPresetOverwriteScreen();
+    }
   }
 
   // =========================================================
@@ -1432,6 +1537,112 @@ private:
   }
 
   // =========================================================
+  // Phase 10.2.2
+  // Prepare overwrite target from RAM cache only
+  //
+  // Priority:
+  //   1. Current active Preset if it exists in cache
+  //   2. First saved Preset in cache
+  //
+  // No Preset is applied by this function.
+  // =========================================================
+
+  bool preparePresetOverwriteTarget()
+  {
+    presetOverwriteTargetId =
+      0;
+
+    presetOverwriteTargetName =
+      "";
+
+    if (
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount ==
+        0
+    )
+    {
+      return false;
+    }
+
+    int currentIndex =
+      findPresetCacheIndex(
+        currentPreset
+      );
+
+    uint16_t targetIndex =
+      (
+        currentIndex >=
+        0
+      )
+        ? (uint16_t)currentIndex
+        : 0;
+
+    presetOverwriteTargetId =
+      presetCache[
+        targetIndex
+      ].id;
+
+    presetOverwriteTargetName =
+      presetCache[
+        targetIndex
+      ].name;
+
+    return true;
+  }
+
+  // =========================================================
+  // Phase 10.2.2
+  // Move overwrite target using RAM cache only
+  //
+  // IMPORTANT:
+  // This changes only the destination Preset selection.
+  // applyPreset() is intentionally NOT called.
+  // =========================================================
+
+  bool stepPresetOverwriteTarget(
+    int direction
+  )
+  {
+    if (
+      direction ==
+      0 ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount ==
+        0
+    )
+    {
+      return false;
+    }
+
+    String targetName;
+
+    uint8_t targetId =
+      findAdjacentPreset(
+        presetOverwriteTargetId,
+        direction,
+        &targetName
+      );
+
+    if (
+      targetId ==
+      0
+    )
+    {
+      return false;
+    }
+
+    presetOverwriteTargetId =
+      targetId;
+
+    presetOverwriteTargetName =
+      targetName;
+
+    return true;
+  }
+
+  // =========================================================
   // Phase 10.2.1
   // Save operation busy state
   // =========================================================
@@ -1452,6 +1663,9 @@ private:
 
   bool requestNewPresetSave()
   {
+    presetSaveOperationIsOverwrite =
+      false;
+
     if (
       presetSaveOperationState !=
         PRESET_SAVE_OP_IDLE ||
@@ -1535,6 +1749,112 @@ private:
   }
 
   // =========================================================
+  // Phase 10.2.2
+  // Request WLED asynchronous Preset overwrite
+  //
+  // The target ID and existing name come only from the
+  // Phase 10.1.1 RAM cache. savePreset() writes the current
+  // WLED state into that same existing Preset ID.
+  // =========================================================
+
+  bool requestPresetOverwrite()
+  {
+    presetSaveOperationIsOverwrite =
+      true;
+
+    presetSaveCandidateId =
+      presetOverwriteTargetId;
+
+    presetSaveCandidateName =
+      presetOverwriteTargetName;
+
+    if (
+      presetSaveOperationState !=
+        PRESET_SAVE_OP_IDLE ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount ==
+        0 ||
+      pendingPresetId >
+        0 ||
+      presetSaveCandidateId ==
+        0 ||
+      findPresetCacheIndex(
+        presetSaveCandidateId
+      ) <
+        0 ||
+      presetSaveCandidateName.length() ==
+        0 ||
+      presetNeedsSaving()
+    )
+    {
+      presetSaveOperationState =
+        PRESET_SAVE_OP_FAILED;
+
+      presetSaveResultStartMs =
+        millis();
+
+      drawPresetSaveOperationStatus();
+
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "Preset overwrite request rejected"
+        )
+      );
+
+      return false;
+    }
+
+    savePreset(
+      presetSaveCandidateId,
+      presetSaveCandidateName.c_str()
+    );
+
+    if (
+      !presetNeedsSaving()
+    )
+    {
+      presetSaveOperationState =
+        PRESET_SAVE_OP_FAILED;
+
+      presetSaveResultStartMs =
+        millis();
+
+      drawPresetSaveOperationStatus();
+
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "Preset overwrite could not be queued"
+        )
+      );
+
+      return false;
+    }
+
+    presetSaveOperationState =
+      PRESET_SAVE_OP_WAIT_WLED;
+
+    presetSaveResultStartMs =
+      0;
+
+    lastUserActivityMs =
+      millis();
+
+    drawPresetSaveOperationStatus();
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Preset overwrite request: %u (%s)\n",
+      presetSaveCandidateId,
+      presetSaveCandidateName.c_str()
+    );
+
+    return true;
+  }
+
+  // =========================================================
   // Phase 10.2.1
   // Service asynchronous Preset save / cache verification
   // =========================================================
@@ -1582,8 +1902,12 @@ private:
       if (
         currentPage ==
           SCREEN_PRESET &&
-        presetSubPage ==
-          PRESET_SUBPAGE_SAVE &&
+        (
+          presetSubPage ==
+            PRESET_SUBPAGE_SAVE ||
+          presetSubPage ==
+            PRESET_SUBPAGE_OVERWRITE
+        ) &&
         displayPowerState ==
           DISPLAY_POWER_ACTIVE
       )
@@ -1607,19 +1931,41 @@ private:
         return;
       }
 
+      bool presetVerified =
+        (
+          findPresetCacheIndex(
+            presetSaveCandidateId
+          ) >=
+          0
+        );
+
       if (
-        findPresetCacheIndex(
-          presetSaveCandidateId
-        ) >=
-        0
+        presetVerified &&
+        presetSaveOperationIsOverwrite
       )
+      {
+        String verifiedName;
+
+        presetVerified =
+          getCachedPresetName(
+            presetSaveCandidateId,
+            verifiedName
+          ) &&
+          verifiedName ==
+            presetSaveCandidateName;
+      }
+
+      if (presetVerified)
       {
         presetSaveOperationState =
           PRESET_SAVE_OP_SUCCESS;
 
         Serial.printf(
           "[CoreS3_Display] "
-          "Preset save verified: %u (%s)\n",
+          "%s verified: %u (%s)\n",
+          presetSaveOperationIsOverwrite
+            ? "Preset overwrite"
+            : "Preset save",
           presetSaveCandidateId,
           presetSaveCandidateName.c_str()
         );
@@ -1631,7 +1977,10 @@ private:
 
         Serial.printf(
           "[CoreS3_Display] "
-          "Preset save verification failed: %u\n",
+          "%s verification failed: %u\n",
+          presetSaveOperationIsOverwrite
+            ? "Preset overwrite"
+            : "Preset save",
           presetSaveCandidateId
         );
       }
@@ -1642,8 +1991,12 @@ private:
       if (
         currentPage ==
           SCREEN_PRESET &&
-        presetSubPage ==
-          PRESET_SUBPAGE_SAVE &&
+        (
+          presetSubPage ==
+            PRESET_SUBPAGE_SAVE ||
+          presetSubPage ==
+            PRESET_SUBPAGE_OVERWRITE
+        ) &&
         displayPowerState ==
           DISPLAY_POWER_ACTIVE
       )
@@ -1696,8 +2049,14 @@ private:
           PRESET_SAVE_OP_SUCCESS
         );
 
+      bool completedOverwrite =
+        presetSaveOperationIsOverwrite;
+
       presetSaveOperationState =
         PRESET_SAVE_OP_IDLE;
+
+      presetSaveOperationIsOverwrite =
+        false;
 
       presetSaveResultStartMs =
         0;
@@ -1709,6 +2068,15 @@ private:
         false;
 
       resetTouchGesture();
+
+      if (completedOverwrite)
+      {
+        presetOverwriteTargetId =
+          0;
+
+        presetOverwriteTargetName =
+          "";
+      }
 
       if (saveSucceeded)
       {
@@ -2262,6 +2630,13 @@ private:
       )
       {
         drawPresetSaveScreen();
+      }
+      else if (
+        presetSubPage ==
+        PRESET_SUBPAGE_OVERWRITE
+      )
+      {
+        drawPresetOverwriteScreen();
       }
       else
       {
@@ -5389,10 +5764,19 @@ private:
     presetSaveOperationState =
       PRESET_SAVE_OP_IDLE;
 
+    presetSaveOperationIsOverwrite =
+      false;
+
     presetSaveCandidateId =
       0;
 
     presetSaveCandidateName =
+      "";
+
+    presetOverwriteTargetId =
+      0;
+
+    presetOverwriteTargetName =
       "";
 
     presetSaveHoldStartTime =
@@ -5529,6 +5913,44 @@ private:
   }
 
   // =========================================================
+  // Phase 10.2.2
+  // PRESET MANAGE OVERWRITE button
+  // =========================================================
+
+  void drawPresetOverwriteOpenButton(
+    bool pressed
+  )
+  {
+    bool enabled =
+      (
+        presetCacheReady &&
+        !presetCacheBuilding &&
+        presetCacheCount >
+          0 &&
+        pendingPresetId ==
+          0 &&
+        !presetNeedsSaving()
+      );
+
+    drawPresetTextButton(
+      PRESET_OVERWRITE_BUTTON_X,
+      PRESET_OVERWRITE_BUTTON_Y,
+      PRESET_OVERWRITE_BUTTON_W,
+      PRESET_OVERWRITE_BUTTON_H,
+      "OVERWRITE",
+      enabled,
+      pressed && enabled,
+      2
+    );
+
+    presetOverwriteOpenButtonVisualPressed =
+      (
+        pressed &&
+        enabled
+      );
+  }
+
+  // =========================================================
   // Phase 10.2.1
   // PRESET SAVE hold button
   // =========================================================
@@ -5592,10 +6014,19 @@ private:
     presetSaveOperationState =
       PRESET_SAVE_OP_IDLE;
 
+    presetSaveOperationIsOverwrite =
+      false;
+
     presetSaveCandidateId =
       0;
 
     presetSaveCandidateName =
+      "";
+
+    presetOverwriteTargetId =
+      0;
+
+    presetOverwriteTargetName =
       "";
 
     presetSaveHoldStartTime =
@@ -5639,7 +6070,7 @@ private:
     );
 
     display.drawString(
-      "New Preset",
+      "Preset Management",
       screenWidth / 2,
       41
     );
@@ -5695,7 +6126,7 @@ private:
       display.drawString(
         "Preset cache loading...",
         screenWidth / 2,
-        178
+        160
       );
     }
     else if (
@@ -5709,9 +6140,9 @@ private:
       );
 
       display.drawString(
-        "No free Preset ID (1-250)",
+        "No free Preset ID",
         screenWidth / 2,
-        178
+        160
       );
     }
     else
@@ -5721,7 +6152,7 @@ private:
       snprintf(
         idText,
         sizeof(idText),
-        "Next Preset ID: %u",
+        "Next new Preset ID: %u",
         freePresetId
       );
 
@@ -5733,29 +6164,13 @@ private:
       display.drawString(
         idText,
         screenWidth / 2,
-        176
-      );
-
-      char nameText[33];
-
-      snprintf(
-        nameText,
-        sizeof(nameText),
-        "CoreS3 Preset %u",
-        freePresetId
-      );
-
-      display.setTextColor(
-        TFT_WHITE,
-        TFT_BLACK
-      );
-
-      display.drawString(
-        nameText,
-        screenWidth / 2,
-        198
+        160
       );
     }
+
+    drawPresetOverwriteOpenButton(
+      false
+    );
 
     lastLedState =
       bri > 0
@@ -5773,8 +6188,12 @@ private:
     if (
       currentPage !=
         SCREEN_PRESET ||
-      presetSubPage !=
-        PRESET_SUBPAGE_SAVE
+      (
+        presetSubPage !=
+          PRESET_SUBPAGE_SAVE &&
+        presetSubPage !=
+          PRESET_SUBPAGE_OVERWRITE
+      )
     )
     {
       return;
@@ -5807,7 +6226,9 @@ private:
       );
 
       display.drawString(
-        "Saving...",
+        presetSaveOperationIsOverwrite
+          ? "Overwriting..."
+          : "Saving...",
         screenWidth / 2,
         110
       );
@@ -5827,6 +6248,21 @@ private:
         142
       );
 
+      char idText[24];
+
+      snprintf(
+        idText,
+        sizeof(idText),
+        "Preset ID: %u",
+        presetSaveCandidateId
+      );
+
+      display.drawString(
+        idText,
+        screenWidth / 2,
+        163
+      );
+
       display.setTextColor(
         TFT_DARKGREY,
         TFT_BLACK
@@ -5835,7 +6271,7 @@ private:
       display.drawString(
         "Writing WLED Preset",
         screenWidth / 2,
-        170
+        188
       );
 
       return;
@@ -5903,7 +6339,9 @@ private:
       );
 
       display.drawString(
-        "Verifying saved Preset",
+        presetSaveOperationIsOverwrite
+          ? "Verifying overwritten Preset"
+          : "Verifying saved Preset",
         screenWidth / 2,
         172
       );
@@ -5926,7 +6364,9 @@ private:
       );
 
       display.drawString(
-        "SAVED",
+        presetSaveOperationIsOverwrite
+          ? "OVERWRITTEN"
+          : "SAVED",
         screenWidth / 2,
         104
       );
@@ -5990,7 +6430,9 @@ private:
       );
 
       display.drawString(
-        "SAVE FAILED",
+        presetSaveOperationIsOverwrite
+          ? "OVERWRITE FAILED"
+          : "SAVE FAILED",
         screenWidth / 2,
         108
       );
@@ -6039,6 +6481,15 @@ private:
 
     presetSubPage =
       PRESET_SUBPAGE_SAVE;
+
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_IDLE
+    )
+    {
+      presetSaveOperationIsOverwrite =
+        false;
+    }
 
     readyScreenShown =
       true;
@@ -6198,6 +6649,331 @@ private:
     );
 
     drawPresetSaveHoldButton(
+      false
+    );
+
+    lastLedState =
+      bri > 0
+        ? 1
+        : 0;
+  }
+
+  // =========================================================
+  // Phase 10.2.2
+  // PRESET OVERWRITE destination navigation
+  //
+  // Arrows change only the destination Preset in RAM.
+  // They never call applyPreset().
+  // =========================================================
+
+  void drawPresetOverwriteNavigation(
+    TouchTarget pressedTarget =
+      TOUCH_TARGET_NONE
+  )
+  {
+    display.fillRect(
+      0,
+      112,
+      screenWidth,
+      58,
+      TFT_BLACK
+    );
+
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      PRESET_OVERWRITE_NAV_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_PREV
+    );
+
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      PRESET_OVERWRITE_NAV_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_NEXT
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "TARGET",
+      screenWidth / 2,
+      PRESET_OVERWRITE_NAV_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
+    );
+  }
+
+  // =========================================================
+  // Phase 10.2.2
+  // PRESET OVERWRITE hold button
+  // =========================================================
+
+  void drawPresetOverwriteHoldButton(
+    bool pressed
+  )
+  {
+    bool enabled =
+      (
+        presetSaveOperationState ==
+          PRESET_SAVE_OP_IDLE &&
+        presetCacheReady &&
+        !presetCacheBuilding &&
+        presetOverwriteTargetId >
+          0 &&
+        findPresetCacheIndex(
+          presetOverwriteTargetId
+        ) >=
+          0 &&
+        pendingPresetId ==
+          0 &&
+        !presetNeedsSaving()
+      );
+
+    drawPresetTextButton(
+      PRESET_OVERWRITE_HOLD_BUTTON_X,
+      PRESET_OVERWRITE_HOLD_BUTTON_Y,
+      PRESET_OVERWRITE_HOLD_BUTTON_W,
+      PRESET_OVERWRITE_HOLD_BUTTON_H,
+      "HOLD TO OVERWRITE",
+      enabled,
+      pressed && enabled,
+      1
+    );
+
+    presetOverwriteHoldButtonVisualPressed =
+      (
+        pressed &&
+        enabled
+      );
+  }
+
+  // =========================================================
+  // Phase 10.2.2
+  // PRESET OVERWRITE screen
+  // =========================================================
+
+  void drawPresetOverwriteScreen()
+  {
+    display.fillScreen(
+      TFT_BLACK
+    );
+
+    currentPage =
+      SCREEN_PRESET;
+
+    presetSubPage =
+      PRESET_SUBPAGE_OVERWRITE;
+
+    readyScreenShown =
+      true;
+
+    connectingScreenShown =
+      false;
+
+    resetTouchGesture();
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      "OVERWRITE PRESET",
+      screenWidth / 2,
+      18
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Select destination only",
+      screenWidth / 2,
+      41
+    );
+
+    display.drawFastHLine(
+      8,
+      58,
+      screenWidth - 16,
+      TFT_DARKGREY
+    );
+
+    drawPowerButton(
+      bri > 0,
+      false
+    );
+
+    drawBackButton(
+      false
+    );
+
+    if (
+      presetSaveOperationState !=
+      PRESET_SAVE_OP_IDLE
+    )
+    {
+      drawPresetSaveOperationStatus();
+      return;
+    }
+
+    if (
+      presetOverwriteTargetId ==
+        0 ||
+      findPresetCacheIndex(
+        presetOverwriteTargetId
+      ) <
+        0
+    )
+    {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "No Preset",
+        screenWidth / 2,
+        104
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      display.drawString(
+        "Nothing can be overwritten",
+        screenWidth / 2,
+        145
+      );
+
+      return;
+    }
+
+    String displayName =
+      presetOverwriteTargetName;
+
+    if (
+      displayName.length() >
+      28
+    )
+    {
+      displayName =
+        displayName.substring(
+          0,
+          25
+        ) +
+        "...";
+    }
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    if (
+      displayName.length() <=
+      12
+    )
+    {
+      display.setTextSize(
+        2
+      );
+    }
+    else
+    {
+      display.setTextSize(
+        1
+      );
+    }
+
+    display.drawString(
+      displayName,
+      screenWidth / 2,
+      82
+    );
+
+    char idText[24];
+
+    snprintf(
+      idText,
+      sizeof(idText),
+      "Preset ID: %u",
+      presetOverwriteTargetId
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      idText,
+      screenWidth / 2,
+      105
+    );
+
+    drawPresetOverwriteNavigation(
+      TOUCH_TARGET_NONE
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Current WLED State",
+      screenWidth / 2,
+      174
+    );
+
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
+
+    display.drawString(
+      "will replace this Preset",
+      screenWidth / 2,
+      187
+    );
+
+    drawPresetOverwriteHoldButton(
       false
     );
 
@@ -6624,6 +7400,81 @@ private:
   }
 
   // =========================================================
+  // Phase 10.2.2
+  // PRESET OVERWRITE open hit test
+  // =========================================================
+
+  bool isPresetOverwriteOpenTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_OVERWRITE_TOUCH_X,
+      PRESET_OVERWRITE_TOUCH_Y,
+      PRESET_OVERWRITE_TOUCH_W,
+      PRESET_OVERWRITE_TOUCH_H
+    );
+  }
+
+  // =========================================================
+  // Phase 10.2.2
+  // PRESET OVERWRITE target navigation hit tests
+  // =========================================================
+
+  bool isPresetOverwritePrevTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_OVERWRITE_NAV_TOUCH_LEFT_X,
+      PRESET_OVERWRITE_NAV_TOUCH_Y,
+      PRESET_OVERWRITE_NAV_TOUCH_W,
+      PRESET_OVERWRITE_NAV_TOUCH_H
+    );
+  }
+
+  bool isPresetOverwriteNextTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_OVERWRITE_NAV_TOUCH_RIGHT_X,
+      PRESET_OVERWRITE_NAV_TOUCH_Y,
+      PRESET_OVERWRITE_NAV_TOUCH_W,
+      PRESET_OVERWRITE_NAV_TOUCH_H
+    );
+  }
+
+  // =========================================================
+  // Phase 10.2.2
+  // PRESET HOLD TO OVERWRITE hit test
+  // =========================================================
+
+  bool isPresetOverwriteHoldTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_OVERWRITE_HOLD_TOUCH_X,
+      PRESET_OVERWRITE_HOLD_TOUCH_Y,
+      PRESET_OVERWRITE_HOLD_TOUCH_W,
+      PRESET_OVERWRITE_HOLD_TOUCH_H
+    );
+  }
+
+  // =========================================================
   // Begin Hue edit
   // =========================================================
 
@@ -6763,6 +7614,15 @@ private:
     lastTouchInsidePresetSaveHold =
       false;
 
+    lastTouchInsidePresetOverwriteOpen =
+      false;
+
+    lastTouchInsidePresetOverwriteNav =
+      false;
+
+    lastTouchInsidePresetOverwriteHold =
+      false;
+
     powerButtonVisualPressed =
       false;
 
@@ -6809,6 +7669,15 @@ private:
       false;
 
     presetSaveHoldButtonVisualPressed =
+      false;
+
+    presetOverwriteOpenButtonVisualPressed =
+      false;
+
+    presetOverwriteNavButtonVisualPressed =
+      false;
+
+    presetOverwriteHoldButtonVisualPressed =
       false;
 
     brightnessLongPressActive =
@@ -8740,6 +9609,11 @@ private:
       bool insidePresetSaveNew = false;
       bool insidePresetSaveHold = false;
 
+      bool insidePresetOverwriteOpen = false;
+      bool insidePresetOverwritePrev = false;
+      bool insidePresetOverwriteNext = false;
+      bool insidePresetOverwriteHold = false;
+
       if (
         currentPage ==
         SCREEN_PRESET
@@ -8797,6 +9671,21 @@ private:
                 touchY
               )
             );
+
+          insidePresetOverwriteOpen =
+            (
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              presetCacheCount >
+                0 &&
+              pendingPresetId ==
+                0 &&
+              !presetNeedsSaving() &&
+              isPresetOverwriteOpenTouched(
+                touchX,
+                touchY
+              )
+            );
         }
         else if (
           presetSubPage ==
@@ -8819,6 +9708,56 @@ private:
                 0 &&
               !presetNeedsSaving() &&
               isPresetSaveHoldTouched(
+                touchX,
+                touchY
+              )
+            );
+        }
+        else if (
+          presetSubPage ==
+          PRESET_SUBPAGE_OVERWRITE
+        )
+        {
+          insidePresetOverwritePrev =
+            (
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              presetCacheCount >
+                0 &&
+              isPresetOverwritePrevTouched(
+                touchX,
+                touchY
+              )
+            );
+
+          insidePresetOverwriteNext =
+            (
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              presetCacheCount >
+                0 &&
+              isPresetOverwriteNextTouched(
+                touchX,
+                touchY
+              )
+            );
+
+          insidePresetOverwriteHold =
+            (
+              presetSaveOperationState ==
+                PRESET_SAVE_OP_IDLE &&
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              presetOverwriteTargetId >
+                0 &&
+              findPresetCacheIndex(
+                presetOverwriteTargetId
+              ) >=
+                0 &&
+              pendingPresetId ==
+                0 &&
+              !presetNeedsSaving() &&
+              isPresetOverwriteHoldTouched(
                 touchX,
                 touchY
               )
@@ -9282,6 +10221,19 @@ private:
 
           else if (
             presetSubPage ==
+              PRESET_SUBPAGE_MANAGE &&
+            insidePresetOverwriteOpen
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_OVERWRITE_OPEN;
+
+            lastTouchInsidePresetOverwriteOpen =
+              true;
+          }
+
+          else if (
+            presetSubPage ==
               PRESET_SUBPAGE_SAVE &&
             insidePresetSaveHold
           )
@@ -9290,6 +10242,51 @@ private:
               TOUCH_TARGET_PRESET_SAVE_HOLD;
 
             lastTouchInsidePresetSaveHold =
+              true;
+
+            presetSaveHoldStartTime =
+              now;
+
+            presetSaveHoldTriggered =
+              false;
+          }
+
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_OVERWRITE &&
+            insidePresetOverwritePrev
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_OVERWRITE_PREV;
+
+            lastTouchInsidePresetOverwriteNav =
+              true;
+          }
+
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_OVERWRITE &&
+            insidePresetOverwriteNext
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_OVERWRITE_NEXT;
+
+            lastTouchInsidePresetOverwriteNav =
+              true;
+          }
+
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_OVERWRITE &&
+            insidePresetOverwriteHold
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_OVERWRITE_HOLD;
+
+            lastTouchInsidePresetOverwriteHold =
               true;
 
             presetSaveHoldStartTime =
@@ -10176,6 +11173,131 @@ private:
         return;
       }
 
+      // =====================================================
+      // Phase 10.2.2
+      // PRESET OVERWRITE open
+      // =====================================================
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_OPEN
+      )
+      {
+        lastTouchInsidePresetOverwriteOpen =
+          insidePresetOverwriteOpen;
+
+        if (
+          insidePresetOverwriteOpen !=
+          presetOverwriteOpenButtonVisualPressed
+        )
+        {
+          drawPresetOverwriteOpenButton(
+            insidePresetOverwriteOpen
+          );
+        }
+
+        return;
+      }
+
+      // =====================================================
+      // Phase 10.2.2
+      // PRESET OVERWRITE target Prev / Next
+      // =====================================================
+
+      if (
+        touchTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_NEXT
+      )
+      {
+        bool insideSelectedButton =
+          (
+            touchTarget ==
+              TOUCH_TARGET_PRESET_OVERWRITE_PREV
+          )
+            ? insidePresetOverwritePrev
+            : insidePresetOverwriteNext;
+
+        lastTouchInsidePresetOverwriteNav =
+          insideSelectedButton;
+
+        if (
+          insideSelectedButton !=
+          presetOverwriteNavButtonVisualPressed
+        )
+        {
+          drawPresetOverwriteNavigation(
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
+
+          presetOverwriteNavButtonVisualPressed =
+            insideSelectedButton;
+        }
+
+        return;
+      }
+
+      // =====================================================
+      // Phase 10.2.2
+      // PRESET HOLD TO OVERWRITE
+      // =====================================================
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_HOLD
+      )
+      {
+        lastTouchInsidePresetOverwriteHold =
+          insidePresetOverwriteHold;
+
+        if (
+          insidePresetOverwriteHold !=
+          presetOverwriteHoldButtonVisualPressed
+        )
+        {
+          drawPresetOverwriteHoldButton(
+            insidePresetOverwriteHold
+          );
+        }
+
+        if (!insidePresetOverwriteHold)
+        {
+          presetSaveHoldStartTime =
+            0;
+
+          return;
+        }
+
+        if (
+          presetSaveHoldStartTime ==
+          0
+        )
+        {
+          presetSaveHoldStartTime =
+            now;
+        }
+
+        if (
+          !presetSaveHoldTriggered &&
+          now -
+          presetSaveHoldStartTime >=
+          PRESET_SAVE_HOLD_MS
+        )
+        {
+          presetSaveHoldTriggered =
+            true;
+
+          requestPresetOverwrite();
+
+          return;
+        }
+
+        return;
+      }
+
       return;
     }
 
@@ -10376,6 +11498,22 @@ private:
         TOUCH_TARGET_PRESET_SAVE_NEW
       ) &&
       lastTouchInsidePresetSaveNew;
+
+    bool executePresetOverwriteOpen =
+      (
+        releasedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_OPEN
+      ) &&
+      lastTouchInsidePresetOverwriteOpen;
+
+    bool executePresetOverwriteStep =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_NEXT
+      ) &&
+      lastTouchInsidePresetOverwriteNav;
 
     // =======================================================
     // Restore visuals
@@ -10595,6 +11733,43 @@ private:
     )
     {
       drawPresetSaveHoldButton(
+        false
+      );
+    }
+
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_OPEN &&
+      presetOverwriteOpenButtonVisualPressed
+    )
+    {
+      drawPresetOverwriteOpenButton(
+        false
+      );
+    }
+
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_NEXT
+      ) &&
+      presetOverwriteNavButtonVisualPressed
+    )
+    {
+      drawPresetOverwriteNavigation(
+        TOUCH_TARGET_NONE
+      );
+    }
+
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_HOLD &&
+      presetOverwriteHoldButtonVisualPressed
+    )
+    {
+      drawPresetOverwriteHoldButton(
         false
       );
     }
@@ -10836,6 +12011,68 @@ private:
     }
 
     // =======================================================
+    // Phase 10.2.2
+    // Open OVERWRITE destination selection
+    // =======================================================
+
+    if (executePresetOverwriteOpen)
+    {
+      hueEditValid =
+        false;
+
+      saturationEditValid =
+        false;
+
+      if (
+        preparePresetOverwriteTarget()
+      )
+      {
+        drawPresetOverwriteScreen();
+      }
+      else
+      {
+        drawPresetManageScreen();
+      }
+
+      return;
+    }
+
+    // =======================================================
+    // Phase 10.2.2
+    // Change overwrite target only
+    //
+    // No Preset is applied here.
+    // =======================================================
+
+    if (executePresetOverwriteStep)
+    {
+      int direction =
+        (
+          releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_PREV
+        )
+          ? -1
+          : 1;
+
+      if (
+        stepPresetOverwriteTarget(
+          direction
+        )
+      )
+      {
+        drawPresetOverwriteScreen();
+      }
+
+      hueEditValid =
+        false;
+
+      saturationEditValid =
+        false;
+
+      return;
+    }
+
+    // =======================================================
     // Back
     // =======================================================
 
@@ -10846,6 +12083,36 @@ private:
 
       saturationEditValid =
         false;
+
+      if (
+        currentPage ==
+          SCREEN_PRESET &&
+        presetSubPage ==
+          PRESET_SUBPAGE_OVERWRITE
+      )
+      {
+        presetSaveOperationState =
+          PRESET_SAVE_OP_IDLE;
+
+        presetSaveOperationIsOverwrite =
+          false;
+
+        presetSaveCandidateId =
+          0;
+
+        presetSaveCandidateName =
+          "";
+
+        presetOverwriteTargetId =
+          0;
+
+        presetOverwriteTargetName =
+          "";
+
+        drawPresetManageScreen();
+
+        return;
+      }
 
       if (
         currentPage ==
@@ -11375,7 +12642,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 10.2.1 start"
+        "Phase 10.2.2 start"
       )
     );
 
@@ -11508,7 +12775,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 10.2.1 setup complete"
+        "Phase 10.2.2 setup complete"
       )
     );
 
@@ -11564,8 +12831,8 @@ public:
     servicePresetCache();
 
     // =======================================================
-    // Phase 10.2.1
-    // New Preset save service
+    // Phase 10.2.2
+    // Preset save / overwrite service
     // =======================================================
 
     servicePresetSaveOperation();
@@ -12734,7 +14001,7 @@ public:
       );
 
     phaseInfo.add(
-      "10.2.1"
+      "10.2.2"
     );
   }
 };
