@@ -28,6 +28,7 @@ private:
   int lastBrightnessValue = -1;
   int lastEffectMode = -1;
   int lastHueValue = -1;
+  int lastSaturationValue = -1;
 
   uint32_t lastPrimaryColor = 0;
   bool lastPrimaryColorValid = false;
@@ -35,15 +36,12 @@ private:
   // =========================================================
   // Persistent logical HSV state
   //
-  // IMPORTANT:
+  // CoreS3側でHSVを論理値として保持します。
   //
-  // Local Hue operations use this logical HSV state instead
-  // of converting RGB -> HSV again for every short press.
+  // Hue / Saturation操作のたびにRGB -> HSVへ戻さないため、
+  // RGB量子化による値の引っ掛かりを防止します。
   //
-  // This avoids Hue values becoming stuck because multiple
-  // adjacent HSV values may quantize to the same RGB value.
-  //
-  // External Web UI color changes re-synchronize this state.
+  // Web UI等から外部変更された場合のみRGBから再同期します。
   // =========================================================
 
   CHSV32 logicalColorHsv;
@@ -51,6 +49,7 @@ private:
   bool logicalColorHsvValid = false;
 
   uint8_t logicalHueValue = 0;
+  uint8_t logicalSaturationValue = 0;
   uint8_t logicalWhiteValue = 0;
 
   // =========================================================
@@ -86,7 +85,10 @@ private:
     TOUCH_TARGET_BACK,
 
     TOUCH_TARGET_HUE_DOWN,
-    TOUCH_TARGET_HUE_UP
+    TOUCH_TARGET_HUE_UP,
+
+    TOUCH_TARGET_SATURATION_DOWN,
+    TOUCH_TARGET_SATURATION_UP
   };
 
   TouchTarget touchTarget =
@@ -104,6 +106,7 @@ private:
   bool lastTouchInsideColor = false;
   bool lastTouchInsideBack = false;
   bool lastTouchInsideHue = false;
+  bool lastTouchInsideSaturation = false;
 
   bool powerButtonVisualPressed = false;
   bool brightnessButtonVisualPressed = false;
@@ -111,9 +114,11 @@ private:
   bool colorButtonVisualPressed = false;
   bool backButtonVisualPressed = false;
   bool hueButtonVisualPressed = false;
+  bool saturationButtonVisualPressed = false;
 
   bool brightnessLongPressActive = false;
   bool hueLongPressActive = false;
+  bool saturationLongPressActive = false;
 
   int16_t lastTouchX = -1;
   int16_t lastTouchY = -1;
@@ -124,10 +129,11 @@ private:
   unsigned long huePressStartTime = 0;
   unsigned long lastHueRepeat = 0;
 
+  unsigned long saturationPressStartTime = 0;
+  unsigned long lastSaturationRepeat = 0;
+
   // =========================================================
   // Hue gesture edit state
-  //
-  // A gesture starts from the persistent logical HSV state.
   // =========================================================
 
   CHSV32 hueEditHsv;
@@ -136,6 +142,17 @@ private:
 
   uint8_t hueEditValue = 0;
   uint8_t hueEditWhite = 0;
+
+  // =========================================================
+  // Saturation gesture edit state
+  // =========================================================
+
+  CHSV32 saturationEditHsv;
+
+  bool saturationEditValid = false;
+
+  uint8_t saturationEditValue = 0;
+  uint8_t saturationEditWhite = 0;
 
   // =========================================================
   // Power button
@@ -165,10 +182,12 @@ private:
   // =========================================================
   // Common LEFT / RIGHT buttons
   //
-  // Used by:
-  //   Brightness
-  //   Effect
-  //   Hue
+  // Brightness
+  // Effect
+  // Hue
+  // Saturation
+  //
+  // すべて同じサイズ・X位置を使用します。
   // =========================================================
 
   static constexpr int16_t CONTROL_LEFT_X = 16;
@@ -178,20 +197,11 @@ private:
   static constexpr int16_t CONTROL_BUTTON_H = 34;
 
   // =========================================================
-  // Brightness row
+  // MAIN controls
   // =========================================================
 
   static constexpr int16_t BRI_BUTTON_Y = 82;
-
-  // =========================================================
-  // Effect row
-  // =========================================================
-
   static constexpr int16_t FX_BUTTON_Y = 138;
-
-  // =========================================================
-  // MAIN Color button
-  // =========================================================
 
   static constexpr int16_t COLOR_BUTTON_X = 64;
   static constexpr int16_t COLOR_BUTTON_Y = 188;
@@ -217,10 +227,19 @@ private:
   static constexpr int16_t COLOR_PREVIEW_H = 36;
 
   // =========================================================
-  // Hue row
+  // COLOR Hue row
   // =========================================================
 
   static constexpr int16_t HUE_BUTTON_Y = 151;
+
+  // =========================================================
+  // COLOR Saturation row
+  //
+  // 320 x 240 の最下部まで使います。
+  // =========================================================
+
+  static constexpr int16_t SATURATION_LABEL_Y = 198;
+  static constexpr int16_t SATURATION_BUTTON_Y = 204;
 
   // =========================================================
   // Touch timing
@@ -249,12 +268,10 @@ private:
   //   +/- 1
   //
   // Long:
-  //   after 400 ms
-  //   +/- 5 every 80 ms
+  //   400ms後
+  //   80ms毎に +/-5
   //
-  // Wrap:
-  //   255 + 1 -> 0
-  //   0 - 1   -> 255
+  // 0 <-> 255 は循環
   // =========================================================
 
   static constexpr unsigned long HUE_LONG_PRESS_MS = 400;
@@ -262,6 +279,28 @@ private:
 
   static constexpr int HUE_SHORT_STEP = 1;
   static constexpr int HUE_LONG_STEP = 5;
+
+  // =========================================================
+  // Saturation behavior
+  //
+  // Short:
+  //   +/- 1
+  //
+  // Long:
+  //   400ms後
+  //   80ms毎に +/-5
+  //
+  // Saturationは循環しません。
+  //
+  //   最小 = 0
+  //   最大 = 255
+  // =========================================================
+
+  static constexpr unsigned long SATURATION_LONG_PRESS_MS = 400;
+  static constexpr unsigned long SATURATION_REPEAT_MS = 80;
+
+  static constexpr int SATURATION_SHORT_STEP = 1;
+  static constexpr int SATURATION_LONG_STEP = 5;
 
   // =========================================================
   // RGB888 -> RGB565
@@ -318,9 +357,9 @@ private:
   }
 
   // =========================================================
-  // Raw RGB -> Hue
+  // RGB -> Hue
   //
-  // Used only when synchronizing from an external RGB color.
+  // 外部RGB変更から再同期する場合だけ使用します。
   // =========================================================
 
   uint8_t getHueFromColor(
@@ -346,16 +385,40 @@ private:
   }
 
   // =========================================================
+  // RGB -> Saturation
+  //
+  // 外部RGB変更から再同期する場合だけ使用します。
+  // =========================================================
+
+  uint8_t getSaturationFromColor(
+    uint32_t color
+  )
+  {
+    CRGBW rgb(
+      color
+    );
+
+    CHSV32 hsv;
+
+    rgb2hsv(
+      rgb,
+      hsv
+    );
+
+    return
+      hsv.s;
+  }
+
+  // =========================================================
   // Synchronize persistent logical HSV from RGB
   //
-  // This is intentionally NOT called for every local Hue
-  // button press.
+  // 使用タイミング:
   //
-  // Call it when:
+  //   - 初期表示
+  //   - COLOR画面へ入った時
+  //   - Web UI等からPrimary Colorが外部変更された時
   //
-  //   - Initial screen is created
-  //   - Color screen is opened
-  //   - External Web UI changes Primary Color
+  // CoreS3のHue/Saturation短押し毎には呼びません。
   // =========================================================
 
   void syncLogicalColorFromRgb(
@@ -377,6 +440,9 @@ private:
         8
       );
 
+    logicalSaturationValue =
+      logicalColorHsv.s;
+
     logicalWhiteValue =
       rgb.w;
 
@@ -386,22 +452,22 @@ private:
     lastHueValue =
       logicalHueValue;
 
+    lastSaturationValue =
+      logicalSaturationValue;
+
     Serial.printf(
       "[CoreS3_Display] "
       "HSV sync from RGB: "
       "H=%u S=%u V=%u W=%u\n",
       logicalHueValue,
-      logicalColorHsv.s,
+      logicalSaturationValue,
       logicalColorHsv.v,
       logicalWhiteValue
     );
   }
 
   // =========================================================
-  // Hue displayed on LCD
-  //
-  // Prefer the logical Hue when it is synchronized with the
-  // currently cached Primary Color.
+  // Displayed Hue
   // =========================================================
 
   uint8_t getDisplayedHue()
@@ -422,6 +488,32 @@ private:
 
     return
       getHueFromColor(
+        currentColor
+      );
+  }
+
+  // =========================================================
+  // Displayed Saturation
+  // =========================================================
+
+  uint8_t getDisplayedSaturation()
+  {
+    uint32_t currentColor =
+      getPrimaryColor();
+
+    if (
+      logicalColorHsvValid &&
+      lastPrimaryColorValid &&
+      currentColor ==
+        lastPrimaryColor
+    )
+    {
+      return
+        logicalSaturationValue;
+    }
+
+    return
+      getSaturationFromColor(
         currentColor
       );
   }
@@ -1380,6 +1472,93 @@ private:
   }
 
   // =========================================================
+  // Saturation control
+  //
+  //           Saturation
+  //
+  // [  <  ]      255      [  >  ]
+  // =========================================================
+
+  void drawSaturation(
+    uint8_t saturationValue,
+    TouchTarget pressedTarget =
+      TOUCH_TARGET_NONE
+  )
+  {
+    display.fillRect(
+      0,
+      194,
+      screenWidth,
+      46,
+      TFT_BLACK
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Saturation",
+      screenWidth / 2,
+      SATURATION_LABEL_Y
+    );
+
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      SATURATION_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_SATURATION_DOWN
+    );
+
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      SATURATION_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_SATURATION_UP
+    );
+
+    char valueText[8];
+
+    snprintf(
+      valueText,
+      sizeof(valueText),
+      "%u",
+      saturationValue
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      valueText,
+      screenWidth / 2,
+      SATURATION_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
+    );
+  }
+
+  // =========================================================
   // MAIN screen
   // =========================================================
 
@@ -1464,7 +1643,6 @@ private:
       false
     );
 
-    // Initial synchronization of logical HSV.
     syncLogicalColorFromRgb(
       primaryColor
     );
@@ -1556,7 +1734,6 @@ private:
     uint32_t primaryColor =
       getPrimaryColor();
 
-    // Synchronize once when entering COLOR screen.
     syncLogicalColorFromRgb(
       primaryColor
     );
@@ -1567,6 +1744,11 @@ private:
 
     drawHue(
       logicalHueValue,
+      TOUCH_TARGET_NONE
+    );
+
+    drawSaturation(
+      logicalSaturationValue,
       TOUCH_TARGET_NONE
     );
 
@@ -1583,10 +1765,13 @@ private:
 
     lastHueValue =
       logicalHueValue;
+
+    lastSaturationValue =
+      logicalSaturationValue;
   }
 
   // =========================================================
-  // Generic rectangle hit test
+  // Generic hit test
   // =========================================================
 
   bool pointInsideRect(
@@ -1745,19 +1930,38 @@ private:
     );
   }
 
+  bool isSaturationDownTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      CONTROL_LEFT_X,
+      SATURATION_BUTTON_Y,
+      CONTROL_BUTTON_W,
+      CONTROL_BUTTON_H
+    );
+  }
+
+  bool isSaturationUpTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      CONTROL_RIGHT_X,
+      SATURATION_BUTTON_Y,
+      CONTROL_BUTTON_W,
+      CONTROL_BUTTON_H
+    );
+  }
+
   // =========================================================
-  // Begin Hue gesture
-  //
-  // IMPORTANT:
-  //
-  // Normally this starts from persistent logical HSV.
-  //
-  // RGB -> HSV is only performed if:
-  //
-  //   - Logical state is not initialized
-  //   - Current RGB differs from our cached RGB
-  //
-  // The latter means the color was changed externally.
+  // Begin Hue edit
   // =========================================================
 
   void beginHueEdit()
@@ -1810,13 +2014,63 @@ private:
   }
 
   // =========================================================
-  // Reset touch state
+  // Begin Saturation edit
+  // =========================================================
+
+  void beginSaturationEdit()
+  {
+    uint32_t currentColor =
+      getPrimaryColor();
+
+    if (
+      !logicalColorHsvValid ||
+      !lastPrimaryColorValid ||
+      currentColor !=
+        lastPrimaryColor
+    )
+    {
+      syncLogicalColorFromRgb(
+        currentColor
+      );
+
+      lastPrimaryColor =
+        currentColor;
+
+      lastPrimaryColorValid =
+        true;
+    }
+
+    saturationEditHsv =
+      logicalColorHsv;
+
+    saturationEditValue =
+      logicalSaturationValue;
+
+    saturationEditWhite =
+      logicalWhiteValue;
+
+    saturationEditValid =
+      true;
+
+    lastSaturationValue =
+      saturationEditValue;
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Saturation edit start: "
+      "H=%u S=%u V=%u W=%u\n",
+      logicalHueValue,
+      saturationEditValue,
+      saturationEditHsv.v,
+      saturationEditWhite
+    );
+  }
+
+  // =========================================================
+  // Reset touch gesture
   //
-  // NOTE:
-  //
-  // logicalColorHsv is intentionally NOT reset here.
-  //
-  // It persists between short Hue gestures.
+  // logicalColorHsv はリセットしません。
+  // Hue/Saturationの短押し間でも保持します。
   // =========================================================
 
   void resetTouchGesture()
@@ -1845,6 +2099,9 @@ private:
     lastTouchInsideHue =
       false;
 
+    lastTouchInsideSaturation =
+      false;
+
     powerButtonVisualPressed =
       false;
 
@@ -1863,13 +2120,22 @@ private:
     hueButtonVisualPressed =
       false;
 
+    saturationButtonVisualPressed =
+      false;
+
     brightnessLongPressActive =
       false;
 
     hueLongPressActive =
       false;
 
+    saturationLongPressActive =
+      false;
+
     hueEditValid =
+      false;
+
+    saturationEditValid =
       false;
 
     touchReleaseCandidate =
@@ -1885,6 +2151,12 @@ private:
       0;
 
     lastHueRepeat =
+      0;
+
+    saturationPressStartTime =
+      0;
+
+    lastSaturationRepeat =
       0;
 
     lastTouchX =
@@ -1930,7 +2202,7 @@ private:
   }
 
   // =========================================================
-  // Brightness exact value
+  // Brightness
   // =========================================================
 
   bool applyBrightnessValue(
@@ -1999,10 +2271,6 @@ private:
     return true;
   }
 
-  // =========================================================
-  // Brightness step
-  // =========================================================
-
   void applyBrightnessStep(
     int step
   )
@@ -2040,10 +2308,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Brightness short press
-  // =========================================================
-
   void brightnessShortPress(
     TouchTarget target
   )
@@ -2067,10 +2331,6 @@ private:
       );
     }
   }
-
-  // =========================================================
-  // Brightness long press
-  // =========================================================
 
   void brightnessLongPressStep(
     TouchTarget target
@@ -2097,7 +2357,7 @@ private:
   }
 
   // =========================================================
-  // Effect step
+  // Effect
   // =========================================================
 
   void applyEffectStep(
@@ -2190,12 +2450,7 @@ private:
   }
 
   // =========================================================
-  // Apply exact Hue
-  //
-  // Persistent logical HSV is the source of truth.
-  //
-  // Even if two adjacent Hue values produce the same RGB,
-  // logicalHueValue still advances.
+  // Apply Hue
   // =========================================================
 
   bool applyHueValue(
@@ -2220,10 +2475,6 @@ private:
       return false;
     }
 
-    // -------------------------------------------------------
-    // Update logical Hue FIRST.
-    // -------------------------------------------------------
-
     hueEditValue =
       newHue;
 
@@ -2231,22 +2482,20 @@ private:
       ((uint16_t)newHue) <<
       8;
 
-    // Persist logical state.
     logicalHueValue =
       newHue;
 
     logicalColorHsv =
       hueEditHsv;
 
+    logicalSaturationValue =
+      logicalColorHsv.s;
+
     logicalWhiteValue =
       hueEditWhite;
 
     logicalColorHsvValid =
       true;
-
-    // -------------------------------------------------------
-    // Convert logical HSV to RGB.
-    // -------------------------------------------------------
 
     CRGBW newRgb;
 
@@ -2255,7 +2504,6 @@ private:
       newRgb
     );
 
-    // Preserve W.
     newRgb.w =
       logicalWhiteValue;
 
@@ -2267,16 +2515,6 @@ private:
 
     uint32_t oldColor =
       mainSegment.colors[0];
-
-    // -------------------------------------------------------
-    // RGB may occasionally be identical for adjacent Hue
-    // values because RGB only has 8-bit channels.
-    //
-    // That is OK.
-    //
-    // Logical Hue still advances and remains the source of
-    // truth for the next button press.
-    // -------------------------------------------------------
 
     if (
       newColor !=
@@ -2293,10 +2531,6 @@ private:
       );
     }
 
-    // -------------------------------------------------------
-    // Immediate LCD update.
-    // -------------------------------------------------------
-
     if (
       currentPage ==
       SCREEN_COLOR
@@ -2310,14 +2544,12 @@ private:
         logicalHueValue,
         touchTarget
       );
-    }
 
-    // -------------------------------------------------------
-    // Cache the RGB generated by our own logical Hue.
-    //
-    // This prevents loop() from mistaking our own local
-    // change for an external Web UI change.
-    // -------------------------------------------------------
+      drawSaturation(
+        logicalSaturationValue,
+        TOUCH_TARGET_NONE
+      );
+    }
 
     lastPrimaryColor =
       newColor;
@@ -2328,11 +2560,16 @@ private:
     lastHueValue =
       logicalHueValue;
 
+    lastSaturationValue =
+      logicalSaturationValue;
+
     Serial.printf(
       "[CoreS3_Display] "
       "Hue logical=%u "
+      "S=%u "
       "RGB=#%02X%02X%02X\n",
       logicalHueValue,
+      logicalSaturationValue,
       R(newColor),
       G(newColor),
       B(newColor)
@@ -2340,10 +2577,6 @@ private:
 
     return true;
   }
-
-  // =========================================================
-  // Hue step with 0..255 wrap
-  // =========================================================
 
   void applyHueStep(
     int step
@@ -2359,9 +2592,6 @@ private:
       return;
     }
 
-    // IMPORTANT:
-    //
-    // Start from persistent logical Hue, not RGB-derived Hue.
     int newValue =
       (int)logicalHueValue +
       step;
@@ -2389,10 +2619,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Hue short press
-  // =========================================================
-
   void hueShortPress(
     TouchTarget target
   )
@@ -2416,10 +2642,6 @@ private:
       );
     }
   }
-
-  // =========================================================
-  // Hue long press
-  // =========================================================
 
   void hueLongPressStep(
     TouchTarget target
@@ -2446,7 +2668,238 @@ private:
   }
 
   // =========================================================
-  // Selected Brightness button
+  // Apply Saturation
+  //
+  // Hue / Valueは保持します。
+  //
+  // Saturationは論理値として保持するため、隣接値でRGBが
+  // 同じになった場合でも数値は正常に進みます。
+  // =========================================================
+
+  bool applySaturationValue(
+    uint8_t newSaturation
+  )
+  {
+    if (
+      strip.getSegmentsNum() ==
+      0
+    )
+    {
+      return false;
+    }
+
+    if (!saturationEditValid)
+    {
+      beginSaturationEdit();
+    }
+
+    if (!saturationEditValid)
+    {
+      return false;
+    }
+
+    saturationEditValue =
+      newSaturation;
+
+    saturationEditHsv.s =
+      newSaturation;
+
+    logicalSaturationValue =
+      newSaturation;
+
+    logicalColorHsv =
+      saturationEditHsv;
+
+    logicalHueValue =
+      (uint8_t)(
+        logicalColorHsv.h >>
+        8
+      );
+
+    logicalWhiteValue =
+      saturationEditWhite;
+
+    logicalColorHsvValid =
+      true;
+
+    CRGBW newRgb;
+
+    hsv2rgb_spectrum(
+      logicalColorHsv,
+      newRgb
+    );
+
+    newRgb.w =
+      logicalWhiteValue;
+
+    uint32_t newColor =
+      newRgb.color32;
+
+    Segment& mainSegment =
+      strip.getMainSegment();
+
+    uint32_t oldColor =
+      mainSegment.colors[0];
+
+    if (
+      newColor !=
+      oldColor
+    )
+    {
+      mainSegment.setColor(
+        0,
+        newColor
+      );
+
+      stateUpdated(
+        CALL_MODE_BUTTON
+      );
+    }
+
+    if (
+      currentPage ==
+      SCREEN_COLOR
+    )
+    {
+      drawColorDetails(
+        newColor
+      );
+
+      drawHue(
+        logicalHueValue,
+        TOUCH_TARGET_NONE
+      );
+
+      drawSaturation(
+        logicalSaturationValue,
+        touchTarget
+      );
+    }
+
+    lastPrimaryColor =
+      newColor;
+
+    lastPrimaryColorValid =
+      true;
+
+    lastHueValue =
+      logicalHueValue;
+
+    lastSaturationValue =
+      logicalSaturationValue;
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Saturation logical=%u "
+      "H=%u "
+      "RGB=#%02X%02X%02X\n",
+      logicalSaturationValue,
+      logicalHueValue,
+      R(newColor),
+      G(newColor),
+      B(newColor)
+    );
+
+    return true;
+  }
+
+  // =========================================================
+  // Saturation step
+  //
+  // Hueと違い循環しません。
+  //
+  //   < 0   -> 0
+  //   > 255 -> 255
+  // =========================================================
+
+  void applySaturationStep(
+    int step
+  )
+  {
+    if (!saturationEditValid)
+    {
+      beginSaturationEdit();
+    }
+
+    if (!saturationEditValid)
+    {
+      return;
+    }
+
+    int newValue =
+      (int)logicalSaturationValue +
+      step;
+
+    newValue =
+      constrain(
+        newValue,
+        0,
+        255
+      );
+
+    if (
+      newValue ==
+      logicalSaturationValue
+    )
+    {
+      return;
+    }
+
+    applySaturationValue(
+      (uint8_t)newValue
+    );
+  }
+
+  void saturationShortPress(
+    TouchTarget target
+  )
+  {
+    if (
+      target ==
+      TOUCH_TARGET_SATURATION_DOWN
+    )
+    {
+      applySaturationStep(
+        -SATURATION_SHORT_STEP
+      );
+    }
+    else if (
+      target ==
+      TOUCH_TARGET_SATURATION_UP
+    )
+    {
+      applySaturationStep(
+        SATURATION_SHORT_STEP
+      );
+    }
+  }
+
+  void saturationLongPressStep(
+    TouchTarget target
+  )
+  {
+    if (
+      target ==
+      TOUCH_TARGET_SATURATION_DOWN
+    )
+    {
+      applySaturationStep(
+        -SATURATION_LONG_STEP
+      );
+    }
+    else if (
+      target ==
+      TOUCH_TARGET_SATURATION_UP
+    )
+    {
+      applySaturationStep(
+        SATURATION_LONG_STEP
+      );
+    }
+  }
+
+  // =========================================================
+  // Selected button checks
   // =========================================================
 
   bool isInsideSelectedBrightnessButton(
@@ -2481,10 +2934,6 @@ private:
     return false;
   }
 
-  // =========================================================
-  // Selected Effect button
-  // =========================================================
-
   bool isInsideSelectedEffectButton(
     int16_t x,
     int16_t y
@@ -2517,10 +2966,6 @@ private:
     return false;
   }
 
-  // =========================================================
-  // Selected Hue button
-  // =========================================================
-
   bool isInsideSelectedHueButton(
     int16_t x,
     int16_t y
@@ -2545,6 +2990,38 @@ private:
     {
       return
         isHueUpTouched(
+          x,
+          y
+        );
+    }
+
+    return false;
+  }
+
+  bool isInsideSelectedSaturationButton(
+    int16_t x,
+    int16_t y
+  )
+  {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_SATURATION_DOWN
+    )
+    {
+      return
+        isSaturationDownTouched(
+          x,
+          y
+        );
+    }
+
+    if (
+      touchTarget ==
+      TOUCH_TARGET_SATURATION_UP
+    )
+    {
+      return
+        isSaturationUpTouched(
           x,
           y
         );
@@ -2677,6 +3154,12 @@ private:
       bool insideHueUp =
         false;
 
+      bool insideSaturationDown =
+        false;
+
+      bool insideSaturationUp =
+        false;
+
       if (
         currentPage ==
         SCREEN_COLOR
@@ -2699,6 +3182,18 @@ private:
             touchX,
             touchY
           );
+
+        insideSaturationDown =
+          isSaturationDownTouched(
+            touchX,
+            touchY
+          );
+
+        insideSaturationUp =
+          isSaturationUpTouched(
+            touchX,
+            touchY
+          );
       }
 
       // -----------------------------------------------------
@@ -2717,6 +3212,9 @@ private:
           false;
 
         hueLongPressActive =
+          false;
+
+        saturationLongPressActive =
           false;
 
         Serial.printf(
@@ -2877,6 +3375,50 @@ private:
               false;
 
             beginHueEdit();
+          }
+
+          else if (
+            insideSaturationDown
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_SATURATION_DOWN;
+
+            lastTouchInsideSaturation =
+              true;
+
+            saturationPressStartTime =
+              now;
+
+            lastSaturationRepeat =
+              now;
+
+            saturationLongPressActive =
+              false;
+
+            beginSaturationEdit();
+          }
+
+          else if (
+            insideSaturationUp
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_SATURATION_UP;
+
+            lastTouchInsideSaturation =
+              true;
+
+            saturationPressStartTime =
+              now;
+
+            lastSaturationRepeat =
+              now;
+
+            saturationLongPressActive =
+              false;
+
+            beginSaturationEdit();
           }
         }
       }
@@ -3155,6 +3697,85 @@ private:
         return;
       }
 
+      // =====================================================
+      // Saturation
+      // =====================================================
+
+      if (
+        touchTarget ==
+          TOUCH_TARGET_SATURATION_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_SATURATION_UP
+      )
+      {
+        bool insideSelectedButton =
+          isInsideSelectedSaturationButton(
+            touchX,
+            touchY
+          );
+
+        lastTouchInsideSaturation =
+          insideSelectedButton;
+
+        if (
+          insideSelectedButton !=
+          saturationButtonVisualPressed
+        )
+        {
+          drawSaturation(
+            logicalSaturationValue,
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
+
+          saturationButtonVisualPressed =
+            insideSelectedButton;
+        }
+
+        if (!insideSelectedButton)
+        {
+          return;
+        }
+
+        if (
+          !saturationLongPressActive &&
+          now -
+          saturationPressStartTime >=
+          SATURATION_LONG_PRESS_MS
+        )
+        {
+          saturationLongPressActive =
+            true;
+
+          lastSaturationRepeat =
+            now;
+
+          saturationLongPressStep(
+            touchTarget
+          );
+
+          return;
+        }
+
+        if (
+          saturationLongPressActive &&
+          now -
+          lastSaturationRepeat >=
+          SATURATION_REPEAT_MS
+        )
+        {
+          lastSaturationRepeat =
+            now;
+
+          saturationLongPressStep(
+            touchTarget
+          );
+        }
+
+        return;
+      }
+
       return;
     }
 
@@ -3199,6 +3820,9 @@ private:
 
     bool wasHueLongPress =
       hueLongPressActive;
+
+    bool wasSaturationLongPress =
+      saturationLongPressActive;
 
     bool executePowerAction =
       (
@@ -3255,10 +3879,21 @@ private:
       lastTouchInsideHue &&
       !wasHueLongPress;
 
+    bool executeSaturationShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_SATURATION_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_SATURATION_UP
+      ) &&
+      lastTouchInsideSaturation &&
+      !wasSaturationLongPress;
+
     Serial.printf(
       "[CoreS3_Display] "
       "Touch release X=%d Y=%d "
-      "Target=%d BLong=%s HLong=%s\n",
+      "Target=%d "
+      "BLong=%s HLong=%s SLong=%s\n",
       lastTouchX,
       lastTouchY,
       (int)releasedTarget,
@@ -3266,6 +3901,9 @@ private:
         ? "YES"
         : "NO",
       wasHueLongPress
+        ? "YES"
+        : "NO",
+      wasSaturationLongPress
         ? "YES"
         : "NO"
     );
@@ -3357,8 +3995,24 @@ private:
       );
     }
 
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_SATURATION_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_SATURATION_UP
+      ) &&
+      saturationButtonVisualPressed
+    )
+    {
+      drawSaturation(
+        logicalSaturationValue,
+        TOUCH_TARGET_NONE
+      );
+    }
+
     // -------------------------------------------------------
-    // Save Hue gesture state before common reset.
+    // Save Hue edit state
     // -------------------------------------------------------
 
     bool savedHueEditValid =
@@ -3374,9 +4028,23 @@ private:
       hueEditWhite;
 
     // -------------------------------------------------------
-    // Reset current gesture.
-    //
-    // Persistent logicalColorHsv remains intact.
+    // Save Saturation edit state
+    // -------------------------------------------------------
+
+    bool savedSaturationEditValid =
+      saturationEditValid;
+
+    CHSV32 savedSaturationEditHsv =
+      saturationEditHsv;
+
+    uint8_t savedSaturationEditValue =
+      saturationEditValue;
+
+    uint8_t savedSaturationEditWhite =
+      saturationEditWhite;
+
+    // -------------------------------------------------------
+    // Reset gesture
     // -------------------------------------------------------
 
     touchActive =
@@ -3403,6 +4071,9 @@ private:
     lastTouchInsideHue =
       false;
 
+    lastTouchInsideSaturation =
+      false;
+
     powerButtonVisualPressed =
       false;
 
@@ -3421,10 +4092,16 @@ private:
     hueButtonVisualPressed =
       false;
 
+    saturationButtonVisualPressed =
+      false;
+
     brightnessLongPressActive =
       false;
 
     hueLongPressActive =
+      false;
+
+    saturationLongPressActive =
       false;
 
     touchReleaseCandidate =
@@ -3442,14 +4119,22 @@ private:
     lastHueRepeat =
       0;
 
+    saturationPressStartTime =
+      0;
+
+    lastSaturationRepeat =
+      0;
+
     lastTouchX =
       -1;
 
     lastTouchY =
       -1;
 
-    // Restore Hue gesture data only if needed for the
-    // short-press action below.
+    // -------------------------------------------------------
+    // Restore edit state only for release action
+    // -------------------------------------------------------
+
     hueEditValid =
       savedHueEditValid;
 
@@ -3461,6 +4146,18 @@ private:
 
     hueEditWhite =
       savedHueEditWhite;
+
+    saturationEditValid =
+      savedSaturationEditValid;
+
+    saturationEditHsv =
+      savedSaturationEditHsv;
+
+    saturationEditValue =
+      savedSaturationEditValue;
+
+    saturationEditWhite =
+      savedSaturationEditWhite;
 
     // =======================================================
     // Execute action
@@ -3474,6 +4171,9 @@ private:
       toggleLedPowerFromTouch();
 
       hueEditValid =
+        false;
+
+      saturationEditValid =
         false;
 
       return;
@@ -3494,6 +4194,9 @@ private:
         bri;
 
       hueEditValid =
+        false;
+
+      saturationEditValid =
         false;
 
       return;
@@ -3520,6 +4223,9 @@ private:
       hueEditValid =
         false;
 
+      saturationEditValid =
+        false;
+
       return;
     }
 
@@ -3533,6 +4239,9 @@ private:
       );
 
       hueEditValid =
+        false;
+
+      saturationEditValid =
         false;
 
       drawColorScreen();
@@ -3550,6 +4259,9 @@ private:
       );
 
       hueEditValid =
+        false;
+
+      saturationEditValid =
         false;
 
       drawMainScreen(
@@ -3570,17 +4282,62 @@ private:
         TOUCH_TARGET_NONE
       );
 
+      drawSaturation(
+        logicalSaturationValue,
+        TOUCH_TARGET_NONE
+      );
+
       lastHueValue =
         logicalHueValue;
 
+      lastSaturationValue =
+        logicalSaturationValue;
+
       hueEditValid =
+        false;
+
+      saturationEditValid =
         false;
 
       return;
     }
 
-    // Long press already applied its Hue changes.
+    if (executeSaturationShortPress)
+    {
+      saturationShortPress(
+        releasedTarget
+      );
+
+      drawHue(
+        logicalHueValue,
+        TOUCH_TARGET_NONE
+      );
+
+      drawSaturation(
+        logicalSaturationValue,
+        TOUCH_TARGET_NONE
+      );
+
+      lastHueValue =
+        logicalHueValue;
+
+      lastSaturationValue =
+        logicalSaturationValue;
+
+      hueEditValid =
+        false;
+
+      saturationEditValid =
+        false;
+
+      return;
+    }
+
+    // Long press already applied changes.
     hueEditValid =
+      false;
+
+    saturationEditValid =
       false;
   }
 
@@ -3597,7 +4354,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 7.3.1 start"
+        "Phase 7.4 start"
       )
     );
 
@@ -3668,7 +4425,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 7.3.1 setup complete"
+        "Phase 7.4 setup complete"
       )
     );
 
@@ -3841,6 +4598,20 @@ public:
           TOUCH_TARGET_HUE_UP
       );
 
+    bool saturationTouchActive =
+      (
+        touchTarget ==
+          TOUCH_TARGET_SATURATION_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_SATURATION_UP
+      );
+
+    bool colorControlTouchActive =
+      (
+        hueTouchActive ||
+        saturationTouchActive
+      );
+
     bool primaryColorChangeHandled =
       false;
 
@@ -3902,10 +4673,6 @@ public:
           effectMode;
       }
 
-      // -----------------------------------------------------
-      // External Primary Color change on MAIN.
-      // -----------------------------------------------------
-
       if (
         primaryColorChanged &&
         touchTarget !=
@@ -3936,15 +4703,15 @@ public:
     )
     {
       // -----------------------------------------------------
-      // External Web UI color change.
+      // Web UI等からPrimary Colorが変更された場合
       //
-      // Re-synchronize logical Hue only when local Hue control
-      // is not active.
+      // Hue/Saturationをローカル操作していない時だけ
+      // RGBから論理HSVを再同期します。
       // -----------------------------------------------------
 
       if (
         primaryColorChanged &&
-        !hueTouchActive
+        !colorControlTouchActive
       )
       {
         syncLogicalColorFromRgb(
@@ -3960,8 +4727,16 @@ public:
           TOUCH_TARGET_NONE
         );
 
+        drawSaturation(
+          logicalSaturationValue,
+          TOUCH_TARGET_NONE
+        );
+
         lastHueValue =
           logicalHueValue;
+
+        lastSaturationValue =
+          logicalSaturationValue;
 
         primaryColorChangeHandled =
           true;
@@ -3969,11 +4744,7 @@ public:
     }
 
     // =======================================================
-    // Save external color cache only after it has actually
-    // been handled.
-    //
-    // If an external change happens during a local Hue touch,
-    // leave it pending. It will be detected after release.
+    // Save external color cache
     // =======================================================
 
     if (
@@ -4187,9 +4958,6 @@ public:
 
     // -------------------------------------------------------
     // Hue
-    //
-    // If the logical state matches the currently cached RGB,
-    // report logical Hue instead of re-deriving Hue from RGB.
     // -------------------------------------------------------
 
     JsonArray hueInfo =
@@ -4209,6 +4977,31 @@ public:
     else
     {
       hueInfo.add(
+        "No segment"
+      );
+    }
+
+    // -------------------------------------------------------
+    // Saturation
+    // -------------------------------------------------------
+
+    JsonArray saturationInfo =
+      user.createNestedArray(
+        "CoreS3 Display Saturation"
+      );
+
+    if (
+      strip.getSegmentsNum() >
+      0
+    )
+    {
+      saturationInfo.add(
+        getDisplayedSaturation()
+      );
+    }
+    else
+    {
+      saturationInfo.add(
         "No segment"
       );
     }
