@@ -2,6 +2,8 @@
 #include <WiFi.h>
 #include <M5GFX.h>
 
+#include "CoreS3_WLED_Logo.h"
+
 class CoreS3DisplayUsermod : public Usermod
 {
 private:
@@ -34,14 +36,70 @@ private:
   bool lastPrimaryColorValid = false;
 
   // =========================================================
+  // Display brightness
+  // =========================================================
+
+  static constexpr uint8_t DISPLAY_NORMAL_BRIGHTNESS = 128;
+
+  uint8_t currentDisplayBrightness = 0;
+
+  // =========================================================
+  // Startup animation
+  //
+  // Flow:
+  //
+  //   Logo
+  //     ↓
+  //   Fade In
+  //     ↓
+  //   Wi-Fi Connecting...
+  //     ↓
+  //   Wi-Fi Connected + IP
+  //     ↓
+  //   Hold
+  //     ↓
+  //   Fade Out
+  //     ↓
+  //   MAIN screen
+  //     ↓
+  //   Fade In
+  // =========================================================
+
+  enum StartupState : uint8_t
+  {
+    STARTUP_FADE_IN = 0,
+    STARTUP_WAIT_WIFI,
+    STARTUP_CONNECTED_HOLD,
+    STARTUP_FADE_OUT,
+    STARTUP_MAIN_FADE_IN,
+    STARTUP_DONE
+  };
+
+  StartupState startupState =
+    STARTUP_FADE_IN;
+
+  unsigned long startupStateStart = 0;
+  unsigned long startupLastFadeStep = 0;
+  unsigned long startupLastDotsUpdate = 0;
+
+  uint8_t startupDotCount = 0;
+
+  String startupIPAddress = "";
+
+  static constexpr unsigned long STARTUP_FADE_INTERVAL_MS = 8;
+  static constexpr uint8_t STARTUP_FADE_STEP = 4;
+
+  static constexpr unsigned long STARTUP_CONNECTED_HOLD_MS = 700;
+  static constexpr unsigned long STARTUP_DOTS_INTERVAL_MS = 350;
+
+  // =========================================================
   // Persistent logical HSV state
   //
-  // CoreS3側でHSVを論理値として保持します。
+  // Hue / SaturationはRGBから毎回逆算せず、
+  // CoreS3側で論理HSV値を保持します。
   //
-  // Hue / Saturation操作のたびにRGB -> HSVへ戻さないため、
-  // RGB量子化による値の引っ掛かりを防止します。
-  //
-  // Web UI等から外部変更された場合のみRGBから再同期します。
+  // Web UI等からPrimary Colorが外部変更された場合のみ
+  // RGB -> HSVを再同期します。
   // =========================================================
 
   CHSV32 logicalColorHsv;
@@ -133,7 +191,7 @@ private:
   unsigned long lastSaturationRepeat = 0;
 
   // =========================================================
-  // Hue gesture edit state
+  // Hue gesture state
   // =========================================================
 
   CHSV32 hueEditHsv;
@@ -144,7 +202,7 @@ private:
   uint8_t hueEditWhite = 0;
 
   // =========================================================
-  // Saturation gesture edit state
+  // Saturation gesture state
   // =========================================================
 
   CHSV32 saturationEditHsv;
@@ -180,14 +238,7 @@ private:
   static constexpr int16_t HEADER_IP_Y = 41;
 
   // =========================================================
-  // Common LEFT / RIGHT buttons
-  //
-  // Brightness
-  // Effect
-  // Hue
-  // Saturation
-  //
-  // すべて同じサイズ・X位置を使用します。
+  // Common LEFT / RIGHT controls
   // =========================================================
 
   static constexpr int16_t CONTROL_LEFT_X = 16;
@@ -203,9 +254,20 @@ private:
   static constexpr int16_t BRI_BUTTON_Y = 82;
   static constexpr int16_t FX_BUTTON_Y = 138;
 
-  static constexpr int16_t COLOR_BUTTON_X = 64;
+  // =========================================================
+  // Phase 8.1
+  //
+  // COLOR button now uses the same outside edges as the
+  // Brightness / Effect buttons.
+  //
+  // X = 16
+  // right edge = 304
+  // width = 288
+  // =========================================================
+
+  static constexpr int16_t COLOR_BUTTON_X = 16;
   static constexpr int16_t COLOR_BUTTON_Y = 188;
-  static constexpr int16_t COLOR_BUTTON_W = 192;
+  static constexpr int16_t COLOR_BUTTON_W = 288;
   static constexpr int16_t COLOR_BUTTON_H = 40;
 
   // =========================================================
@@ -227,16 +289,10 @@ private:
   static constexpr int16_t COLOR_PREVIEW_H = 36;
 
   // =========================================================
-  // COLOR Hue row
+  // Hue / Saturation
   // =========================================================
 
   static constexpr int16_t HUE_BUTTON_Y = 151;
-
-  // =========================================================
-  // COLOR Saturation row
-  //
-  // 320 x 240 の最下部まで使います。
-  // =========================================================
 
   static constexpr int16_t SATURATION_LABEL_Y = 198;
   static constexpr int16_t SATURATION_BUTTON_Y = 204;
@@ -263,15 +319,6 @@ private:
 
   // =========================================================
   // Hue behavior
-  //
-  // Short:
-  //   +/- 1
-  //
-  // Long:
-  //   400ms後
-  //   80ms毎に +/-5
-  //
-  // 0 <-> 255 は循環
   // =========================================================
 
   static constexpr unsigned long HUE_LONG_PRESS_MS = 400;
@@ -282,18 +329,6 @@ private:
 
   // =========================================================
   // Saturation behavior
-  //
-  // Short:
-  //   +/- 1
-  //
-  // Long:
-  //   400ms後
-  //   80ms毎に +/-5
-  //
-  // Saturationは循環しません。
-  //
-  //   最小 = 0
-  //   最大 = 255
   // =========================================================
 
   static constexpr unsigned long SATURATION_LONG_PRESS_MS = 400;
@@ -301,6 +336,512 @@ private:
 
   static constexpr int SATURATION_SHORT_STEP = 1;
   static constexpr int SATURATION_LONG_STEP = 5;
+
+  // =========================================================
+  // Display brightness helper
+  // =========================================================
+
+  void setDisplayBrightness(
+    uint8_t value
+  )
+  {
+    currentDisplayBrightness =
+      value;
+
+    display.setBrightness(
+      value
+    );
+  }
+
+  // =========================================================
+  // Non-blocking Fade helper
+  //
+  // Returns true when target brightness has been reached.
+  // =========================================================
+
+  bool updateFade(
+    uint8_t targetBrightness,
+    unsigned long now
+  )
+  {
+    if (
+      currentDisplayBrightness ==
+      targetBrightness
+    )
+    {
+      return true;
+    }
+
+    if (
+      now -
+      startupLastFadeStep <
+      STARTUP_FADE_INTERVAL_MS
+    )
+    {
+      return false;
+    }
+
+    startupLastFadeStep =
+      now;
+
+    if (
+      currentDisplayBrightness <
+      targetBrightness
+    )
+    {
+      int nextValue =
+        currentDisplayBrightness +
+        STARTUP_FADE_STEP;
+
+      if (
+        nextValue >
+        targetBrightness
+      )
+      {
+        nextValue =
+          targetBrightness;
+      }
+
+      setDisplayBrightness(
+        (uint8_t)nextValue
+      );
+    }
+    else
+    {
+      int nextValue =
+        currentDisplayBrightness -
+        STARTUP_FADE_STEP;
+
+      if (
+        nextValue <
+        targetBrightness
+      )
+      {
+        nextValue =
+          targetBrightness;
+      }
+
+      setDisplayBrightness(
+        (uint8_t)nextValue
+      );
+    }
+
+    return
+      (
+        currentDisplayBrightness ==
+        targetBrightness
+      );
+  }
+
+  // =========================================================
+  // Startup logo base
+  // =========================================================
+
+  void drawStartupBase()
+  {
+    display.fillScreen(
+      TFT_BLACK
+    );
+
+    // -------------------------------------------------------
+    // WLED logo
+    //
+    // 304 x 95
+    //
+    // LCD width = 320
+    // left/right margin = 8
+    // -------------------------------------------------------
+
+    bool logoResult =
+      display.drawPng(
+        CORES3_WLED_LOGO_PNG,
+        CORES3_WLED_LOGO_PNG_LEN,
+        8,
+        20
+      );
+
+    // -------------------------------------------------------
+    // Fallback if PNG decoding fails.
+    // -------------------------------------------------------
+
+    if (!logoResult)
+    {
+      display.setTextDatum(
+        textdatum_t::middle_center
+      );
+
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "WLED M5Stack CoreS3",
+        screenWidth / 2,
+        68
+      );
+
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "WARNING: WLED startup PNG draw failed"
+        )
+      );
+    }
+  }
+
+  // =========================================================
+  // Startup Connecting status
+  // =========================================================
+
+  void drawStartupConnectingStatus()
+  {
+    // Only redraw lower status area.
+    display.fillRect(
+      0,
+      125,
+      screenWidth,
+      100,
+      TFT_BLACK
+    );
+
+    char dots[5];
+
+    dots[0] = '\0';
+
+    for (
+      uint8_t i = 0;
+      i < startupDotCount;
+      i++
+    )
+    {
+      strcat(
+        dots,
+        "."
+      );
+    }
+
+    char statusText[32];
+
+    snprintf(
+      statusText,
+      sizeof(statusText),
+      "Wi-Fi Connecting%s",
+      dots
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      statusText,
+      screenWidth / 2,
+      153
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
+
+    display.drawString(
+      "Starting WLED...",
+      screenWidth / 2,
+      185
+    );
+  }
+
+  // =========================================================
+  // Startup Connected status
+  // =========================================================
+
+  void drawStartupConnectedStatus(
+    const String& ipAddress
+  )
+  {
+    display.fillRect(
+      0,
+      125,
+      screenWidth,
+      100,
+      TFT_BLACK
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_GREEN,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      "Wi-Fi Connected",
+      screenWidth / 2,
+      150
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      ipAddress,
+      screenWidth / 2,
+      181
+    );
+  }
+
+  // =========================================================
+  // Startup sequence
+  //
+  // Completely non-blocking.
+  // =========================================================
+
+  void handleStartupSequence()
+  {
+    if (
+      startupState ==
+      STARTUP_DONE
+    )
+    {
+      return;
+    }
+
+    unsigned long now =
+      millis();
+
+    // =======================================================
+    // Fade logo in
+    // =======================================================
+
+    if (
+      startupState ==
+      STARTUP_FADE_IN
+    )
+    {
+      if (
+        updateFade(
+          DISPLAY_NORMAL_BRIGHTNESS,
+          now
+        )
+      )
+      {
+        startupState =
+          STARTUP_WAIT_WIFI;
+
+        startupStateStart =
+          now;
+
+        startupLastDotsUpdate =
+          now;
+      }
+
+      return;
+    }
+
+    // =======================================================
+    // Wait for Wi-Fi
+    // =======================================================
+
+    if (
+      startupState ==
+      STARTUP_WAIT_WIFI
+    )
+    {
+      // -----------------------------------------------------
+      // Animate Connecting...
+      // -----------------------------------------------------
+
+      if (
+        now -
+        startupLastDotsUpdate >=
+        STARTUP_DOTS_INTERVAL_MS
+      )
+      {
+        startupLastDotsUpdate =
+          now;
+
+        startupDotCount++;
+
+        if (
+          startupDotCount >
+          3
+        )
+        {
+          startupDotCount =
+            0;
+        }
+
+        drawStartupConnectingStatus();
+      }
+
+      // -----------------------------------------------------
+      // Connected
+      // -----------------------------------------------------
+
+      if (
+        WiFi.status() ==
+        WL_CONNECTED
+      )
+      {
+        startupIPAddress =
+          WiFi.localIP().toString();
+
+        drawStartupConnectedStatus(
+          startupIPAddress
+        );
+
+        Serial.printf(
+          "[CoreS3_Display] "
+          "Startup Wi-Fi connected: %s\n",
+          startupIPAddress.c_str()
+        );
+
+        startupState =
+          STARTUP_CONNECTED_HOLD;
+
+        startupStateStart =
+          now;
+      }
+
+      return;
+    }
+
+    // =======================================================
+    // Hold connected status
+    // =======================================================
+
+    if (
+      startupState ==
+      STARTUP_CONNECTED_HOLD
+    )
+    {
+      if (
+        now -
+        startupStateStart >=
+        STARTUP_CONNECTED_HOLD_MS
+      )
+      {
+        startupState =
+          STARTUP_FADE_OUT;
+
+        startupLastFadeStep =
+          now;
+      }
+
+      return;
+    }
+
+    // =======================================================
+    // Fade startup logo out
+    // =======================================================
+
+    if (
+      startupState ==
+      STARTUP_FADE_OUT
+    )
+    {
+      if (
+        updateFade(
+          0,
+          now
+        )
+      )
+      {
+        // ---------------------------------------------------
+        // LCD is now dark.
+        // Draw MAIN behind the dark backlight.
+        // ---------------------------------------------------
+
+        drawMainScreen(
+          startupIPAddress
+        );
+
+        setDisplayBrightness(
+          0
+        );
+
+        startupState =
+          STARTUP_MAIN_FADE_IN;
+
+        startupLastFadeStep =
+          now;
+      }
+
+      return;
+    }
+
+    // =======================================================
+    // Fade MAIN screen in
+    // =======================================================
+
+    if (
+      startupState ==
+      STARTUP_MAIN_FADE_IN
+    )
+    {
+      if (
+        updateFade(
+          DISPLAY_NORMAL_BRIGHTNESS,
+          now
+        )
+      )
+      {
+        startupState =
+          STARTUP_DONE;
+
+        lastWiFiConnected =
+          true;
+
+        lastIPAddress =
+          startupIPAddress;
+
+        readyScreenShown =
+          true;
+
+        connectingScreenShown =
+          false;
+
+        Serial.println(
+          F(
+            "[CoreS3_Display] "
+            "Startup animation complete"
+          )
+        );
+      }
+
+      return;
+    }
+  }
 
   // =========================================================
   // RGB888 -> RGB565
@@ -358,8 +899,6 @@ private:
 
   // =========================================================
   // RGB -> Hue
-  //
-  // 外部RGB変更から再同期する場合だけ使用します。
   // =========================================================
 
   uint8_t getHueFromColor(
@@ -386,8 +925,6 @@ private:
 
   // =========================================================
   // RGB -> Saturation
-  //
-  // 外部RGB変更から再同期する場合だけ使用します。
   // =========================================================
 
   uint8_t getSaturationFromColor(
@@ -410,15 +947,7 @@ private:
   }
 
   // =========================================================
-  // Synchronize persistent logical HSV from RGB
-  //
-  // 使用タイミング:
-  //
-  //   - 初期表示
-  //   - COLOR画面へ入った時
-  //   - Web UI等からPrimary Colorが外部変更された時
-  //
-  // CoreS3のHue/Saturation短押し毎には呼びません。
+  // Synchronize logical HSV from RGB
   // =========================================================
 
   void syncLogicalColorFromRgb(
@@ -519,52 +1048,21 @@ private:
   }
 
   // =========================================================
-  // Boot screen
-  // =========================================================
-
-  void drawBootScreen()
-  {
-    display.fillScreen(
-      TFT_BLACK
-    );
-
-    display.setTextDatum(
-      textdatum_t::middle_center
-    );
-
-    display.setTextColor(
-      TFT_WHITE,
-      TFT_BLACK
-    );
-
-    display.setTextSize(
-      2
-    );
-
-    display.drawString(
-      "WLED M5Stack CoreS3",
-      screenWidth / 2,
-      82
-    );
-
-    display.setTextSize(
-      2
-    );
-
-    display.drawString(
-      "Starting...",
-      screenWidth / 2,
-      145
-    );
-  }
-
-  // =========================================================
-  // Wi-Fi connecting
+  // Reconnect screen
+  //
+  // After normal operation, if Wi-Fi disconnects,
+  // use the same WLED branding.
   // =========================================================
 
   void drawConnectingScreen()
   {
-    display.fillScreen(
+    drawStartupBase();
+
+    display.fillRect(
+      0,
+      125,
+      screenWidth,
+      100,
       TFT_BLACK
     );
 
@@ -582,25 +1080,24 @@ private:
     );
 
     display.drawString(
-      "WLED M5Stack CoreS3",
+      "Wi-Fi Reconnecting...",
       screenWidth / 2,
-      65
+      153
     );
 
     display.setTextSize(
-      2
+      1
+    );
+
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
     );
 
     display.drawString(
-      "Wi-Fi",
+      "WLED is running",
       screenWidth / 2,
-      125
-    );
-
-    display.drawString(
-      "Connecting...",
-      screenWidth / 2,
-      160
+      185
     );
 
     currentPage =
@@ -1084,7 +1581,14 @@ private:
   }
 
   // =========================================================
-  // MAIN Color button
+  // MAIN COLOR button
+  //
+  // Phase 8.1:
+  //
+  // Full-width visual alignment.
+  //
+  // The icon + "COLOR" text are treated as one centered
+  // visual group.
   // =========================================================
 
   void drawColorButton(
@@ -1153,11 +1657,19 @@ private:
       buttonColor
     );
 
+    // -------------------------------------------------------
+    // Centered swatch + COLOR group
+    //
+    // Approximate group:
+    //
+    // [ swatch ]   COLOR
+    //
+    // X 110..210
+    // -------------------------------------------------------
+
+    static constexpr int16_t SWATCH_X = 110;
     static constexpr int16_t SWATCH_W = 26;
     static constexpr int16_t SWATCH_H = 24;
-
-    int16_t swatchX =
-      COLOR_BUTTON_X + 14;
 
     int16_t swatchY =
       COLOR_BUTTON_Y +
@@ -1169,7 +1681,7 @@ private:
       );
 
     display.fillRect(
-      swatchX,
+      SWATCH_X,
       swatchY,
       SWATCH_W,
       SWATCH_H,
@@ -1177,7 +1689,7 @@ private:
     );
 
     display.drawRect(
-      swatchX,
+      SWATCH_X,
       swatchY,
       SWATCH_W,
       SWATCH_H,
@@ -1199,7 +1711,7 @@ private:
 
     display.drawString(
       "COLOR",
-      COLOR_BUTTON_X + 115,
+      180,
       COLOR_BUTTON_Y +
         (COLOR_BUTTON_H / 2)
     );
@@ -1389,7 +1901,7 @@ private:
   }
 
   // =========================================================
-  // Hue control
+  // Hue
   // =========================================================
 
   void drawHue(
@@ -1472,11 +1984,7 @@ private:
   }
 
   // =========================================================
-  // Saturation control
-  //
-  //           Saturation
-  //
-  // [  <  ]      255      [  >  ]
+  // Saturation
   // =========================================================
 
   void drawSaturation(
@@ -2001,16 +2509,6 @@ private:
 
     lastHueValue =
       hueEditValue;
-
-    Serial.printf(
-      "[CoreS3_Display] "
-      "Hue edit start: "
-      "H=%u S=%u V=%u W=%u\n",
-      hueEditValue,
-      hueEditHsv.s,
-      hueEditHsv.v,
-      hueEditWhite
-    );
   }
 
   // =========================================================
@@ -2054,23 +2552,10 @@ private:
 
     lastSaturationValue =
       saturationEditValue;
-
-    Serial.printf(
-      "[CoreS3_Display] "
-      "Saturation edit start: "
-      "H=%u S=%u V=%u W=%u\n",
-      logicalHueValue,
-      saturationEditValue,
-      saturationEditHsv.v,
-      saturationEditWhite
-    );
   }
 
   // =========================================================
   // Reset touch gesture
-  //
-  // logicalColorHsv はリセットしません。
-  // Hue/Saturationの短押し間でも保持します。
   // =========================================================
 
   void resetTouchGesture()
@@ -2172,13 +2657,6 @@ private:
 
   void toggleLedPowerFromTouch()
   {
-    Serial.println(
-      F(
-        "[CoreS3_Display] "
-        "Touch POWER action"
-      )
-    );
-
     toggleOnOff();
 
     stateUpdated(
@@ -2190,15 +2668,6 @@ private:
 
     lastBrightnessValue =
       -1;
-
-    Serial.printf(
-      "[CoreS3_Display] "
-      "WLED Power -> %s, Brightness=%u\n",
-      bri > 0
-        ? "ON"
-        : "OFF",
-      bri
-    );
   }
 
   // =========================================================
@@ -2262,12 +2731,6 @@ private:
     lastLedState =
       -1;
 
-    Serial.printf(
-      "[CoreS3_Display] "
-      "Brightness -> %u\n",
-      bri
-    );
-
     return true;
   }
 
@@ -2276,12 +2739,8 @@ private:
   )
   {
     int newValue =
-      (int)bri +
-      step;
-
-    newValue =
       constrain(
-        newValue,
+        (int)bri + step,
         0,
         255
       );
@@ -2378,11 +2837,8 @@ private:
     Segment& mainSegment =
       strip.getMainSegment();
 
-    int currentMode =
-      mainSegment.mode;
-
     int newMode =
-      currentMode +
+      mainSegment.mode +
       step;
 
     if (
@@ -2405,7 +2861,7 @@ private:
 
     if (
       newMode ==
-      currentMode
+      mainSegment.mode
     )
     {
       return;
@@ -2432,25 +2888,10 @@ private:
 
     lastEffectMode =
       mainSegment.mode;
-
-    char effectName[64];
-
-    getEffectName(
-      mainSegment.mode,
-      effectName,
-      sizeof(effectName)
-    );
-
-    Serial.printf(
-      "[CoreS3_Display] "
-      "Effect -> %u (%s)\n",
-      mainSegment.mode,
-      effectName
-    );
   }
 
   // =========================================================
-  // Apply Hue
+  // Hue
   // =========================================================
 
   bool applyHueValue(
@@ -2513,12 +2954,9 @@ private:
     Segment& mainSegment =
       strip.getMainSegment();
 
-    uint32_t oldColor =
-      mainSegment.colors[0];
-
     if (
       newColor !=
-      oldColor
+      mainSegment.colors[0]
     )
     {
       mainSegment.setColor(
@@ -2562,18 +3000,6 @@ private:
 
     lastSaturationValue =
       logicalSaturationValue;
-
-    Serial.printf(
-      "[CoreS3_Display] "
-      "Hue logical=%u "
-      "S=%u "
-      "RGB=#%02X%02X%02X\n",
-      logicalHueValue,
-      logicalSaturationValue,
-      R(newColor),
-      G(newColor),
-      B(newColor)
-    );
 
     return true;
   }
@@ -2668,12 +3094,7 @@ private:
   }
 
   // =========================================================
-  // Apply Saturation
-  //
-  // Hue / Valueは保持します。
-  //
-  // Saturationは論理値として保持するため、隣接値でRGBが
-  // 同じになった場合でも数値は正常に進みます。
+  // Saturation
   // =========================================================
 
   bool applySaturationValue(
@@ -2738,12 +3159,9 @@ private:
     Segment& mainSegment =
       strip.getMainSegment();
 
-    uint32_t oldColor =
-      mainSegment.colors[0];
-
     if (
       newColor !=
-      oldColor
+      mainSegment.colors[0]
     )
     {
       mainSegment.setColor(
@@ -2788,29 +3206,8 @@ private:
     lastSaturationValue =
       logicalSaturationValue;
 
-    Serial.printf(
-      "[CoreS3_Display] "
-      "Saturation logical=%u "
-      "H=%u "
-      "RGB=#%02X%02X%02X\n",
-      logicalSaturationValue,
-      logicalHueValue,
-      R(newColor),
-      G(newColor),
-      B(newColor)
-    );
-
     return true;
   }
-
-  // =========================================================
-  // Saturation step
-  //
-  // Hueと違い循環しません。
-  //
-  //   < 0   -> 0
-  //   > 255 -> 255
-  // =========================================================
 
   void applySaturationStep(
     int step
@@ -2827,12 +3224,9 @@ private:
     }
 
     int newValue =
-      (int)logicalSaturationValue +
-      step;
-
-    newValue =
       constrain(
-        newValue,
+        (int)logicalSaturationValue +
+        step,
         0,
         255
       );
@@ -2899,7 +3293,7 @@ private:
   }
 
   // =========================================================
-  // Selected button checks
+  // Selected button helpers
   // =========================================================
 
   bool isInsideSelectedBrightnessButton(
@@ -3094,20 +3488,11 @@ private:
           touchY
         );
 
-      bool insideBrightnessDown =
-        false;
-
-      bool insideBrightnessUp =
-        false;
-
-      bool insideEffectPrev =
-        false;
-
-      bool insideEffectNext =
-        false;
-
-      bool insideColor =
-        false;
+      bool insideBrightnessDown = false;
+      bool insideBrightnessUp = false;
+      bool insideEffectPrev = false;
+      bool insideEffectNext = false;
+      bool insideColor = false;
 
       if (
         currentPage ==
@@ -3145,20 +3530,11 @@ private:
           );
       }
 
-      bool insideBack =
-        false;
-
-      bool insideHueDown =
-        false;
-
-      bool insideHueUp =
-        false;
-
-      bool insideSaturationDown =
-        false;
-
-      bool insideSaturationUp =
-        false;
+      bool insideBack = false;
+      bool insideHueDown = false;
+      bool insideHueUp = false;
+      bool insideSaturationDown = false;
+      bool insideSaturationUp = false;
 
       if (
         currentPage ==
@@ -3216,14 +3592,6 @@ private:
 
         saturationLongPressActive =
           false;
-
-        Serial.printf(
-          "[CoreS3_Display] "
-          "Touch start X=%d Y=%d Page=%d\n",
-          touchX,
-          touchY,
-          (int)currentPage
-        );
       }
 
       // -----------------------------------------------------
@@ -3249,9 +3617,7 @@ private:
           SCREEN_MAIN
         )
         {
-          if (
-            insideBrightnessDown
-          )
+          if (insideBrightnessDown)
           {
             touchTarget =
               TOUCH_TARGET_BRIGHTNESS_DOWN;
@@ -3266,9 +3632,7 @@ private:
               now;
           }
 
-          else if (
-            insideBrightnessUp
-          )
+          else if (insideBrightnessUp)
           {
             touchTarget =
               TOUCH_TARGET_BRIGHTNESS_UP;
@@ -3283,9 +3647,7 @@ private:
               now;
           }
 
-          else if (
-            insideEffectPrev
-          )
+          else if (insideEffectPrev)
           {
             touchTarget =
               TOUCH_TARGET_EFFECT_PREV;
@@ -3294,9 +3656,7 @@ private:
               true;
           }
 
-          else if (
-            insideEffectNext
-          )
+          else if (insideEffectNext)
           {
             touchTarget =
               TOUCH_TARGET_EFFECT_NEXT;
@@ -3305,9 +3665,7 @@ private:
               true;
           }
 
-          else if (
-            insideColor
-          )
+          else if (insideColor)
           {
             touchTarget =
               TOUCH_TARGET_COLOR_OPEN;
@@ -3322,9 +3680,7 @@ private:
           SCREEN_COLOR
         )
         {
-          if (
-            insideBack
-          )
+          if (insideBack)
           {
             touchTarget =
               TOUCH_TARGET_BACK;
@@ -3333,9 +3689,7 @@ private:
               true;
           }
 
-          else if (
-            insideHueDown
-          )
+          else if (insideHueDown)
           {
             touchTarget =
               TOUCH_TARGET_HUE_DOWN;
@@ -3349,15 +3703,10 @@ private:
             lastHueRepeat =
               now;
 
-            hueLongPressActive =
-              false;
-
             beginHueEdit();
           }
 
-          else if (
-            insideHueUp
-          )
+          else if (insideHueUp)
           {
             touchTarget =
               TOUCH_TARGET_HUE_UP;
@@ -3371,15 +3720,10 @@ private:
             lastHueRepeat =
               now;
 
-            hueLongPressActive =
-              false;
-
             beginHueEdit();
           }
 
-          else if (
-            insideSaturationDown
-          )
+          else if (insideSaturationDown)
           {
             touchTarget =
               TOUCH_TARGET_SATURATION_DOWN;
@@ -3393,15 +3737,10 @@ private:
             lastSaturationRepeat =
               now;
 
-            saturationLongPressActive =
-              false;
-
             beginSaturationEdit();
           }
 
-          else if (
-            insideSaturationUp
-          )
+          else if (insideSaturationUp)
           {
             touchTarget =
               TOUCH_TARGET_SATURATION_UP;
@@ -3414,9 +3753,6 @@ private:
 
             lastSaturationRepeat =
               now;
-
-            saturationLongPressActive =
-              false;
 
             beginSaturationEdit();
           }
@@ -3568,7 +3904,7 @@ private:
       }
 
       // =====================================================
-      // Open COLOR
+      // COLOR open
       // =====================================================
 
       if (
@@ -3889,25 +4225,6 @@ private:
       lastTouchInsideSaturation &&
       !wasSaturationLongPress;
 
-    Serial.printf(
-      "[CoreS3_Display] "
-      "Touch release X=%d Y=%d "
-      "Target=%d "
-      "BLong=%s HLong=%s SLong=%s\n",
-      lastTouchX,
-      lastTouchY,
-      (int)releasedTarget,
-      wasBrightnessLongPress
-        ? "YES"
-        : "NO",
-      wasHueLongPress
-        ? "YES"
-        : "NO",
-      wasSaturationLongPress
-        ? "YES"
-        : "NO"
-    );
-
     // -------------------------------------------------------
     // Restore visuals
     // -------------------------------------------------------
@@ -4012,7 +4329,7 @@ private:
     }
 
     // -------------------------------------------------------
-    // Save Hue edit state
+    // Preserve edit states for short-release actions
     // -------------------------------------------------------
 
     bool savedHueEditValid =
@@ -4026,10 +4343,6 @@ private:
 
     uint8_t savedHueEditWhite =
       hueEditWhite;
-
-    // -------------------------------------------------------
-    // Save Saturation edit state
-    // -------------------------------------------------------
 
     bool savedSaturationEditValid =
       saturationEditValid;
@@ -4047,92 +4360,10 @@ private:
     // Reset gesture
     // -------------------------------------------------------
 
-    touchActive =
-      false;
-
-    touchTarget =
-      TOUCH_TARGET_NONE;
-
-    lastTouchInsidePower =
-      false;
-
-    lastTouchInsideBrightness =
-      false;
-
-    lastTouchInsideEffect =
-      false;
-
-    lastTouchInsideColor =
-      false;
-
-    lastTouchInsideBack =
-      false;
-
-    lastTouchInsideHue =
-      false;
-
-    lastTouchInsideSaturation =
-      false;
-
-    powerButtonVisualPressed =
-      false;
-
-    brightnessButtonVisualPressed =
-      false;
-
-    effectButtonVisualPressed =
-      false;
-
-    colorButtonVisualPressed =
-      false;
-
-    backButtonVisualPressed =
-      false;
-
-    hueButtonVisualPressed =
-      false;
-
-    saturationButtonVisualPressed =
-      false;
-
-    brightnessLongPressActive =
-      false;
-
-    hueLongPressActive =
-      false;
-
-    saturationLongPressActive =
-      false;
-
-    touchReleaseCandidate =
-      0;
-
-    controlPressStartTime =
-      0;
-
-    lastBrightnessRepeat =
-      0;
-
-    huePressStartTime =
-      0;
-
-    lastHueRepeat =
-      0;
-
-    saturationPressStartTime =
-      0;
-
-    lastSaturationRepeat =
-      0;
-
-    lastTouchX =
-      -1;
-
-    lastTouchY =
-      -1;
+    resetTouchGesture();
 
     // -------------------------------------------------------
-    // Restore edit state only for release action
+    // Restore edit state for action execution
     // -------------------------------------------------------
 
     hueEditValid =
@@ -4160,7 +4391,7 @@ private:
       savedSaturationEditWhite;
 
     // =======================================================
-    // Execute action
+    // Execute
     // =======================================================
 
     if (executePowerAction)
@@ -4231,13 +4462,6 @@ private:
 
     if (executeColorOpen)
     {
-      Serial.println(
-        F(
-          "[CoreS3_Display] "
-          "Open COLOR screen"
-        )
-      );
-
       hueEditValid =
         false;
 
@@ -4251,13 +4475,6 @@ private:
 
     if (executeBack)
     {
-      Serial.println(
-        F(
-          "[CoreS3_Display] "
-          "Return MAIN screen"
-        )
-      );
-
       hueEditValid =
         false;
 
@@ -4333,7 +4550,6 @@ private:
       return;
     }
 
-    // Long press already applied changes.
     hueEditValid =
       false;
 
@@ -4354,7 +4570,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 7.4 start"
+        "Phase 8.1 + 8.2 start"
       )
     );
 
@@ -4406,11 +4622,40 @@ public:
         : "NOT FOUND"
     );
 
-    display.setBrightness(
-      128
+    // -------------------------------------------------------
+    // Start completely dark.
+    // -------------------------------------------------------
+
+    setDisplayBrightness(
+      0
     );
 
-    drawBootScreen();
+    // -------------------------------------------------------
+    // Draw logo while LCD backlight is dark.
+    // -------------------------------------------------------
+
+    drawStartupBase();
+
+    startupDotCount =
+      3;
+
+    drawStartupConnectingStatus();
+
+    // -------------------------------------------------------
+    // Start non-blocking Fade In.
+    // -------------------------------------------------------
+
+    startupState =
+      STARTUP_FADE_IN;
+
+    startupStateStart =
+      millis();
+
+    startupLastFadeStep =
+      startupStateStart;
+
+    startupLastDotsUpdate =
+      startupStateStart;
 
     displayReady =
       true;
@@ -4418,14 +4663,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Display initialized"
-      )
-    );
-
-    Serial.println(
-      F(
-        "[CoreS3_Display] "
-        "Phase 7.4 setup complete"
+        "Phase 8.1 + 8.2 setup complete"
       )
     );
 
@@ -4442,6 +4680,27 @@ public:
     {
       return;
     }
+
+    // =======================================================
+    // Phase 8 startup animation
+    //
+    // Touch operations are intentionally disabled until
+    // startup animation is finished.
+    // =======================================================
+
+    if (
+      startupState !=
+      STARTUP_DONE
+    )
+    {
+      handleStartupSequence();
+
+      return;
+    }
+
+    // -------------------------------------------------------
+    // Normal touch processing
+    // -------------------------------------------------------
 
     handleTouch();
 
@@ -4467,7 +4726,7 @@ public:
       );
 
     // =======================================================
-    // Wi-Fi disconnected
+    // Wi-Fi disconnected after normal operation
     // =======================================================
 
     if (!wifiConnected)
@@ -4489,7 +4748,7 @@ public:
     }
 
     // =======================================================
-    // First connection / reconnect
+    // Reconnected
     // =======================================================
 
     String currentIPAddress =
@@ -4502,12 +4761,6 @@ public:
     {
       drawMainScreen(
         currentIPAddress
-      );
-
-      Serial.printf(
-        "[CoreS3_Display] "
-        "Wi-Fi connected: %s\n",
-        currentIPAddress.c_str()
       );
 
       lastIPAddress =
@@ -4702,13 +4955,6 @@ public:
       SCREEN_COLOR
     )
     {
-      // -----------------------------------------------------
-      // Web UI等からPrimary Colorが変更された場合
-      //
-      // Hue/Saturationをローカル操作していない時だけ
-      // RGBから論理HSVを再同期します。
-      // -----------------------------------------------------
-
       if (
         primaryColorChanged &&
         !colorControlTouchActive
@@ -4781,10 +5027,6 @@ public:
         );
     }
 
-    // -------------------------------------------------------
-    // Display
-    // -------------------------------------------------------
-
     JsonArray displayInfo =
       user.createNestedArray(
         "CoreS3 Display"
@@ -4813,10 +5055,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Touch
-    // -------------------------------------------------------
-
     JsonArray touchInfo =
       user.createNestedArray(
         "CoreS3 Display Touch"
@@ -4827,10 +5065,6 @@ public:
         ? "READY"
         : "NOT FOUND"
     );
-
-    // -------------------------------------------------------
-    // Wi-Fi
-    // -------------------------------------------------------
 
     JsonArray wifiInfo =
       user.createNestedArray(
@@ -4853,10 +5087,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // LED
-    // -------------------------------------------------------
-
     JsonArray ledInfo =
       user.createNestedArray(
         "CoreS3 Display LED"
@@ -4868,10 +5098,6 @@ public:
         : "OFF"
     );
 
-    // -------------------------------------------------------
-    // Brightness
-    // -------------------------------------------------------
-
     JsonArray brightnessInfo =
       user.createNestedArray(
         "CoreS3 Display Brightness"
@@ -4880,10 +5106,6 @@ public:
     brightnessInfo.add(
       bri
     );
-
-    // -------------------------------------------------------
-    // Effect
-    // -------------------------------------------------------
 
     JsonArray effectInfo =
       user.createNestedArray(
@@ -4916,10 +5138,6 @@ public:
         "No segment"
       );
     }
-
-    // -------------------------------------------------------
-    // Primary Color
-    // -------------------------------------------------------
 
     JsonArray colorInfo =
       user.createNestedArray(
@@ -4956,10 +5174,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Hue
-    // -------------------------------------------------------
-
     JsonArray hueInfo =
       user.createNestedArray(
         "CoreS3 Display Hue"
@@ -4980,10 +5194,6 @@ public:
         "No segment"
       );
     }
-
-    // -------------------------------------------------------
-    // Saturation
-    // -------------------------------------------------------
 
     JsonArray saturationInfo =
       user.createNestedArray(
@@ -5006,10 +5216,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Page
-    // -------------------------------------------------------
-
     JsonArray pageInfo =
       user.createNestedArray(
         "CoreS3 Display Page"
@@ -5020,6 +5226,18 @@ public:
         SCREEN_MAIN
         ? "MAIN"
         : "COLOR"
+    );
+
+    JsonArray startupInfo =
+      user.createNestedArray(
+        "CoreS3 Display Startup"
+      );
+
+    startupInfo.add(
+      startupState ==
+        STARTUP_DONE
+        ? "DONE"
+        : "ACTIVE"
     );
   }
 };
