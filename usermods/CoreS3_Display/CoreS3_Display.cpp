@@ -27,9 +27,31 @@ private:
   int8_t lastLedState = -1;
   int lastBrightnessValue = -1;
   int lastEffectMode = -1;
+  int lastHueValue = -1;
 
   uint32_t lastPrimaryColor = 0;
   bool lastPrimaryColorValid = false;
+
+  // =========================================================
+  // Persistent logical HSV state
+  //
+  // IMPORTANT:
+  //
+  // Local Hue operations use this logical HSV state instead
+  // of converting RGB -> HSV again for every short press.
+  //
+  // This avoids Hue values becoming stuck because multiple
+  // adjacent HSV values may quantize to the same RGB value.
+  //
+  // External Web UI color changes re-synchronize this state.
+  // =========================================================
+
+  CHSV32 logicalColorHsv;
+
+  bool logicalColorHsvValid = false;
+
+  uint8_t logicalHueValue = 0;
+  uint8_t logicalWhiteValue = 0;
 
   // =========================================================
   // Screen pages
@@ -61,7 +83,10 @@ private:
     TOUCH_TARGET_EFFECT_NEXT,
 
     TOUCH_TARGET_COLOR_OPEN,
-    TOUCH_TARGET_BACK
+    TOUCH_TARGET_BACK,
+
+    TOUCH_TARGET_HUE_DOWN,
+    TOUCH_TARGET_HUE_UP
   };
 
   TouchTarget touchTarget =
@@ -78,20 +103,39 @@ private:
   bool lastTouchInsideEffect = false;
   bool lastTouchInsideColor = false;
   bool lastTouchInsideBack = false;
+  bool lastTouchInsideHue = false;
 
   bool powerButtonVisualPressed = false;
   bool brightnessButtonVisualPressed = false;
   bool effectButtonVisualPressed = false;
   bool colorButtonVisualPressed = false;
   bool backButtonVisualPressed = false;
+  bool hueButtonVisualPressed = false;
 
   bool brightnessLongPressActive = false;
+  bool hueLongPressActive = false;
 
   int16_t lastTouchX = -1;
   int16_t lastTouchY = -1;
 
   unsigned long controlPressStartTime = 0;
   unsigned long lastBrightnessRepeat = 0;
+
+  unsigned long huePressStartTime = 0;
+  unsigned long lastHueRepeat = 0;
+
+  // =========================================================
+  // Hue gesture edit state
+  //
+  // A gesture starts from the persistent logical HSV state.
+  // =========================================================
+
+  CHSV32 hueEditHsv;
+
+  bool hueEditValid = false;
+
+  uint8_t hueEditValue = 0;
+  uint8_t hueEditWhite = 0;
 
   // =========================================================
   // Power button
@@ -104,14 +148,6 @@ private:
 
   // =========================================================
   // MAIN header
-  //
-  // Power button occupies the left side.
-  //
-  // Header content:
-  //   X = 60 .. 312
-  //
-  // Center:
-  //   X = 186
   // =========================================================
 
   static constexpr int16_t HEADER_CONTENT_LEFT = 60;
@@ -128,6 +164,11 @@ private:
 
   // =========================================================
   // Common LEFT / RIGHT buttons
+  //
+  // Used by:
+  //   Brightness
+  //   Effect
+  //   Hue
   // =========================================================
 
   static constexpr int16_t CONTROL_LEFT_X = 16;
@@ -158,9 +199,7 @@ private:
   static constexpr int16_t COLOR_BUTTON_H = 40;
 
   // =========================================================
-  // COLOR screen Back button
-  //
-  // Symmetrical with Power button.
+  // COLOR Back button
   // =========================================================
 
   static constexpr int16_t BACK_BUTTON_X = 268;
@@ -170,17 +209,18 @@ private:
 
   // =========================================================
   // COLOR preview
-  //
-  // Lower section is intentionally kept free for:
-  //
-  // Phase 7.3 -> Hue
-  // Phase 7.4 -> Saturation
   // =========================================================
 
   static constexpr int16_t COLOR_PREVIEW_X = 92;
   static constexpr int16_t COLOR_PREVIEW_Y = 68;
   static constexpr int16_t COLOR_PREVIEW_W = 136;
   static constexpr int16_t COLOR_PREVIEW_H = 36;
+
+  // =========================================================
+  // Hue row
+  // =========================================================
+
+  static constexpr int16_t HUE_BUTTON_Y = 151;
 
   // =========================================================
   // Touch timing
@@ -203,9 +243,28 @@ private:
   static constexpr int BRI_LONG_STEP = 5;
 
   // =========================================================
-  // RGB888 -> RGB565
+  // Hue behavior
   //
-  // Used only for LCD color preview.
+  // Short:
+  //   +/- 1
+  //
+  // Long:
+  //   after 400 ms
+  //   +/- 5 every 80 ms
+  //
+  // Wrap:
+  //   255 + 1 -> 0
+  //   0 - 1   -> 255
+  // =========================================================
+
+  static constexpr unsigned long HUE_LONG_PRESS_MS = 400;
+  static constexpr unsigned long HUE_REPEAT_MS = 80;
+
+  static constexpr int HUE_SHORT_STEP = 1;
+  static constexpr int HUE_LONG_STEP = 5;
+
+  // =========================================================
+  // RGB888 -> RGB565
   // =========================================================
 
   uint16_t rgbTo565(
@@ -223,10 +282,7 @@ private:
   }
 
   // =========================================================
-  // Current WLED Primary Color
-  //
-  // WLED Segment:
-  //   colors[0] = Primary Color
+  // Primary Color
   // =========================================================
 
   uint32_t getPrimaryColor()
@@ -259,6 +315,115 @@ private:
     }
 
     return 0;
+  }
+
+  // =========================================================
+  // Raw RGB -> Hue
+  //
+  // Used only when synchronizing from an external RGB color.
+  // =========================================================
+
+  uint8_t getHueFromColor(
+    uint32_t color
+  )
+  {
+    CRGBW rgb(
+      color
+    );
+
+    CHSV32 hsv;
+
+    rgb2hsv(
+      rgb,
+      hsv
+    );
+
+    return
+      (uint8_t)(
+        hsv.h >>
+        8
+      );
+  }
+
+  // =========================================================
+  // Synchronize persistent logical HSV from RGB
+  //
+  // This is intentionally NOT called for every local Hue
+  // button press.
+  //
+  // Call it when:
+  //
+  //   - Initial screen is created
+  //   - Color screen is opened
+  //   - External Web UI changes Primary Color
+  // =========================================================
+
+  void syncLogicalColorFromRgb(
+    uint32_t color
+  )
+  {
+    CRGBW rgb(
+      color
+    );
+
+    rgb2hsv(
+      rgb,
+      logicalColorHsv
+    );
+
+    logicalHueValue =
+      (uint8_t)(
+        logicalColorHsv.h >>
+        8
+      );
+
+    logicalWhiteValue =
+      rgb.w;
+
+    logicalColorHsvValid =
+      true;
+
+    lastHueValue =
+      logicalHueValue;
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "HSV sync from RGB: "
+      "H=%u S=%u V=%u W=%u\n",
+      logicalHueValue,
+      logicalColorHsv.s,
+      logicalColorHsv.v,
+      logicalWhiteValue
+    );
+  }
+
+  // =========================================================
+  // Hue displayed on LCD
+  //
+  // Prefer the logical Hue when it is synchronized with the
+  // currently cached Primary Color.
+  // =========================================================
+
+  uint8_t getDisplayedHue()
+  {
+    uint32_t currentColor =
+      getPrimaryColor();
+
+    if (
+      logicalColorHsvValid &&
+      lastPrimaryColorValid &&
+      currentColor ==
+        lastPrimaryColor
+    )
+    {
+      return
+        logicalHueValue;
+    }
+
+    return
+      getHueFromColor(
+        currentColor
+      );
   }
 
   // =========================================================
@@ -302,7 +467,7 @@ private:
   }
 
   // =========================================================
-  // Wi-Fi connecting screen
+  // Wi-Fi connecting
   // =========================================================
 
   void drawConnectingScreen()
@@ -383,7 +548,6 @@ private:
       iconColor
     );
 
-    // Opening at top
     display.fillRect(
       centerX - 4,
       centerY - 11,
@@ -392,7 +556,6 @@ private:
       backgroundColor
     );
 
-    // Power stem
     display.drawFastVLine(
       centerX - 1,
       centerY - 14,
@@ -566,7 +729,6 @@ private:
         ? TFT_BLACK
         : buttonColor;
 
-    // Right
     if (pointRight)
     {
       display.fillTriangle(
@@ -582,8 +744,6 @@ private:
         triangleColor
       );
     }
-
-    // Left
     else
     {
       display.fillTriangle(
@@ -638,7 +798,6 @@ private:
       70
     );
 
-    // Left
     drawTriangleButton(
       CONTROL_LEFT_X,
       BRI_BUTTON_Y,
@@ -647,7 +806,6 @@ private:
         TOUCH_TARGET_BRIGHTNESS_DOWN
     );
 
-    // Right
     drawTriangleButton(
       CONTROL_RIGHT_X,
       BRI_BUTTON_Y,
@@ -686,7 +844,7 @@ private:
   }
 
   // =========================================================
-  // Effect name helper
+  // Effect name
   // =========================================================
 
   void getEffectName(
@@ -726,7 +884,8 @@ private:
 
       effectName[
         effectNameSize - 1
-      ] = '\0';
+      ] =
+        '\0';
     }
 
     if (
@@ -776,7 +935,6 @@ private:
       128
     );
 
-    // Previous
     drawTriangleButton(
       CONTROL_LEFT_X,
       FX_BUTTON_Y,
@@ -785,7 +943,6 @@ private:
         TOUCH_TARGET_EFFECT_PREV
     );
 
-    // Next
     drawTriangleButton(
       CONTROL_RIGHT_X,
       FX_BUTTON_Y,
@@ -835,9 +992,7 @@ private:
   }
 
   // =========================================================
-  // MAIN screen Color button
-  //
-  // Shows a small preview of the current Primary Color.
+  // MAIN Color button
   // =========================================================
 
   void drawColorButton(
@@ -858,15 +1013,14 @@ private:
         ? TFT_BLACK
         : TFT_WHITE;
 
-    // RGBW32 = 0xWWRRGGBB
     uint8_t r =
-      (uint8_t)((color >> 16) & 0xFF);
+      R(color);
 
     uint8_t g =
-      (uint8_t)((color >> 8) & 0xFF);
+      G(color);
 
     uint8_t b =
-      (uint8_t)(color & 0xFF);
+      B(color);
 
     uint16_t previewColor =
       rgbTo565(
@@ -907,10 +1061,6 @@ private:
       buttonColor
     );
 
-    // -------------------------------------------------------
-    // Current Color swatch
-    // -------------------------------------------------------
-
     static constexpr int16_t SWATCH_W = 26;
     static constexpr int16_t SWATCH_H = 24;
 
@@ -919,7 +1069,12 @@ private:
 
     int16_t swatchY =
       COLOR_BUTTON_Y +
-      ((COLOR_BUTTON_H - SWATCH_H) / 2);
+      (
+        (
+          COLOR_BUTTON_H -
+          SWATCH_H
+        ) / 2
+      );
 
     display.fillRect(
       swatchX,
@@ -937,10 +1092,6 @@ private:
       TFT_WHITE
     );
 
-    // -------------------------------------------------------
-    // COLOR label
-    // -------------------------------------------------------
-
     display.setTextDatum(
       textdatum_t::middle_center
     );
@@ -956,8 +1107,7 @@ private:
 
     display.drawString(
       "COLOR",
-      COLOR_BUTTON_X +
-        115,
+      COLOR_BUTTON_X + 115,
       COLOR_BUTTON_Y +
         (COLOR_BUTTON_H / 2)
     );
@@ -968,8 +1118,6 @@ private:
 
   // =========================================================
   // Back button
-  //
-  // Right-top on COLOR screen.
   // =========================================================
 
   void drawBackButton(
@@ -1029,7 +1177,6 @@ private:
       BACK_BUTTON_Y +
       (BACK_BUTTON_H / 2);
 
-    // Left-pointing arrow head
     display.fillTriangle(
       centerX - 11,
       centerY,
@@ -1043,7 +1190,6 @@ private:
       iconColor
     );
 
-    // Arrow tail
     display.fillRect(
       centerX - 1,
       centerY - 2,
@@ -1057,15 +1203,13 @@ private:
   }
 
   // =========================================================
-  // COLOR screen current Primary Color
+  // COLOR details
   // =========================================================
 
   void drawColorDetails(
     uint32_t color
   )
   {
-    // Clear only the preview area.
-    // Lower screen remains available for Hue/Saturation.
     display.fillRect(
       0,
       60,
@@ -1074,15 +1218,14 @@ private:
       TFT_BLACK
     );
 
-    // RGBW32 = 0xWWRRGGBB
     uint8_t r =
-      (uint8_t)((color >> 16) & 0xFF);
+      R(color);
 
     uint8_t g =
-      (uint8_t)((color >> 8) & 0xFF);
+      G(color);
 
     uint8_t b =
-      (uint8_t)(color & 0xFF);
+      B(color);
 
     uint16_t previewColor =
       rgbTo565(
@@ -1090,10 +1233,6 @@ private:
         g,
         b
       );
-
-    // -------------------------------------------------------
-    // Preview
-    // -------------------------------------------------------
 
     display.fillRect(
       COLOR_PREVIEW_X,
@@ -1118,10 +1257,6 @@ private:
       COLOR_PREVIEW_H - 2,
       TFT_DARKGREY
     );
-
-    // -------------------------------------------------------
-    // #RRGGBB
-    // -------------------------------------------------------
 
     char hexText[16];
 
@@ -1153,12 +1288,94 @@ private:
       121
     );
 
-    // Divider for future controls
     display.drawFastHLine(
       32,
       136,
       screenWidth - 64,
       TFT_DARKGREY
+    );
+  }
+
+  // =========================================================
+  // Hue control
+  // =========================================================
+
+  void drawHue(
+    uint8_t hueValue,
+    TouchTarget pressedTarget =
+      TOUCH_TARGET_NONE
+  )
+  {
+    display.fillRect(
+      0,
+      138,
+      screenWidth,
+      56,
+      TFT_BLACK
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Hue",
+      screenWidth / 2,
+      144
+    );
+
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      HUE_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_HUE_DOWN
+    );
+
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      HUE_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_HUE_UP
+    );
+
+    char valueText[8];
+
+    snprintf(
+      valueText,
+      sizeof(valueText),
+      "%u",
+      hueValue
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      valueText,
+      screenWidth / 2,
+      HUE_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
     );
   }
 
@@ -1184,10 +1401,6 @@ private:
       false;
 
     resetTouchGesture();
-
-    // -------------------------------------------------------
-    // Header
-    // -------------------------------------------------------
 
     display.setTextDatum(
       textdatum_t::middle_center
@@ -1225,10 +1438,6 @@ private:
       TFT_DARKGREY
     );
 
-    // -------------------------------------------------------
-    // Controls
-    // -------------------------------------------------------
-
     drawPowerButton(
       bri > 0,
       false
@@ -1255,9 +1464,10 @@ private:
       false
     );
 
-    // -------------------------------------------------------
-    // Cache current values
-    // -------------------------------------------------------
+    // Initial synchronization of logical HSV.
+    syncLogicalColorFromRgb(
+      primaryColor
+    );
 
     lastLedState =
       bri > 0
@@ -1298,13 +1508,6 @@ private:
 
     resetTouchGesture();
 
-    // -------------------------------------------------------
-    // Header
-    //
-    // Power and Back are symmetrical, so COLOR can use
-    // physical center X=160.
-    // -------------------------------------------------------
-
     display.setTextDatum(
       textdatum_t::middle_center
     );
@@ -1341,10 +1544,6 @@ private:
       TFT_DARKGREY
     );
 
-    // -------------------------------------------------------
-    // Navigation
-    // -------------------------------------------------------
-
     drawPowerButton(
       bri > 0,
       false
@@ -1354,15 +1553,21 @@ private:
       false
     );
 
-    // -------------------------------------------------------
-    // Primary Color
-    // -------------------------------------------------------
-
     uint32_t primaryColor =
       getPrimaryColor();
 
+    // Synchronize once when entering COLOR screen.
+    syncLogicalColorFromRgb(
+      primaryColor
+    );
+
     drawColorDetails(
       primaryColor
+    );
+
+    drawHue(
+      logicalHueValue,
+      TOUCH_TARGET_NONE
     );
 
     lastLedState =
@@ -1375,10 +1580,13 @@ private:
 
     lastPrimaryColorValid =
       true;
+
+    lastHueValue =
+      logicalHueValue;
   }
 
   // =========================================================
-  // Generic hit test
+  // Generic rectangle hit test
   // =========================================================
 
   bool pointInsideRect(
@@ -1507,8 +1715,108 @@ private:
     );
   }
 
+  bool isHueDownTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      CONTROL_LEFT_X,
+      HUE_BUTTON_Y,
+      CONTROL_BUTTON_W,
+      CONTROL_BUTTON_H
+    );
+  }
+
+  bool isHueUpTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      CONTROL_RIGHT_X,
+      HUE_BUTTON_Y,
+      CONTROL_BUTTON_W,
+      CONTROL_BUTTON_H
+    );
+  }
+
+  // =========================================================
+  // Begin Hue gesture
+  //
+  // IMPORTANT:
+  //
+  // Normally this starts from persistent logical HSV.
+  //
+  // RGB -> HSV is only performed if:
+  //
+  //   - Logical state is not initialized
+  //   - Current RGB differs from our cached RGB
+  //
+  // The latter means the color was changed externally.
+  // =========================================================
+
+  void beginHueEdit()
+  {
+    uint32_t currentColor =
+      getPrimaryColor();
+
+    if (
+      !logicalColorHsvValid ||
+      !lastPrimaryColorValid ||
+      currentColor !=
+        lastPrimaryColor
+    )
+    {
+      syncLogicalColorFromRgb(
+        currentColor
+      );
+
+      lastPrimaryColor =
+        currentColor;
+
+      lastPrimaryColorValid =
+        true;
+    }
+
+    hueEditHsv =
+      logicalColorHsv;
+
+    hueEditValue =
+      logicalHueValue;
+
+    hueEditWhite =
+      logicalWhiteValue;
+
+    hueEditValid =
+      true;
+
+    lastHueValue =
+      hueEditValue;
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Hue edit start: "
+      "H=%u S=%u V=%u W=%u\n",
+      hueEditValue,
+      hueEditHsv.s,
+      hueEditHsv.v,
+      hueEditWhite
+    );
+  }
+
   // =========================================================
   // Reset touch state
+  //
+  // NOTE:
+  //
+  // logicalColorHsv is intentionally NOT reset here.
+  //
+  // It persists between short Hue gestures.
   // =========================================================
 
   void resetTouchGesture()
@@ -1534,6 +1842,9 @@ private:
     lastTouchInsideBack =
       false;
 
+    lastTouchInsideHue =
+      false;
+
     powerButtonVisualPressed =
       false;
 
@@ -1549,7 +1860,16 @@ private:
     backButtonVisualPressed =
       false;
 
+    hueButtonVisualPressed =
+      false;
+
     brightnessLongPressActive =
+      false;
+
+    hueLongPressActive =
+      false;
+
+    hueEditValid =
       false;
 
     touchReleaseCandidate =
@@ -1559,6 +1879,12 @@ private:
       0;
 
     lastBrightnessRepeat =
+      0;
+
+    huePressStartTime =
+      0;
+
+    lastHueRepeat =
       0;
 
     lastTouchX =
@@ -1864,7 +2190,263 @@ private:
   }
 
   // =========================================================
-  // Selected Brightness button check
+  // Apply exact Hue
+  //
+  // Persistent logical HSV is the source of truth.
+  //
+  // Even if two adjacent Hue values produce the same RGB,
+  // logicalHueValue still advances.
+  // =========================================================
+
+  bool applyHueValue(
+    uint8_t newHue
+  )
+  {
+    if (
+      strip.getSegmentsNum() ==
+      0
+    )
+    {
+      return false;
+    }
+
+    if (!hueEditValid)
+    {
+      beginHueEdit();
+    }
+
+    if (!hueEditValid)
+    {
+      return false;
+    }
+
+    // -------------------------------------------------------
+    // Update logical Hue FIRST.
+    // -------------------------------------------------------
+
+    hueEditValue =
+      newHue;
+
+    hueEditHsv.h =
+      ((uint16_t)newHue) <<
+      8;
+
+    // Persist logical state.
+    logicalHueValue =
+      newHue;
+
+    logicalColorHsv =
+      hueEditHsv;
+
+    logicalWhiteValue =
+      hueEditWhite;
+
+    logicalColorHsvValid =
+      true;
+
+    // -------------------------------------------------------
+    // Convert logical HSV to RGB.
+    // -------------------------------------------------------
+
+    CRGBW newRgb;
+
+    hsv2rgb_spectrum(
+      logicalColorHsv,
+      newRgb
+    );
+
+    // Preserve W.
+    newRgb.w =
+      logicalWhiteValue;
+
+    uint32_t newColor =
+      newRgb.color32;
+
+    Segment& mainSegment =
+      strip.getMainSegment();
+
+    uint32_t oldColor =
+      mainSegment.colors[0];
+
+    // -------------------------------------------------------
+    // RGB may occasionally be identical for adjacent Hue
+    // values because RGB only has 8-bit channels.
+    //
+    // That is OK.
+    //
+    // Logical Hue still advances and remains the source of
+    // truth for the next button press.
+    // -------------------------------------------------------
+
+    if (
+      newColor !=
+      oldColor
+    )
+    {
+      mainSegment.setColor(
+        0,
+        newColor
+      );
+
+      stateUpdated(
+        CALL_MODE_BUTTON
+      );
+    }
+
+    // -------------------------------------------------------
+    // Immediate LCD update.
+    // -------------------------------------------------------
+
+    if (
+      currentPage ==
+      SCREEN_COLOR
+    )
+    {
+      drawColorDetails(
+        newColor
+      );
+
+      drawHue(
+        logicalHueValue,
+        touchTarget
+      );
+    }
+
+    // -------------------------------------------------------
+    // Cache the RGB generated by our own logical Hue.
+    //
+    // This prevents loop() from mistaking our own local
+    // change for an external Web UI change.
+    // -------------------------------------------------------
+
+    lastPrimaryColor =
+      newColor;
+
+    lastPrimaryColorValid =
+      true;
+
+    lastHueValue =
+      logicalHueValue;
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Hue logical=%u "
+      "RGB=#%02X%02X%02X\n",
+      logicalHueValue,
+      R(newColor),
+      G(newColor),
+      B(newColor)
+    );
+
+    return true;
+  }
+
+  // =========================================================
+  // Hue step with 0..255 wrap
+  // =========================================================
+
+  void applyHueStep(
+    int step
+  )
+  {
+    if (!hueEditValid)
+    {
+      beginHueEdit();
+    }
+
+    if (!hueEditValid)
+    {
+      return;
+    }
+
+    // IMPORTANT:
+    //
+    // Start from persistent logical Hue, not RGB-derived Hue.
+    int newValue =
+      (int)logicalHueValue +
+      step;
+
+    while (
+      newValue <
+      0
+    )
+    {
+      newValue +=
+        256;
+    }
+
+    while (
+      newValue >
+      255
+    )
+    {
+      newValue -=
+        256;
+    }
+
+    applyHueValue(
+      (uint8_t)newValue
+    );
+  }
+
+  // =========================================================
+  // Hue short press
+  // =========================================================
+
+  void hueShortPress(
+    TouchTarget target
+  )
+  {
+    if (
+      target ==
+      TOUCH_TARGET_HUE_DOWN
+    )
+    {
+      applyHueStep(
+        -HUE_SHORT_STEP
+      );
+    }
+    else if (
+      target ==
+      TOUCH_TARGET_HUE_UP
+    )
+    {
+      applyHueStep(
+        HUE_SHORT_STEP
+      );
+    }
+  }
+
+  // =========================================================
+  // Hue long press
+  // =========================================================
+
+  void hueLongPressStep(
+    TouchTarget target
+  )
+  {
+    if (
+      target ==
+      TOUCH_TARGET_HUE_DOWN
+    )
+    {
+      applyHueStep(
+        -HUE_LONG_STEP
+      );
+    }
+    else if (
+      target ==
+      TOUCH_TARGET_HUE_UP
+    )
+    {
+      applyHueStep(
+        HUE_LONG_STEP
+      );
+    }
+  }
+
+  // =========================================================
+  // Selected Brightness button
   // =========================================================
 
   bool isInsideSelectedBrightnessButton(
@@ -1900,7 +2482,7 @@ private:
   }
 
   // =========================================================
-  // Selected Effect button check
+  // Selected Effect button
   // =========================================================
 
   bool isInsideSelectedEffectButton(
@@ -1927,6 +2509,42 @@ private:
     {
       return
         isEffectNextTouched(
+          x,
+          y
+        );
+    }
+
+    return false;
+  }
+
+  // =========================================================
+  // Selected Hue button
+  // =========================================================
+
+  bool isInsideSelectedHueButton(
+    int16_t x,
+    int16_t y
+  )
+  {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_HUE_DOWN
+    )
+    {
+      return
+        isHueDownTouched(
+          x,
+          y
+        );
+    }
+
+    if (
+      touchTarget ==
+      TOUCH_TARGET_HUE_UP
+    )
+    {
+      return
+        isHueUpTouched(
           x,
           y
         );
@@ -1993,19 +2611,11 @@ private:
       lastTouchY =
         touchY;
 
-      // -----------------------------------------------------
-      // Common control
-      // -----------------------------------------------------
-
       bool insidePower =
         isPowerButtonTouched(
           touchX,
           touchY
         );
-
-      // -----------------------------------------------------
-      // MAIN controls
-      // -----------------------------------------------------
 
       bool insideBrightnessDown =
         false;
@@ -2058,11 +2668,13 @@ private:
           );
       }
 
-      // -----------------------------------------------------
-      // COLOR controls
-      // -----------------------------------------------------
-
       bool insideBack =
+        false;
+
+      bool insideHueDown =
+        false;
+
+      bool insideHueUp =
         false;
 
       if (
@@ -2072,6 +2684,18 @@ private:
       {
         insideBack =
           isBackButtonTouched(
+            touchX,
+            touchY
+          );
+
+        insideHueDown =
+          isHueDownTouched(
+            touchX,
+            touchY
+          );
+
+        insideHueUp =
+          isHueUpTouched(
             touchX,
             touchY
           );
@@ -2092,6 +2716,9 @@ private:
         brightnessLongPressActive =
           false;
 
+        hueLongPressActive =
+          false;
+
         Serial.printf(
           "[CoreS3_Display] "
           "Touch start X=%d Y=%d Page=%d\n",
@@ -2110,7 +2737,6 @@ private:
         TOUCH_TARGET_NONE
       )
       {
-        // Power is available on every page.
         if (insidePower)
         {
           touchTarget =
@@ -2120,7 +2746,6 @@ private:
             true;
         }
 
-        // MAIN
         else if (
           currentPage ==
           SCREEN_MAIN
@@ -2194,7 +2819,6 @@ private:
           }
         }
 
-        // COLOR
         else if (
           currentPage ==
           SCREEN_COLOR
@@ -2209,6 +2833,50 @@ private:
 
             lastTouchInsideBack =
               true;
+          }
+
+          else if (
+            insideHueDown
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_HUE_DOWN;
+
+            lastTouchInsideHue =
+              true;
+
+            huePressStartTime =
+              now;
+
+            lastHueRepeat =
+              now;
+
+            hueLongPressActive =
+              false;
+
+            beginHueEdit();
+          }
+
+          else if (
+            insideHueUp
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_HUE_UP;
+
+            lastTouchInsideHue =
+              true;
+
+            huePressStartTime =
+              now;
+
+            lastHueRepeat =
+              now;
+
+            hueLongPressActive =
+              false;
+
+            beginHueEdit();
           }
         }
       }
@@ -2280,7 +2948,6 @@ private:
           return;
         }
 
-        // Long press start
         if (
           !brightnessLongPressActive &&
           now -
@@ -2301,7 +2968,6 @@ private:
           return;
         }
 
-        // Repeat
         if (
           brightnessLongPressActive &&
           now -
@@ -2360,7 +3026,7 @@ private:
       }
 
       // =====================================================
-      // Open COLOR screen
+      // Open COLOR
       // =====================================================
 
       if (
@@ -2410,6 +3076,85 @@ private:
         return;
       }
 
+      // =====================================================
+      // Hue
+      // =====================================================
+
+      if (
+        touchTarget ==
+          TOUCH_TARGET_HUE_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_HUE_UP
+      )
+      {
+        bool insideSelectedButton =
+          isInsideSelectedHueButton(
+            touchX,
+            touchY
+          );
+
+        lastTouchInsideHue =
+          insideSelectedButton;
+
+        if (
+          insideSelectedButton !=
+          hueButtonVisualPressed
+        )
+        {
+          drawHue(
+            logicalHueValue,
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
+
+          hueButtonVisualPressed =
+            insideSelectedButton;
+        }
+
+        if (!insideSelectedButton)
+        {
+          return;
+        }
+
+        if (
+          !hueLongPressActive &&
+          now -
+          huePressStartTime >=
+          HUE_LONG_PRESS_MS
+        )
+        {
+          hueLongPressActive =
+            true;
+
+          lastHueRepeat =
+            now;
+
+          hueLongPressStep(
+            touchTarget
+          );
+
+          return;
+        }
+
+        if (
+          hueLongPressActive &&
+          now -
+          lastHueRepeat >=
+          HUE_REPEAT_MS
+        )
+        {
+          lastHueRepeat =
+            now;
+
+          hueLongPressStep(
+            touchTarget
+          );
+        }
+
+        return;
+      }
+
       return;
     }
 
@@ -2422,10 +3167,6 @@ private:
       return;
     }
 
-    // -------------------------------------------------------
-    // Start release confirmation
-    // -------------------------------------------------------
-
     if (
       touchReleaseCandidate ==
       0
@@ -2436,10 +3177,6 @@ private:
 
       return;
     }
-
-    // -------------------------------------------------------
-    // Ignore temporary touch loss
-    // -------------------------------------------------------
 
     if (
       now -
@@ -2457,8 +3194,11 @@ private:
     TouchTarget releasedTarget =
       touchTarget;
 
-    bool wasLongPress =
+    bool wasBrightnessLongPress =
       brightnessLongPressActive;
+
+    bool wasHueLongPress =
+      hueLongPressActive;
 
     bool executePowerAction =
       (
@@ -2480,7 +3220,7 @@ private:
           TOUCH_TARGET_BRIGHTNESS_UP
       ) &&
       lastTouchInsideBrightness &&
-      !wasLongPress;
+      !wasBrightnessLongPress;
 
     bool executeEffectAction =
       (
@@ -2505,20 +3245,33 @@ private:
       ) &&
       lastTouchInsideBack;
 
+    bool executeHueShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_HUE_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_HUE_UP
+      ) &&
+      lastTouchInsideHue &&
+      !wasHueLongPress;
+
     Serial.printf(
       "[CoreS3_Display] "
       "Touch release X=%d Y=%d "
-      "Target=%d Long=%s\n",
+      "Target=%d BLong=%s HLong=%s\n",
       lastTouchX,
       lastTouchY,
       (int)releasedTarget,
-      wasLongPress
+      wasBrightnessLongPress
+        ? "YES"
+        : "NO",
+      wasHueLongPress
         ? "YES"
         : "NO"
     );
 
     // -------------------------------------------------------
-    // Restore Power
+    // Restore visuals
     // -------------------------------------------------------
 
     if (
@@ -2532,10 +3285,6 @@ private:
         false
       );
     }
-
-    // -------------------------------------------------------
-    // Restore Brightness
-    // -------------------------------------------------------
 
     if (
       (
@@ -2553,10 +3302,6 @@ private:
       );
     }
 
-    // -------------------------------------------------------
-    // Restore Effect
-    // -------------------------------------------------------
-
     if (
       (
         releasedTarget ==
@@ -2573,10 +3318,6 @@ private:
       );
     }
 
-    // -------------------------------------------------------
-    // Restore COLOR button
-    // -------------------------------------------------------
-
     if (
       releasedTarget ==
         TOUCH_TARGET_COLOR_OPEN &&
@@ -2589,10 +3330,6 @@ private:
       );
     }
 
-    // -------------------------------------------------------
-    // Restore Back
-    // -------------------------------------------------------
-
     if (
       releasedTarget ==
         TOUCH_TARGET_BACK &&
@@ -2604,8 +3341,42 @@ private:
       );
     }
 
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_HUE_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_HUE_UP
+      ) &&
+      hueButtonVisualPressed
+    )
+    {
+      drawHue(
+        logicalHueValue,
+        TOUCH_TARGET_NONE
+      );
+    }
+
     // -------------------------------------------------------
-    // Reset gesture
+    // Save Hue gesture state before common reset.
+    // -------------------------------------------------------
+
+    bool savedHueEditValid =
+      hueEditValid;
+
+    CHSV32 savedHueEditHsv =
+      hueEditHsv;
+
+    uint8_t savedHueEditValue =
+      hueEditValue;
+
+    uint8_t savedHueEditWhite =
+      hueEditWhite;
+
+    // -------------------------------------------------------
+    // Reset current gesture.
+    //
+    // Persistent logicalColorHsv remains intact.
     // -------------------------------------------------------
 
     touchActive =
@@ -2629,6 +3400,9 @@ private:
     lastTouchInsideBack =
       false;
 
+    lastTouchInsideHue =
+      false;
+
     powerButtonVisualPressed =
       false;
 
@@ -2644,7 +3418,13 @@ private:
     backButtonVisualPressed =
       false;
 
+    hueButtonVisualPressed =
+      false;
+
     brightnessLongPressActive =
+      false;
+
+    hueLongPressActive =
       false;
 
     touchReleaseCandidate =
@@ -2656,11 +3436,31 @@ private:
     lastBrightnessRepeat =
       0;
 
+    huePressStartTime =
+      0;
+
+    lastHueRepeat =
+      0;
+
     lastTouchX =
       -1;
 
     lastTouchY =
       -1;
+
+    // Restore Hue gesture data only if needed for the
+    // short-press action below.
+    hueEditValid =
+      savedHueEditValid;
+
+    hueEditHsv =
+      savedHueEditHsv;
+
+    hueEditValue =
+      savedHueEditValue;
+
+    hueEditWhite =
+      savedHueEditWhite;
 
     // =======================================================
     // Execute action
@@ -2672,6 +3472,9 @@ private:
         now;
 
       toggleLedPowerFromTouch();
+
+      hueEditValid =
+        false;
 
       return;
     }
@@ -2689,6 +3492,9 @@ private:
 
       lastBrightnessValue =
         bri;
+
+      hueEditValid =
+        false;
 
       return;
     }
@@ -2711,6 +3517,9 @@ private:
         );
       }
 
+      hueEditValid =
+        false;
+
       return;
     }
 
@@ -2722,6 +3531,9 @@ private:
           "Open COLOR screen"
         )
       );
+
+      hueEditValid =
+        false;
 
       drawColorScreen();
 
@@ -2737,12 +3549,39 @@ private:
         )
       );
 
+      hueEditValid =
+        false;
+
       drawMainScreen(
         WiFi.localIP().toString()
       );
 
       return;
     }
+
+    if (executeHueShortPress)
+    {
+      hueShortPress(
+        releasedTarget
+      );
+
+      drawHue(
+        logicalHueValue,
+        TOUCH_TARGET_NONE
+      );
+
+      lastHueValue =
+        logicalHueValue;
+
+      hueEditValid =
+        false;
+
+      return;
+    }
+
+    // Long press already applied its Hue changes.
+    hueEditValid =
+      false;
   }
 
 public:
@@ -2758,7 +3597,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 7.1 + 7.2 start"
+        "Phase 7.3.1 start"
       )
     );
 
@@ -2829,7 +3668,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 7.1 + 7.2 setup complete"
+        "Phase 7.3.1 setup complete"
       )
     );
 
@@ -2847,18 +3686,10 @@ public:
       return;
     }
 
-    // -------------------------------------------------------
-    // Fast touch processing
-    // -------------------------------------------------------
-
     handleTouch();
 
     unsigned long now =
       millis();
-
-    // -------------------------------------------------------
-    // Normal LCD state update
-    // -------------------------------------------------------
 
     if (
       now -
@@ -2901,7 +3732,7 @@ public:
     }
 
     // =======================================================
-    // First connection / reconnection
+    // First connection / reconnect
     // =======================================================
 
     String currentIPAddress =
@@ -2932,7 +3763,7 @@ public:
     }
 
     // =======================================================
-    // IP address changed
+    // IP changed
     // =======================================================
 
     if (
@@ -2943,7 +3774,6 @@ public:
       lastIPAddress =
         currentIPAddress;
 
-      // IP is only shown on MAIN screen.
       if (
         currentPage ==
         SCREEN_MAIN
@@ -2962,8 +3792,6 @@ public:
 
     // =======================================================
     // Power
-    //
-    // Available on both MAIN and COLOR screens.
     // =======================================================
 
     bool ledOn =
@@ -2992,7 +3820,7 @@ public:
     }
 
     // =======================================================
-    // Current Primary Color
+    // Primary Color
     // =======================================================
 
     uint32_t primaryColor =
@@ -3005,8 +3833,19 @@ public:
           lastPrimaryColor
       );
 
+    bool hueTouchActive =
+      (
+        touchTarget ==
+          TOUCH_TARGET_HUE_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_HUE_UP
+      );
+
+    bool primaryColorChangeHandled =
+      false;
+
     // =======================================================
-    // MAIN page updates
+    // MAIN
     // =======================================================
 
     if (
@@ -3014,10 +3853,6 @@ public:
       SCREEN_MAIN
     )
     {
-      // -----------------------------------------------------
-      // Brightness
-      // -----------------------------------------------------
-
       bool brightnessTouchActive =
         (
           touchTarget ==
@@ -3040,10 +3875,6 @@ public:
         lastBrightnessValue =
           bri;
       }
-
-      // -----------------------------------------------------
-      // Effect
-      // -----------------------------------------------------
 
       uint8_t effectMode =
         getCurrentEffectMode();
@@ -3072,7 +3903,7 @@ public:
       }
 
       // -----------------------------------------------------
-      // Primary Color preview button
+      // External Primary Color change on MAIN.
       // -----------------------------------------------------
 
       if (
@@ -3081,15 +3912,22 @@ public:
           TOUCH_TARGET_COLOR_OPEN
       )
       {
+        syncLogicalColorFromRgb(
+          primaryColor
+        );
+
         drawColorButton(
           primaryColor,
           false
         );
+
+        primaryColorChangeHandled =
+          true;
       }
     }
 
     // =======================================================
-    // COLOR page updates
+    // COLOR
     // =======================================================
 
     else if (
@@ -3097,19 +3935,51 @@ public:
       SCREEN_COLOR
     )
     {
-      if (primaryColorChanged)
+      // -----------------------------------------------------
+      // External Web UI color change.
+      //
+      // Re-synchronize logical Hue only when local Hue control
+      // is not active.
+      // -----------------------------------------------------
+
+      if (
+        primaryColorChanged &&
+        !hueTouchActive
+      )
       {
+        syncLogicalColorFromRgb(
+          primaryColor
+        );
+
         drawColorDetails(
           primaryColor
         );
+
+        drawHue(
+          logicalHueValue,
+          TOUCH_TARGET_NONE
+        );
+
+        lastHueValue =
+          logicalHueValue;
+
+        primaryColorChangeHandled =
+          true;
       }
     }
 
-    // -------------------------------------------------------
-    // Save Primary Color cache
-    // -------------------------------------------------------
+    // =======================================================
+    // Save external color cache only after it has actually
+    // been handled.
+    //
+    // If an external change happens during a local Hue touch,
+    // leave it pending. It will be detected after release.
+    // =======================================================
 
-    if (primaryColorChanged)
+    if (
+      primaryColorChanged &&
+      primaryColorChangeHandled
+    )
     {
       lastPrimaryColor =
         primaryColor;
@@ -3293,24 +4163,15 @@ public:
       uint32_t color =
         getPrimaryColor();
 
-      uint8_t r =
-        (uint8_t)((color >> 16) & 0xFF);
-
-      uint8_t g =
-        (uint8_t)((color >> 8) & 0xFF);
-
-      uint8_t b =
-        (uint8_t)(color & 0xFF);
-
       char colorText[16];
 
       snprintf(
         colorText,
         sizeof(colorText),
         "#%02X%02X%02X",
-        r,
-        g,
-        b
+        R(color),
+        G(color),
+        B(color)
       );
 
       colorInfo.add(
@@ -3325,7 +4186,35 @@ public:
     }
 
     // -------------------------------------------------------
-    // Current display page
+    // Hue
+    //
+    // If the logical state matches the currently cached RGB,
+    // report logical Hue instead of re-deriving Hue from RGB.
+    // -------------------------------------------------------
+
+    JsonArray hueInfo =
+      user.createNestedArray(
+        "CoreS3 Display Hue"
+      );
+
+    if (
+      strip.getSegmentsNum() >
+      0
+    )
+    {
+      hueInfo.add(
+        getDisplayedHue()
+      );
+    }
+    else
+    {
+      hueInfo.add(
+        "No segment"
+      );
+    }
+
+    // -------------------------------------------------------
+    // Page
     // -------------------------------------------------------
 
     JsonArray pageInfo =
