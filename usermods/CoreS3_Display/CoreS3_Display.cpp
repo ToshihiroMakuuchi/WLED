@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.1.1
+// Phase 10.2.1
 //
 // MAIN
 //   Power
@@ -47,6 +47,15 @@
 //   Arrow operation no longer scans IDs 1..250.
 //   Cache is rebuilt in the background.
 //   presetsModifiedTime is used to detect changes.
+//
+// Phase 10.2.1
+//   Preset MANAGE entry added to PRESET screen.
+//   Current WLED state can be saved as a new Preset.
+//   Lowest unused Preset ID is selected from RAM cache.
+//   New Preset name is generated as "CoreS3 Preset <ID>".
+//   Saving requires a 1 second hold confirmation.
+//   WLED standard asynchronous savePreset() is used.
+//   Phase 10.1.1 Preset cache behavior is preserved.
 //
 // Common
 //   Startup animation
@@ -267,6 +276,49 @@ private:
     SCREEN_MAIN;
 
   // =========================================================
+  // Phase 10.2.1
+  // Preset sub pages
+  // =========================================================
+
+  enum PresetSubPage : uint8_t
+  {
+    PRESET_SUBPAGE_NAV = 0,
+    PRESET_SUBPAGE_MANAGE,
+    PRESET_SUBPAGE_SAVE
+  };
+
+  PresetSubPage presetSubPage =
+    PRESET_SUBPAGE_NAV;
+
+  // =========================================================
+  // Phase 10.2.1
+  // New Preset save operation
+  // =========================================================
+
+  enum PresetSaveOperationState : uint8_t
+  {
+    PRESET_SAVE_OP_IDLE = 0,
+    PRESET_SAVE_OP_WAIT_WLED,
+    PRESET_SAVE_OP_WAIT_CACHE,
+    PRESET_SAVE_OP_SUCCESS,
+    PRESET_SAVE_OP_FAILED
+  };
+
+  PresetSaveOperationState presetSaveOperationState =
+    PRESET_SAVE_OP_IDLE;
+
+  uint8_t presetSaveCandidateId = 0;
+  String presetSaveCandidateName = "";
+
+  unsigned long presetSaveHoldStartTime = 0;
+  bool presetSaveHoldTriggered = false;
+
+  unsigned long presetSaveResultStartMs = 0;
+
+  static constexpr unsigned long PRESET_SAVE_HOLD_MS = 1000;
+  static constexpr unsigned long PRESET_SAVE_RESULT_HOLD_MS = 900;
+
+  // =========================================================
   // Touch targets
   // =========================================================
 
@@ -304,7 +356,11 @@ private:
     TOUCH_TARGET_PALETTE_NEXT,
 
     TOUCH_TARGET_PRESET_PREV,
-    TOUCH_TARGET_PRESET_NEXT
+    TOUCH_TARGET_PRESET_NEXT,
+
+    TOUCH_TARGET_PRESET_MANAGE,
+    TOUCH_TARGET_PRESET_SAVE_NEW,
+    TOUCH_TARGET_PRESET_SAVE_HOLD
   };
 
   TouchTarget touchTarget =
@@ -338,6 +394,10 @@ private:
 
   bool lastTouchInsidePresetNav = false;
 
+  bool lastTouchInsidePresetManage = false;
+  bool lastTouchInsidePresetSaveNew = false;
+  bool lastTouchInsidePresetSaveHold = false;
+
   // =========================================================
   // Visual pressed state
   // =========================================================
@@ -363,6 +423,10 @@ private:
   bool paletteButtonVisualPressed = false;
 
   bool presetNavButtonVisualPressed = false;
+
+  bool presetManageButtonVisualPressed = false;
+  bool presetSaveNewButtonVisualPressed = false;
+  bool presetSaveHoldButtonVisualPressed = false;
 
   // =========================================================
   // Long press state
@@ -605,6 +669,51 @@ private:
 
   static constexpr int16_t PRESET_NAV_TOUCH_W = 80;
   static constexpr int16_t PRESET_NAV_TOUCH_H = 52;
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET MANAGE button on navigation screen
+  // =========================================================
+
+  static constexpr int16_t PRESET_MANAGE_BUTTON_X = 88;
+  static constexpr int16_t PRESET_MANAGE_BUTTON_Y = 198;
+  static constexpr int16_t PRESET_MANAGE_BUTTON_W = 144;
+  static constexpr int16_t PRESET_MANAGE_BUTTON_H = 34;
+
+  static constexpr int16_t PRESET_MANAGE_TOUCH_X = 88;
+  static constexpr int16_t PRESET_MANAGE_TOUCH_Y = 188;
+  static constexpr int16_t PRESET_MANAGE_TOUCH_W = 144;
+  static constexpr int16_t PRESET_MANAGE_TOUCH_H = 52;
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET MANAGE screen
+  // =========================================================
+
+  static constexpr int16_t PRESET_SAVE_NEW_BUTTON_X = 60;
+  static constexpr int16_t PRESET_SAVE_NEW_BUTTON_Y = 104;
+  static constexpr int16_t PRESET_SAVE_NEW_BUTTON_W = 200;
+  static constexpr int16_t PRESET_SAVE_NEW_BUTTON_H = 48;
+
+  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_X = 48;
+  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_Y = 92;
+  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_W = 224;
+  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_H = 72;
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET SAVE confirmation screen
+  // =========================================================
+
+  static constexpr int16_t PRESET_SAVE_HOLD_BUTTON_X = 60;
+  static constexpr int16_t PRESET_SAVE_HOLD_BUTTON_Y = 180;
+  static constexpr int16_t PRESET_SAVE_HOLD_BUTTON_W = 200;
+  static constexpr int16_t PRESET_SAVE_HOLD_BUTTON_H = 44;
+
+  static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_X = 48;
+  static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_Y = 170;
+  static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_W = 224;
+  static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_H = 66;
 
   // =========================================================
   // Touch timing
@@ -961,6 +1070,8 @@ private:
     if (
       currentPage ==
         SCREEN_PRESET &&
+      presetSubPage ==
+        PRESET_SUBPAGE_NAV &&
       displayPowerState ==
         DISPLAY_POWER_ACTIVE &&
       touchTarget ==
@@ -978,6 +1089,35 @@ private:
 
       lastPresetValue =
         getDisplayedPresetId();
+    }
+    else if (
+      currentPage ==
+        SCREEN_PRESET &&
+      presetSubPage ==
+        PRESET_SUBPAGE_MANAGE &&
+      displayPowerState ==
+        DISPLAY_POWER_ACTIVE &&
+      touchTarget ==
+        TOUCH_TARGET_NONE
+    )
+    {
+      drawPresetManageScreen();
+    }
+    else if (
+      currentPage ==
+        SCREEN_PRESET &&
+      presetSubPage ==
+        PRESET_SUBPAGE_SAVE &&
+      presetSaveOperationState ==
+        PRESET_SAVE_OP_IDLE &&
+      displayPowerState ==
+        DISPLAY_POWER_ACTIVE &&
+      touchTarget ==
+        TOUCH_TARGET_NONE
+    )
+    {
+      preparePresetSaveCandidate();
+      drawPresetSaveScreen();
     }
   }
 
@@ -1033,6 +1173,20 @@ private:
     if (
       pendingPresetId >
       0
+    )
+    {
+      return;
+    }
+
+    // -------------------------------------------------------
+    // Phase 10.2.1
+    // Do not read presets.json while WLED is writing a
+    // Preset. savePreset() is asynchronous and uses the same
+    // shared JSON / filesystem path.
+    // -------------------------------------------------------
+
+    if (
+      presetNeedsSaving()
     )
     {
       return;
@@ -1169,6 +1323,414 @@ private:
       ].name;
 
     return true;
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // Find lowest unused Preset ID using RAM cache only
+  // =========================================================
+
+  uint8_t findFirstFreePresetId()
+  {
+    if (
+      !presetCacheReady ||
+      presetCacheBuilding
+    )
+    {
+      return 0;
+    }
+
+    uint16_t expectedId =
+      1;
+
+    for (
+      uint16_t i = 0;
+      i < presetCacheCount;
+      i++
+    )
+    {
+      uint8_t cachedId =
+        presetCache[i].id;
+
+      if (
+        cachedId <
+        expectedId
+      )
+      {
+        continue;
+      }
+
+      if (
+        cachedId ==
+        expectedId
+      )
+      {
+        expectedId++;
+
+        if (
+          expectedId >
+          250
+        )
+        {
+          return 0;
+        }
+
+        continue;
+      }
+
+      break;
+    }
+
+    if (
+      expectedId >=
+        1 &&
+      expectedId <=
+        250
+    )
+    {
+      return
+        (uint8_t)expectedId;
+    }
+
+    return 0;
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // Prepare new Preset candidate
+  // =========================================================
+
+  bool preparePresetSaveCandidate()
+  {
+    presetSaveCandidateId =
+      findFirstFreePresetId();
+
+    presetSaveCandidateName =
+      "";
+
+    if (
+      presetSaveCandidateId ==
+      0
+    )
+    {
+      return false;
+    }
+
+    char presetName[33];
+
+    snprintf(
+      presetName,
+      sizeof(presetName),
+      "CoreS3 Preset %u",
+      presetSaveCandidateId
+    );
+
+    presetSaveCandidateName =
+      presetName;
+
+    return true;
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // Save operation busy state
+  // =========================================================
+
+  bool isPresetSaveBusy()
+  {
+    return
+      (
+        presetSaveOperationState !=
+        PRESET_SAVE_OP_IDLE
+      );
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // Request WLED asynchronous Preset save
+  // =========================================================
+
+  bool requestNewPresetSave()
+  {
+    if (
+      presetSaveOperationState !=
+        PRESET_SAVE_OP_IDLE ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      pendingPresetId >
+        0 ||
+      presetSaveCandidateId ==
+        0 ||
+      findPresetCacheIndex(
+        presetSaveCandidateId
+      ) >=
+        0 ||
+      presetNeedsSaving()
+    )
+    {
+      presetSaveOperationState =
+        PRESET_SAVE_OP_FAILED;
+
+      presetSaveResultStartMs =
+        millis();
+
+      drawPresetSaveOperationStatus();
+
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "Preset save request rejected"
+        )
+      );
+
+      return false;
+    }
+
+    savePreset(
+      presetSaveCandidateId,
+      presetSaveCandidateName.c_str()
+    );
+
+    if (
+      !presetNeedsSaving()
+    )
+    {
+      presetSaveOperationState =
+        PRESET_SAVE_OP_FAILED;
+
+      presetSaveResultStartMs =
+        millis();
+
+      drawPresetSaveOperationStatus();
+
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "Preset save could not be queued"
+        )
+      );
+
+      return false;
+    }
+
+    presetSaveOperationState =
+      PRESET_SAVE_OP_WAIT_WLED;
+
+    presetSaveResultStartMs =
+      0;
+
+    lastUserActivityMs =
+      millis();
+
+    drawPresetSaveOperationStatus();
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Preset save request: %u (%s)\n",
+      presetSaveCandidateId,
+      presetSaveCandidateName.c_str()
+    );
+
+    return true;
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // Service asynchronous Preset save / cache verification
+  // =========================================================
+
+  void servicePresetSaveOperation()
+  {
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_IDLE
+    )
+    {
+      return;
+    }
+
+    unsigned long now =
+      millis();
+
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_WAIT_WLED
+    )
+    {
+      if (
+        presetNeedsSaving()
+      )
+      {
+        return;
+      }
+
+      // -----------------------------------------------------
+      // Force one cache rebuild even if presetsModifiedTime
+      // happens to retain the same second value.
+      // -----------------------------------------------------
+
+      if (
+        !presetCacheBuilding
+      )
+      {
+        startPresetCacheRebuild();
+      }
+
+      presetSaveOperationState =
+        PRESET_SAVE_OP_WAIT_CACHE;
+
+      if (
+        currentPage ==
+          SCREEN_PRESET &&
+        presetSubPage ==
+          PRESET_SUBPAGE_SAVE &&
+        displayPowerState ==
+          DISPLAY_POWER_ACTIVE
+      )
+      {
+        drawPresetSaveOperationStatus();
+      }
+
+      return;
+    }
+
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_WAIT_CACHE
+    )
+    {
+      if (
+        !presetCacheReady ||
+        presetCacheBuilding
+      )
+      {
+        return;
+      }
+
+      if (
+        findPresetCacheIndex(
+          presetSaveCandidateId
+        ) >=
+        0
+      )
+      {
+        presetSaveOperationState =
+          PRESET_SAVE_OP_SUCCESS;
+
+        Serial.printf(
+          "[CoreS3_Display] "
+          "Preset save verified: %u (%s)\n",
+          presetSaveCandidateId,
+          presetSaveCandidateName.c_str()
+        );
+      }
+      else
+      {
+        presetSaveOperationState =
+          PRESET_SAVE_OP_FAILED;
+
+        Serial.printf(
+          "[CoreS3_Display] "
+          "Preset save verification failed: %u\n",
+          presetSaveCandidateId
+        );
+      }
+
+      presetSaveResultStartMs =
+        now;
+
+      if (
+        currentPage ==
+          SCREEN_PRESET &&
+        presetSubPage ==
+          PRESET_SUBPAGE_SAVE &&
+        displayPowerState ==
+          DISPLAY_POWER_ACTIVE
+      )
+      {
+        drawPresetSaveOperationStatus();
+      }
+
+      return;
+    }
+
+    if (
+      presetSaveOperationState ==
+        PRESET_SAVE_OP_SUCCESS ||
+      presetSaveOperationState ==
+        PRESET_SAVE_OP_FAILED
+    )
+    {
+      if (
+        now -
+        presetSaveResultStartMs <
+        PRESET_SAVE_RESULT_HOLD_MS
+      )
+      {
+        return;
+      }
+
+      // -----------------------------------------------------
+      // Wait until the confirming finger has been released.
+      // This prevents the same physical hold from being seen
+      // as a new tap on the next screen.
+      // -----------------------------------------------------
+
+      int16_t touchX = -1;
+      int16_t touchY = -1;
+
+      if (
+        display.getTouch(
+          &touchX,
+          &touchY
+        ) >
+        0
+      )
+      {
+        return;
+      }
+
+      bool saveSucceeded =
+        (
+          presetSaveOperationState ==
+          PRESET_SAVE_OP_SUCCESS
+        );
+
+      presetSaveOperationState =
+        PRESET_SAVE_OP_IDLE;
+
+      presetSaveResultStartMs =
+        0;
+
+      presetSaveHoldStartTime =
+        0;
+
+      presetSaveHoldTriggered =
+        false;
+
+      resetTouchGesture();
+
+      if (saveSucceeded)
+      {
+        presetSaveCandidateId =
+          0;
+
+        presetSaveCandidateName =
+          "";
+
+        drawPresetScreen();
+      }
+      else
+      {
+        presetSaveCandidateId =
+          0;
+
+        presetSaveCandidateName =
+          "";
+
+        drawPresetManageScreen();
+      }
+    }
   }
 
   // =========================================================
@@ -1687,7 +2249,24 @@ private:
       SCREEN_PRESET
     )
     {
-      drawPresetScreen();
+      if (
+        presetSubPage ==
+        PRESET_SUBPAGE_MANAGE
+      )
+      {
+        drawPresetManageScreen();
+      }
+      else if (
+        presetSubPage ==
+        PRESET_SUBPAGE_SAVE
+      )
+      {
+        drawPresetSaveScreen();
+      }
+      else
+      {
+        drawPresetScreen();
+      }
 
       return;
     }
@@ -4266,6 +4845,141 @@ private:
   }
 
   // =========================================================
+  // Phase 10.2.1
+  // Generic Preset text button
+  // =========================================================
+
+  void drawPresetTextButton(
+    int16_t x,
+    int16_t y,
+    int16_t w,
+    int16_t h,
+    const char* label,
+    bool enabled,
+    bool pressed,
+    uint8_t textSize
+  )
+  {
+    uint16_t buttonColor =
+      enabled
+        ? TFT_CYAN
+        : TFT_DARKGREY;
+
+    uint16_t backgroundColor =
+      (
+        enabled &&
+        pressed
+      )
+        ? buttonColor
+        : TFT_BLACK;
+
+    uint16_t textColor =
+      (
+        enabled &&
+        pressed
+      )
+        ? TFT_BLACK
+        : (
+            enabled
+              ? TFT_WHITE
+              : TFT_DARKGREY
+          );
+
+    display.fillRect(
+      x - 2,
+      y - 2,
+      w + 4,
+      h + 4,
+      TFT_BLACK
+    );
+
+    display.fillRect(
+      x,
+      y,
+      w,
+      h,
+      backgroundColor
+    );
+
+    display.drawRect(
+      x,
+      y,
+      w,
+      h,
+      buttonColor
+    );
+
+    display.drawRect(
+      x + 1,
+      y + 1,
+      w - 2,
+      h - 2,
+      buttonColor
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      textColor,
+      backgroundColor
+    );
+
+    display.setTextSize(
+      textSize
+    );
+
+    display.drawString(
+      label,
+      x +
+        (w / 2),
+      y +
+        (h / 2)
+    );
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET navigation MANAGE button
+  // =========================================================
+
+  void drawPresetManageButton(
+    bool pressed
+  )
+  {
+    bool enabled =
+      (
+        presetCacheReady &&
+        !presetCacheBuilding &&
+        pendingPresetId ==
+          0
+      );
+
+    const char* label =
+      presetCacheReady
+        ? "MANAGE"
+        : "LOADING";
+
+    drawPresetTextButton(
+      PRESET_MANAGE_BUTTON_X,
+      PRESET_MANAGE_BUTTON_Y,
+      PRESET_MANAGE_BUTTON_W,
+      PRESET_MANAGE_BUTTON_H,
+      label,
+      enabled,
+      pressed && enabled,
+      1
+    );
+
+    presetManageButtonVisualPressed =
+      (
+        pressed &&
+        enabled
+      );
+  }
+
+  // =========================================================
   // Preset bottom navigation
   // =========================================================
 
@@ -4317,35 +5031,10 @@ private:
         TOUCH_TARGET_PRESET_NEXT
     );
 
-    display.setTextColor(
-      TFT_DARKGREY,
-      TFT_BLACK
+    drawPresetManageButton(
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_MANAGE
     );
-
-    display.setTextSize(
-      1
-    );
-
-    if (
-      presetCacheReady
-    )
-    {
-      display.drawString(
-        "APPLY",
-        screenWidth / 2,
-        PRESET_NAV_BUTTON_Y +
-          (CONTROL_BUTTON_H / 2)
-      );
-    }
-    else
-    {
-      display.drawString(
-        "LOADING",
-        screenWidth / 2,
-        PRESET_NAV_BUTTON_Y +
-          (CONTROL_BUTTON_H / 2)
-      );
-    }
   }
 
   // =========================================================
@@ -4694,6 +5383,27 @@ private:
     currentPage =
       SCREEN_PRESET;
 
+    presetSubPage =
+      PRESET_SUBPAGE_NAV;
+
+    presetSaveOperationState =
+      PRESET_SAVE_OP_IDLE;
+
+    presetSaveCandidateId =
+      0;
+
+    presetSaveCandidateName =
+      "";
+
+    presetSaveHoldStartTime =
+      0;
+
+    presetSaveHoldTriggered =
+      false;
+
+    presetSaveResultStartMs =
+      0;
+
     readyScreenShown =
       true;
 
@@ -4775,6 +5485,726 @@ private:
 
     lastPresetsModifiedTime =
       presetsModifiedTime;
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET MANAGE SAVE NEW button
+  // =========================================================
+
+  void drawPresetSaveNewButton(
+    bool pressed
+  )
+  {
+    uint8_t freePresetId =
+      findFirstFreePresetId();
+
+    bool enabled =
+      (
+        presetCacheReady &&
+        !presetCacheBuilding &&
+        freePresetId >
+          0 &&
+        pendingPresetId ==
+          0 &&
+        !presetNeedsSaving()
+      );
+
+    drawPresetTextButton(
+      PRESET_SAVE_NEW_BUTTON_X,
+      PRESET_SAVE_NEW_BUTTON_Y,
+      PRESET_SAVE_NEW_BUTTON_W,
+      PRESET_SAVE_NEW_BUTTON_H,
+      "SAVE NEW",
+      enabled,
+      pressed && enabled,
+      2
+    );
+
+    presetSaveNewButtonVisualPressed =
+      (
+        pressed &&
+        enabled
+      );
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET SAVE hold button
+  // =========================================================
+
+  void drawPresetSaveHoldButton(
+    bool pressed
+  )
+  {
+    bool enabled =
+      (
+        presetSaveOperationState ==
+          PRESET_SAVE_OP_IDLE &&
+        presetCacheReady &&
+        !presetCacheBuilding &&
+        presetSaveCandidateId >
+          0 &&
+        findPresetCacheIndex(
+          presetSaveCandidateId
+        ) <
+          0 &&
+        pendingPresetId ==
+          0 &&
+        !presetNeedsSaving()
+      );
+
+    drawPresetTextButton(
+      PRESET_SAVE_HOLD_BUTTON_X,
+      PRESET_SAVE_HOLD_BUTTON_Y,
+      PRESET_SAVE_HOLD_BUTTON_W,
+      PRESET_SAVE_HOLD_BUTTON_H,
+      "HOLD TO SAVE",
+      enabled,
+      pressed && enabled,
+      2
+    );
+
+    presetSaveHoldButtonVisualPressed =
+      (
+        pressed &&
+        enabled
+      );
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET MANAGE screen
+  // =========================================================
+
+  void drawPresetManageScreen()
+  {
+    display.fillScreen(
+      TFT_BLACK
+    );
+
+    currentPage =
+      SCREEN_PRESET;
+
+    presetSubPage =
+      PRESET_SUBPAGE_MANAGE;
+
+    presetSaveOperationState =
+      PRESET_SAVE_OP_IDLE;
+
+    presetSaveCandidateId =
+      0;
+
+    presetSaveCandidateName =
+      "";
+
+    presetSaveHoldStartTime =
+      0;
+
+    presetSaveHoldTriggered =
+      false;
+
+    presetSaveResultStartMs =
+      0;
+
+    readyScreenShown =
+      true;
+
+    connectingScreenShown =
+      false;
+
+    resetTouchGesture();
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      "PRESET MANAGE",
+      screenWidth / 2,
+      18
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "New Preset",
+      screenWidth / 2,
+      41
+    );
+
+    display.drawFastHLine(
+      8,
+      58,
+      screenWidth - 16,
+      TFT_DARKGREY
+    );
+
+    drawPowerButton(
+      bri > 0,
+      false
+    );
+
+    drawBackButton(
+      false
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Save current WLED state",
+      screenWidth / 2,
+      82
+    );
+
+    drawPresetSaveNewButton(
+      false
+    );
+
+    uint8_t freePresetId =
+      findFirstFreePresetId();
+
+    if (
+      !presetCacheReady ||
+      presetCacheBuilding
+    )
+    {
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        "Preset cache loading...",
+        screenWidth / 2,
+        178
+      );
+    }
+    else if (
+      freePresetId ==
+      0
+    )
+    {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        "No free Preset ID (1-250)",
+        screenWidth / 2,
+        178
+      );
+    }
+    else
+    {
+      char idText[32];
+
+      snprintf(
+        idText,
+        sizeof(idText),
+        "Next Preset ID: %u",
+        freePresetId
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        idText,
+        screenWidth / 2,
+        176
+      );
+
+      char nameText[33];
+
+      snprintf(
+        nameText,
+        sizeof(nameText),
+        "CoreS3 Preset %u",
+        freePresetId
+      );
+
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        nameText,
+        screenWidth / 2,
+        198
+      );
+    }
+
+    lastLedState =
+      bri > 0
+        ? 1
+        : 0;
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET SAVE operation body
+  // =========================================================
+
+  void drawPresetSaveOperationStatus()
+  {
+    if (
+      currentPage !=
+        SCREEN_PRESET ||
+      presetSubPage !=
+        PRESET_SUBPAGE_SAVE
+    )
+    {
+      return;
+    }
+
+    display.fillRect(
+      0,
+      60,
+      screenWidth,
+      180,
+      TFT_BLACK
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_WAIT_WLED
+    )
+    {
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "Saving...",
+        screenWidth / 2,
+        110
+      );
+
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      display.drawString(
+        presetSaveCandidateName,
+        screenWidth / 2,
+        142
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        "Writing WLED Preset",
+        screenWidth / 2,
+        170
+      );
+
+      return;
+    }
+
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_WAIT_CACHE
+    )
+    {
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "Updating Cache",
+        screenWidth / 2,
+        110
+      );
+
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      char progressText[32];
+
+      uint16_t displayScanId =
+        presetCacheScanId;
+
+      if (
+        displayScanId >
+        250
+      )
+      {
+        displayScanId =
+          250;
+      }
+
+      snprintf(
+        progressText,
+        sizeof(progressText),
+        "Scanning ID: %u / 250",
+        (unsigned)displayScanId
+      );
+
+      display.drawString(
+        progressText,
+        screenWidth / 2,
+        145
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        "Verifying saved Preset",
+        screenWidth / 2,
+        172
+      );
+
+      return;
+    }
+
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_SUCCESS
+    )
+    {
+      display.setTextColor(
+        TFT_GREEN,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "SAVED",
+        screenWidth / 2,
+        104
+      );
+
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      display.drawString(
+        presetSaveCandidateName,
+        screenWidth / 2,
+        140
+      );
+
+      char idText[24];
+
+      snprintf(
+        idText,
+        sizeof(idText),
+        "Preset ID: %u",
+        presetSaveCandidateId
+      );
+
+      display.drawString(
+        idText,
+        screenWidth / 2,
+        165
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        "Preset cache verified",
+        screenWidth / 2,
+        192
+      );
+
+      return;
+    }
+
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_FAILED
+    )
+    {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "SAVE FAILED",
+        screenWidth / 2,
+        108
+      );
+
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      display.drawString(
+        "Preset was not verified",
+        screenWidth / 2,
+        150
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        "Returning to PRESET MANAGE",
+        screenWidth / 2,
+        180
+      );
+    }
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET SAVE confirmation screen
+  // =========================================================
+
+  void drawPresetSaveScreen()
+  {
+    display.fillScreen(
+      TFT_BLACK
+    );
+
+    currentPage =
+      SCREEN_PRESET;
+
+    presetSubPage =
+      PRESET_SUBPAGE_SAVE;
+
+    readyScreenShown =
+      true;
+
+    connectingScreenShown =
+      false;
+
+    resetTouchGesture();
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      "SAVE PRESET",
+      screenWidth / 2,
+      18
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Current WLED State",
+      screenWidth / 2,
+      41
+    );
+
+    display.drawFastHLine(
+      8,
+      58,
+      screenWidth - 16,
+      TFT_DARKGREY
+    );
+
+    drawPowerButton(
+      bri > 0,
+      false
+    );
+
+    drawBackButton(
+      false
+    );
+
+    if (
+      presetSaveOperationState !=
+      PRESET_SAVE_OP_IDLE
+    )
+    {
+      drawPresetSaveOperationStatus();
+      return;
+    }
+
+    if (
+      presetSaveCandidateId ==
+      0
+    )
+    {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "No Free ID",
+        screenWidth / 2,
+        110
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      display.drawString(
+        "Preset IDs 1-250 are unavailable",
+        screenWidth / 2,
+        150
+      );
+
+      return;
+    }
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    if (
+      presetSaveCandidateName.length() <=
+      18
+    )
+    {
+      display.setTextSize(
+        2
+      );
+    }
+    else
+    {
+      display.setTextSize(
+        1
+      );
+    }
+
+    display.drawString(
+      presetSaveCandidateName,
+      screenWidth / 2,
+      88
+    );
+
+    char idText[24];
+
+    snprintf(
+      idText,
+      sizeof(idText),
+      "Preset ID: %u",
+      presetSaveCandidateId
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      idText,
+      screenWidth / 2,
+      120
+    );
+
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
+
+    display.drawString(
+      "Hold 1 second to save",
+      screenWidth / 2,
+      151
+    );
+
+    drawPresetSaveHoldButton(
+      false
+    );
+
+    lastLedState =
+      bri > 0
+        ? 1
+        : 0;
   }
 
   // =========================================================
@@ -5134,6 +6564,66 @@ private:
   }
 
   // =========================================================
+  // Phase 10.2.1
+  // PRESET MANAGE hit test
+  // =========================================================
+
+  bool isPresetManageTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_MANAGE_TOUCH_X,
+      PRESET_MANAGE_TOUCH_Y,
+      PRESET_MANAGE_TOUCH_W,
+      PRESET_MANAGE_TOUCH_H
+    );
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET SAVE NEW hit test
+  // =========================================================
+
+  bool isPresetSaveNewTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_SAVE_NEW_TOUCH_X,
+      PRESET_SAVE_NEW_TOUCH_Y,
+      PRESET_SAVE_NEW_TOUCH_W,
+      PRESET_SAVE_NEW_TOUCH_H
+    );
+  }
+
+  // =========================================================
+  // Phase 10.2.1
+  // PRESET HOLD TO SAVE hit test
+  // =========================================================
+
+  bool isPresetSaveHoldTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_SAVE_HOLD_TOUCH_X,
+      PRESET_SAVE_HOLD_TOUCH_Y,
+      PRESET_SAVE_HOLD_TOUCH_W,
+      PRESET_SAVE_HOLD_TOUCH_H
+    );
+  }
+
+  // =========================================================
   // Begin Hue edit
   // =========================================================
 
@@ -5264,6 +6754,15 @@ private:
     lastTouchInsidePresetNav =
       false;
 
+    lastTouchInsidePresetManage =
+      false;
+
+    lastTouchInsidePresetSaveNew =
+      false;
+
+    lastTouchInsidePresetSaveHold =
+      false;
+
     powerButtonVisualPressed =
       false;
 
@@ -5301,6 +6800,15 @@ private:
       false;
 
     presetNavButtonVisualPressed =
+      false;
+
+    presetManageButtonVisualPressed =
+      false;
+
+    presetSaveNewButtonVisualPressed =
+      false;
+
+    presetSaveHoldButtonVisualPressed =
       false;
 
     brightnessLongPressActive =
@@ -5383,6 +6891,12 @@ private:
 
     lastPresetRepeat =
       0;
+
+    presetSaveHoldStartTime =
+      0;
+
+    presetSaveHoldTriggered =
+      false;
 
     lastTouchX =
       -1;
@@ -6980,6 +8494,19 @@ private:
       return;
     }
 
+    // =======================================================
+    // Phase 10.2.1
+    // Block normal touch while asynchronous Preset save /
+    // verification is in progress.
+    // =======================================================
+
+    if (
+      isPresetSaveBusy()
+    )
+    {
+      return;
+    }
+
     unsigned long now =
       millis();
 
@@ -7209,6 +8736,10 @@ private:
       bool insidePresetPrev = false;
       bool insidePresetNext = false;
 
+      bool insidePresetManage = false;
+      bool insidePresetSaveNew = false;
+      bool insidePresetSaveHold = false;
+
       if (
         currentPage ==
         SCREEN_PRESET
@@ -7220,17 +8751,79 @@ private:
             touchY
           );
 
-        insidePresetPrev =
-          isPresetPrevTouched(
-            touchX,
-            touchY
-          );
+        if (
+          presetSubPage ==
+          PRESET_SUBPAGE_NAV
+        )
+        {
+          insidePresetPrev =
+            isPresetPrevTouched(
+              touchX,
+              touchY
+            );
 
-        insidePresetNext =
-          isPresetNextTouched(
-            touchX,
-            touchY
-          );
+          insidePresetNext =
+            isPresetNextTouched(
+              touchX,
+              touchY
+            );
+
+          insidePresetManage =
+            (
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              pendingPresetId ==
+                0 &&
+              isPresetManageTouched(
+                touchX,
+                touchY
+              )
+            );
+        }
+        else if (
+          presetSubPage ==
+          PRESET_SUBPAGE_MANAGE
+        )
+        {
+          insidePresetSaveNew =
+            (
+              findFirstFreePresetId() >
+                0 &&
+              pendingPresetId ==
+                0 &&
+              !presetNeedsSaving() &&
+              isPresetSaveNewTouched(
+                touchX,
+                touchY
+              )
+            );
+        }
+        else if (
+          presetSubPage ==
+          PRESET_SUBPAGE_SAVE
+        )
+        {
+          insidePresetSaveHold =
+            (
+              presetSaveOperationState ==
+                PRESET_SAVE_OP_IDLE &&
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              presetSaveCandidateId >
+                0 &&
+              findPresetCacheIndex(
+                presetSaveCandidateId
+              ) <
+                0 &&
+              pendingPresetId ==
+                0 &&
+              !presetNeedsSaving() &&
+              isPresetSaveHoldTouched(
+                touchX,
+                touchY
+              )
+            );
+        }
       }
 
       // =====================================================
@@ -7267,6 +8860,12 @@ private:
           false;
 
         presetLongPressActive =
+          false;
+
+        presetSaveHoldStartTime =
+          0;
+
+        presetSaveHoldTriggered =
           false;
       }
 
@@ -7611,7 +9210,11 @@ private:
               true;
           }
 
-          else if (insidePresetPrev)
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_NAV &&
+            insidePresetPrev
+          )
           {
             touchTarget =
               TOUCH_TARGET_PRESET_PREV;
@@ -7629,7 +9232,11 @@ private:
               false;
           }
 
-          else if (insidePresetNext)
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_NAV &&
+            insidePresetNext
+          )
           {
             touchTarget =
               TOUCH_TARGET_PRESET_NEXT;
@@ -7644,6 +9251,51 @@ private:
               now;
 
             presetLongPressActive =
+              false;
+          }
+
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_NAV &&
+            insidePresetManage
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_MANAGE;
+
+            lastTouchInsidePresetManage =
+              true;
+          }
+
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_MANAGE &&
+            insidePresetSaveNew
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_SAVE_NEW;
+
+            lastTouchInsidePresetSaveNew =
+              true;
+          }
+
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_SAVE &&
+            insidePresetSaveHold
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_SAVE_HOLD;
+
+            lastTouchInsidePresetSaveHold =
+              true;
+
+            presetSaveHoldStartTime =
+              now;
+
+            presetSaveHoldTriggered =
               false;
           }
         }
@@ -8414,6 +10066,116 @@ private:
         return;
       }
 
+      // =====================================================
+      // Phase 10.2.1
+      // PRESET MANAGE
+      // =====================================================
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_MANAGE
+      )
+      {
+        lastTouchInsidePresetManage =
+          insidePresetManage;
+
+        if (
+          insidePresetManage !=
+          presetManageButtonVisualPressed
+        )
+        {
+          drawPresetManageButton(
+            insidePresetManage
+          );
+        }
+
+        return;
+      }
+
+      // =====================================================
+      // Phase 10.2.1
+      // PRESET SAVE NEW
+      // =====================================================
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_SAVE_NEW
+      )
+      {
+        lastTouchInsidePresetSaveNew =
+          insidePresetSaveNew;
+
+        if (
+          insidePresetSaveNew !=
+          presetSaveNewButtonVisualPressed
+        )
+        {
+          drawPresetSaveNewButton(
+            insidePresetSaveNew
+          );
+        }
+
+        return;
+      }
+
+      // =====================================================
+      // Phase 10.2.1
+      // PRESET HOLD TO SAVE
+      // =====================================================
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_SAVE_HOLD
+      )
+      {
+        lastTouchInsidePresetSaveHold =
+          insidePresetSaveHold;
+
+        if (
+          insidePresetSaveHold !=
+          presetSaveHoldButtonVisualPressed
+        )
+        {
+          drawPresetSaveHoldButton(
+            insidePresetSaveHold
+          );
+        }
+
+        if (!insidePresetSaveHold)
+        {
+          presetSaveHoldStartTime =
+            0;
+
+          return;
+        }
+
+        if (
+          presetSaveHoldStartTime ==
+          0
+        )
+        {
+          presetSaveHoldStartTime =
+            now;
+        }
+
+        if (
+          !presetSaveHoldTriggered &&
+          now -
+          presetSaveHoldStartTime >=
+          PRESET_SAVE_HOLD_MS
+        )
+        {
+          presetSaveHoldTriggered =
+            true;
+
+          requestNewPresetSave();
+
+          return;
+        }
+
+        return;
+      }
+
       return;
     }
 
@@ -8601,6 +10363,20 @@ private:
       lastTouchInsidePresetNav &&
       !wasPresetLongPress;
 
+    bool executePresetManageOpen =
+      (
+        releasedTarget ==
+        TOUCH_TARGET_PRESET_MANAGE
+      ) &&
+      lastTouchInsidePresetManage;
+
+    bool executePresetSaveNew =
+      (
+        releasedTarget ==
+        TOUCH_TARGET_PRESET_SAVE_NEW
+      ) &&
+      lastTouchInsidePresetSaveNew;
+
     // =======================================================
     // Restore visuals
     // =======================================================
@@ -8787,6 +10563,39 @@ private:
     {
       drawPresetNavigation(
         TOUCH_TARGET_NONE
+      );
+    }
+
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_MANAGE &&
+      presetManageButtonVisualPressed
+    )
+    {
+      drawPresetManageButton(
+        false
+      );
+    }
+
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_SAVE_NEW &&
+      presetSaveNewButtonVisualPressed
+    )
+    {
+      drawPresetSaveNewButton(
+        false
+      );
+    }
+
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_SAVE_HOLD &&
+      presetSaveHoldButtonVisualPressed
+    )
+    {
+      drawPresetSaveHoldButton(
+        false
       );
     }
 
@@ -8982,6 +10791,51 @@ private:
     }
 
     // =======================================================
+    // Phase 10.2.1
+    // Open PRESET MANAGE
+    // =======================================================
+
+    if (executePresetManageOpen)
+    {
+      hueEditValid =
+        false;
+
+      saturationEditValid =
+        false;
+
+      drawPresetManageScreen();
+
+      return;
+    }
+
+    // =======================================================
+    // Phase 10.2.1
+    // Open SAVE NEW confirmation
+    // =======================================================
+
+    if (executePresetSaveNew)
+    {
+      hueEditValid =
+        false;
+
+      saturationEditValid =
+        false;
+
+      if (
+        preparePresetSaveCandidate()
+      )
+      {
+        drawPresetSaveScreen();
+      }
+      else
+      {
+        drawPresetManageScreen();
+      }
+
+      return;
+    }
+
+    // =======================================================
     // Back
     // =======================================================
 
@@ -8992,6 +10846,39 @@ private:
 
       saturationEditValid =
         false;
+
+      if (
+        currentPage ==
+          SCREEN_PRESET &&
+        presetSubPage ==
+          PRESET_SUBPAGE_SAVE
+      )
+      {
+        presetSaveOperationState =
+          PRESET_SAVE_OP_IDLE;
+
+        presetSaveCandidateId =
+          0;
+
+        presetSaveCandidateName =
+          "";
+
+        drawPresetManageScreen();
+
+        return;
+      }
+
+      if (
+        currentPage ==
+          SCREEN_PRESET &&
+        presetSubPage ==
+          PRESET_SUBPAGE_MANAGE
+      )
+      {
+        drawPresetScreen();
+
+        return;
+      }
 
       drawMainScreen(
         WiFi.localIP().toString()
@@ -9488,7 +11375,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 10.1.1 start"
+        "Phase 10.2.1 start"
       )
     );
 
@@ -9588,8 +11475,9 @@ public:
       presetsModifiedTime;
 
     // -------------------------------------------------------
-    // Phase 10.1.1
+    // Phase 10.2.1
     //
+    // Phase 10.1.1 cache behavior is preserved.
     // Only initialize the cache builder here.
     //
     // Actual presets.json scanning starts later from loop()
@@ -9620,7 +11508,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 10.1.1 setup complete"
+        "Phase 10.2.1 setup complete"
       )
     );
 
@@ -9674,6 +11562,13 @@ public:
     }
 
     servicePresetCache();
+
+    // =======================================================
+    // Phase 10.2.1
+    // New Preset save service
+    // =======================================================
+
+    servicePresetSaveOperation();
 
     // =======================================================
     // Normal touch
@@ -10132,7 +12027,9 @@ public:
 
     else if (
       currentPage ==
-      SCREEN_PRESET
+        SCREEN_PRESET &&
+      presetSubPage ==
+        PRESET_SUBPAGE_NAV
     )
     {
       bool presetTouchActive =
@@ -10837,7 +12734,7 @@ public:
       );
 
     phaseInfo.add(
-      "10.1.1"
+      "10.2.1"
     );
   }
 };
