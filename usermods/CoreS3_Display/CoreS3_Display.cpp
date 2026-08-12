@@ -28,6 +28,22 @@ private:
   int lastBrightnessValue = -1;
   int lastEffectMode = -1;
 
+  uint32_t lastPrimaryColor = 0;
+  bool lastPrimaryColorValid = false;
+
+  // =========================================================
+  // Screen pages
+  // =========================================================
+
+  enum ScreenPage : uint8_t
+  {
+    SCREEN_MAIN = 0,
+    SCREEN_COLOR
+  };
+
+  ScreenPage currentPage =
+    SCREEN_MAIN;
+
   // =========================================================
   // Touch targets
   // =========================================================
@@ -35,12 +51,21 @@ private:
   enum TouchTarget : uint8_t
   {
     TOUCH_TARGET_NONE = 0,
+
     TOUCH_TARGET_POWER,
+
     TOUCH_TARGET_BRIGHTNESS_DOWN,
-    TOUCH_TARGET_BRIGHTNESS_UP
+    TOUCH_TARGET_BRIGHTNESS_UP,
+
+    TOUCH_TARGET_EFFECT_PREV,
+    TOUCH_TARGET_EFFECT_NEXT,
+
+    TOUCH_TARGET_COLOR_OPEN,
+    TOUCH_TARGET_BACK
   };
 
-  TouchTarget touchTarget = TOUCH_TARGET_NONE;
+  TouchTarget touchTarget =
+    TOUCH_TARGET_NONE;
 
   // =========================================================
   // Touch state
@@ -50,9 +75,15 @@ private:
 
   bool lastTouchInsidePower = false;
   bool lastTouchInsideBrightness = false;
+  bool lastTouchInsideEffect = false;
+  bool lastTouchInsideColor = false;
+  bool lastTouchInsideBack = false;
 
   bool powerButtonVisualPressed = false;
   bool brightnessButtonVisualPressed = false;
+  bool effectButtonVisualPressed = false;
+  bool colorButtonVisualPressed = false;
+  bool backButtonVisualPressed = false;
 
   bool brightnessLongPressActive = false;
 
@@ -66,57 +97,104 @@ private:
   // Power button
   // =========================================================
 
-  static constexpr int16_t POWER_BUTTON_X = 30;
-  static constexpr int16_t POWER_BUTTON_Y = 184;
-  static constexpr int16_t POWER_BUTTON_W = 260;
+  static constexpr int16_t POWER_BUTTON_X = 8;
+  static constexpr int16_t POWER_BUTTON_Y = 8;
+  static constexpr int16_t POWER_BUTTON_W = 44;
   static constexpr int16_t POWER_BUTTON_H = 44;
 
   // =========================================================
-  // Brightness buttons
+  // MAIN header
   //
-  // Visible area = Touch area
+  // Power button occupies the left side.
   //
-  // LEFT:
-  //   X = 30 .. 101
+  // Header content:
+  //   X = 60 .. 312
   //
-  // RIGHT:
-  //   X = 218 .. 289
-  //
+  // Center:
+  //   X = 186
   // =========================================================
 
-  static constexpr int16_t BRI_LEFT_X = 30;
-  static constexpr int16_t BRI_LEFT_Y = 106;
-  static constexpr int16_t BRI_LEFT_W = 72;
-  static constexpr int16_t BRI_LEFT_H = 30;
+  static constexpr int16_t HEADER_CONTENT_LEFT = 60;
+  static constexpr int16_t HEADER_CONTENT_RIGHT = 312;
 
-  static constexpr int16_t BRI_RIGHT_X = 218;
-  static constexpr int16_t BRI_RIGHT_Y = 106;
-  static constexpr int16_t BRI_RIGHT_W = 72;
-  static constexpr int16_t BRI_RIGHT_H = 30;
+  static constexpr int16_t HEADER_CENTER_X =
+    (
+      HEADER_CONTENT_LEFT +
+      HEADER_CONTENT_RIGHT
+    ) / 2;
+
+  static constexpr int16_t HEADER_TITLE_Y = 18;
+  static constexpr int16_t HEADER_IP_Y = 41;
+
+  // =========================================================
+  // Common LEFT / RIGHT buttons
+  // =========================================================
+
+  static constexpr int16_t CONTROL_LEFT_X = 16;
+  static constexpr int16_t CONTROL_RIGHT_X = 240;
+
+  static constexpr int16_t CONTROL_BUTTON_W = 64;
+  static constexpr int16_t CONTROL_BUTTON_H = 34;
+
+  // =========================================================
+  // Brightness row
+  // =========================================================
+
+  static constexpr int16_t BRI_BUTTON_Y = 82;
+
+  // =========================================================
+  // Effect row
+  // =========================================================
+
+  static constexpr int16_t FX_BUTTON_Y = 138;
+
+  // =========================================================
+  // MAIN Color button
+  // =========================================================
+
+  static constexpr int16_t COLOR_BUTTON_X = 64;
+  static constexpr int16_t COLOR_BUTTON_Y = 188;
+  static constexpr int16_t COLOR_BUTTON_W = 192;
+  static constexpr int16_t COLOR_BUTTON_H = 40;
+
+  // =========================================================
+  // COLOR screen Back button
+  //
+  // Symmetrical with Power button.
+  // =========================================================
+
+  static constexpr int16_t BACK_BUTTON_X = 268;
+  static constexpr int16_t BACK_BUTTON_Y = 8;
+  static constexpr int16_t BACK_BUTTON_W = 44;
+  static constexpr int16_t BACK_BUTTON_H = 44;
+
+  // =========================================================
+  // COLOR preview
+  //
+  // Lower section is intentionally kept free for:
+  //
+  // Phase 7.3 -> Hue
+  // Phase 7.4 -> Saturation
+  // =========================================================
+
+  static constexpr int16_t COLOR_PREVIEW_X = 92;
+  static constexpr int16_t COLOR_PREVIEW_Y = 68;
+  static constexpr int16_t COLOR_PREVIEW_W = 136;
+  static constexpr int16_t COLOR_PREVIEW_H = 36;
 
   // =========================================================
   // Touch timing
   // =========================================================
 
-  // About 66 touch checks per second
   static constexpr unsigned long TOUCH_POLL_MS = 15;
 
-  // Temporary touch loss protection
   static constexpr unsigned long TOUCH_RELEASE_CONFIRM_MS = 70;
 
-  // Power button double-action prevention
   static constexpr unsigned long TOUCH_ACTION_COOLDOWN_MS = 250;
 
-  // ---------------------------------------------------------
-  // Brightness button behavior
-  //
-  // Short press:
-  //   +/- 1
-  //
-  // Long press:
-  //   starts after 400 ms
-  //   +/- 5 every 80 ms
-  // ---------------------------------------------------------
+  // =========================================================
+  // Brightness behavior
+  // =========================================================
 
   static constexpr unsigned long BRI_LONG_PRESS_MS = 400;
   static constexpr unsigned long BRI_REPEAT_MS = 80;
@@ -125,25 +203,96 @@ private:
   static constexpr int BRI_LONG_STEP = 5;
 
   // =========================================================
+  // RGB888 -> RGB565
+  //
+  // Used only for LCD color preview.
+  // =========================================================
+
+  uint16_t rgbTo565(
+    uint8_t r,
+    uint8_t g,
+    uint8_t b
+  )
+  {
+    return
+      (
+        ((uint16_t)(r & 0xF8) << 8) |
+        ((uint16_t)(g & 0xFC) << 3) |
+        ((uint16_t)b >> 3)
+      );
+  }
+
+  // =========================================================
+  // Current WLED Primary Color
+  //
+  // WLED Segment:
+  //   colors[0] = Primary Color
+  // =========================================================
+
+  uint32_t getPrimaryColor()
+  {
+    if (
+      strip.getSegmentsNum() >
+      0
+    )
+    {
+      return
+        strip.getMainSegment().colors[0];
+    }
+
+    return 0;
+  }
+
+  // =========================================================
+  // Current Effect
+  // =========================================================
+
+  uint8_t getCurrentEffectMode()
+  {
+    if (
+      strip.getSegmentsNum() >
+      0
+    )
+    {
+      return
+        strip.getMainSegment().mode;
+    }
+
+    return 0;
+  }
+
+  // =========================================================
   // Boot screen
   // =========================================================
 
   void drawBootScreen()
   {
-    display.fillScreen(TFT_BLACK);
-
-    display.setTextDatum(textdatum_t::middle_center);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
-
-    display.setTextSize(3);
-
-    display.drawString(
-      "WLED CoreS3",
-      screenWidth / 2,
-      80
+    display.fillScreen(
+      TFT_BLACK
     );
 
-    display.setTextSize(2);
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      "WLED M5Stack CoreS3",
+      screenWidth / 2,
+      82
+    );
+
+    display.setTextSize(
+      2
+    );
 
     display.drawString(
       "Starting...",
@@ -158,20 +307,32 @@ private:
 
   void drawConnectingScreen()
   {
-    display.fillScreen(TFT_BLACK);
+    display.fillScreen(
+      TFT_BLACK
+    );
 
-    display.setTextDatum(textdatum_t::middle_center);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextSize(3);
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
 
     display.drawString(
-      "WLED CoreS3",
+      "WLED M5Stack CoreS3",
       screenWidth / 2,
       65
     );
 
-    display.setTextSize(2);
+    display.setTextSize(
+      2
+    );
 
     display.drawString(
       "Wi-Fi",
@@ -185,130 +346,170 @@ private:
       160
     );
 
-    connectingScreenShown = true;
-    readyScreenShown = false;
+    currentPage =
+      SCREEN_MAIN;
+
+    connectingScreenShown =
+      true;
+
+    readyScreenShown =
+      false;
 
     resetTouchGesture();
   }
 
   // =========================================================
-  // Ready screen
+  // Power icon
   // =========================================================
 
-  void drawReadyScreen(const String& ipAddress)
+  void drawPowerIcon(
+    int16_t centerX,
+    int16_t centerY,
+    uint16_t iconColor,
+    uint16_t backgroundColor
+  )
   {
-    display.fillScreen(TFT_BLACK);
-
-    display.setTextDatum(textdatum_t::middle_center);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
-
-    // Title
-    display.setTextSize(2);
-
-    display.drawString(
-      "WLED CoreS3",
-      screenWidth / 2,
-      18
+    display.drawCircle(
+      centerX,
+      centerY + 2,
+      11,
+      iconColor
     );
 
-    // IP address
-    display.setTextSize(1);
-
-    display.drawString(
-      ipAddress,
-      screenWidth / 2,
-      40
+    display.drawCircle(
+      centerX,
+      centerY + 2,
+      10,
+      iconColor
     );
 
-    // Divider
-    display.drawFastHLine(
-      20,
-      54,
-      screenWidth - 40,
-      TFT_DARKGREY
-    );
-
-    readyScreenShown = true;
-    connectingScreenShown = false;
-
-    lastLedState = -1;
-    lastBrightnessValue = -1;
-    lastEffectMode = -1;
-
-    resetTouchGesture();
-  }
-
-  // =========================================================
-  // LED Power
-  // =========================================================
-
-  void drawLedPower(bool ledOn)
-  {
+    // Opening at top
     display.fillRect(
-      0,
-      58,
-      screenWidth,
-      30,
-      TFT_BLACK
+      centerX - 4,
+      centerY - 11,
+      9,
+      8,
+      backgroundColor
     );
 
-    display.setTextSize(2);
-
-    display.setTextDatum(textdatum_t::middle_left);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
-
-    display.drawString(
-      "LED Power:",
-      20,
-      73
+    // Power stem
+    display.drawFastVLine(
+      centerX - 1,
+      centerY - 14,
+      12,
+      iconColor
     );
 
-    display.setTextDatum(textdatum_t::middle_right);
+    display.drawFastVLine(
+      centerX,
+      centerY - 14,
+      12,
+      iconColor
+    );
 
-    if (ledOn)
-    {
-      display.setTextColor(
-        TFT_GREEN,
-        TFT_BLACK
-      );
-
-      display.drawString(
-        "ON",
-        screenWidth - 20,
-        73
-      );
-    }
-    else
-    {
-      display.setTextColor(
-        TFT_RED,
-        TFT_BLACK
-      );
-
-      display.drawString(
-        "OFF",
-        screenWidth - 20,
-        73
-      );
-    }
+    display.drawFastVLine(
+      centerX + 1,
+      centerY - 14,
+      12,
+      iconColor
+    );
   }
 
   // =========================================================
-  // Draw one Brightness triangle button
+  // Power button
   // =========================================================
 
-  void drawBrightnessButton(
-    int16_t x,
-    int16_t y,
-    int16_t w,
-    int16_t h,
-    bool increase,
+  void drawPowerButton(
+    bool ledOn,
     bool pressed
   )
   {
-    const uint16_t buttonColor = TFT_CYAN;
+    uint16_t stateColor =
+      ledOn
+        ? TFT_GREEN
+        : TFT_RED;
 
-    // Clear around button
+    uint16_t backgroundColor =
+      pressed
+        ? stateColor
+        : TFT_BLACK;
+
+    uint16_t iconColor =
+      pressed
+        ? TFT_BLACK
+        : stateColor;
+
+    display.fillRect(
+      POWER_BUTTON_X - 2,
+      POWER_BUTTON_Y - 2,
+      POWER_BUTTON_W + 4,
+      POWER_BUTTON_H + 4,
+      TFT_BLACK
+    );
+
+    display.fillRect(
+      POWER_BUTTON_X,
+      POWER_BUTTON_Y,
+      POWER_BUTTON_W,
+      POWER_BUTTON_H,
+      backgroundColor
+    );
+
+    display.drawRect(
+      POWER_BUTTON_X,
+      POWER_BUTTON_Y,
+      POWER_BUTTON_W,
+      POWER_BUTTON_H,
+      stateColor
+    );
+
+    display.drawRect(
+      POWER_BUTTON_X + 1,
+      POWER_BUTTON_Y + 1,
+      POWER_BUTTON_W - 2,
+      POWER_BUTTON_H - 2,
+      stateColor
+    );
+
+    int16_t centerX =
+      POWER_BUTTON_X +
+      (POWER_BUTTON_W / 2);
+
+    int16_t centerY =
+      POWER_BUTTON_Y +
+      (POWER_BUTTON_H / 2);
+
+    drawPowerIcon(
+      centerX,
+      centerY,
+      iconColor,
+      backgroundColor
+    );
+
+    powerButtonVisualPressed =
+      pressed;
+  }
+
+  // =========================================================
+  // Generic triangle button
+  // =========================================================
+
+  void drawTriangleButton(
+    int16_t x,
+    int16_t y,
+    bool pointRight,
+    bool pressed
+  )
+  {
+    const uint16_t buttonColor =
+      TFT_CYAN;
+
+    const int16_t w =
+      CONTROL_BUTTON_W;
+
+    const int16_t h =
+      CONTROL_BUTTON_H;
+
     display.fillRect(
       x - 2,
       y - 2,
@@ -316,10 +517,6 @@ private:
       h + 4,
       TFT_BLACK
     );
-
-    // -------------------------------------------------------
-    // Pressed
-    // -------------------------------------------------------
 
     if (pressed)
     {
@@ -330,20 +527,7 @@ private:
         h,
         buttonColor
       );
-
-      display.drawRect(
-        x,
-        y,
-        w,
-        h,
-        buttonColor
-      );
     }
-
-    // -------------------------------------------------------
-    // Normal
-    // -------------------------------------------------------
-
     else
     {
       display.fillRect(
@@ -371,47 +555,46 @@ private:
       );
     }
 
-    int16_t centerX = x + (w / 2);
-    int16_t centerY = y + (h / 2);
+    int16_t centerX =
+      x + (w / 2);
+
+    int16_t centerY =
+      y + (h / 2);
 
     uint16_t triangleColor =
-      pressed ? TFT_BLACK : buttonColor;
+      pressed
+        ? TFT_BLACK
+        : buttonColor;
 
-    // -------------------------------------------------------
-    // Right triangle
-    // -------------------------------------------------------
-
-    if (increase)
+    // Right
+    if (pointRight)
     {
       display.fillTriangle(
-        centerX + 11,
+        centerX + 10,
         centerY,
 
-        centerX - 8,
-        centerY - 10,
+        centerX - 7,
+        centerY - 9,
 
-        centerX - 8,
-        centerY + 10,
+        centerX - 7,
+        centerY + 9,
 
         triangleColor
       );
     }
 
-    // -------------------------------------------------------
-    // Left triangle
-    // -------------------------------------------------------
-
+    // Left
     else
     {
       display.fillTriangle(
-        centerX - 11,
+        centerX - 10,
         centerY,
 
-        centerX + 8,
-        centerY - 10,
+        centerX + 7,
+        centerY - 9,
 
-        centerX + 8,
-        centerY + 10,
+        centerX + 7,
+        centerY + 9,
 
         triangleColor
       );
@@ -419,70 +602,59 @@ private:
   }
 
   // =========================================================
-  // Brightness display
-  //
-  //     Brightness
-  //
-  //   [ < ]   128   [ > ]
+  // Brightness
   // =========================================================
 
   void drawBrightness(
     int brightnessValue,
-    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+    TouchTarget pressedTarget =
+      TOUCH_TARGET_NONE
   )
   {
-    // Clear whole Brightness area
     display.fillRect(
       0,
-      88,
+      62,
       screenWidth,
-      50,
+      58,
       TFT_BLACK
     );
 
-    // -------------------------------------------------------
-    // Label
-    // -------------------------------------------------------
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextDatum(textdatum_t::middle_center);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
-    display.setTextSize(1);
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
 
     display.drawString(
       "Brightness",
       screenWidth / 2,
-      96
+      70
     );
 
-    // -------------------------------------------------------
-    // Left button
-    // -------------------------------------------------------
-
-    drawBrightnessButton(
-      BRI_LEFT_X,
-      BRI_LEFT_Y,
-      BRI_LEFT_W,
-      BRI_LEFT_H,
+    // Left
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      BRI_BUTTON_Y,
       false,
-      pressedTarget == TOUCH_TARGET_BRIGHTNESS_DOWN
+      pressedTarget ==
+        TOUCH_TARGET_BRIGHTNESS_DOWN
     );
 
-    // -------------------------------------------------------
-    // Right button
-    // -------------------------------------------------------
-
-    drawBrightnessButton(
-      BRI_RIGHT_X,
-      BRI_RIGHT_Y,
-      BRI_RIGHT_W,
-      BRI_RIGHT_H,
+    // Right
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      BRI_BUTTON_Y,
       true,
-      pressedTarget == TOUCH_TARGET_BRIGHTNESS_UP
+      pressedTarget ==
+        TOUCH_TARGET_BRIGHTNESS_UP
     );
-
-    // -------------------------------------------------------
-    // Numeric value
-    // -------------------------------------------------------
 
     char valueText[8];
 
@@ -493,29 +665,8 @@ private:
       brightnessValue
     );
 
-    display.setTextDatum(textdatum_t::middle_center);
-    display.setTextColor(TFT_WHITE, TFT_BLACK);
-    display.setTextSize(2);
-
-    display.drawString(
-      valueText,
-      screenWidth / 2,
-      121
-    );
-  }
-
-  // =========================================================
-  // Effect
-  // =========================================================
-
-  void drawEffect(uint8_t effectMode)
-  {
-    display.fillRect(
-      0,
-      138,
-      screenWidth,
-      42,
-      TFT_BLACK
+    display.setTextDatum(
+      textdatum_t::middle_center
     );
 
     display.setTextColor(
@@ -523,145 +674,732 @@ private:
       TFT_BLACK
     );
 
-    display.setTextDatum(
-      textdatum_t::middle_center
+    display.setTextSize(
+      2
     );
-
-    display.setTextSize(1);
 
     display.drawString(
-      "Effect",
+      valueText,
       screenWidth / 2,
-      146
+      99
     );
+  }
 
-    char effectName[64];
+  // =========================================================
+  // Effect name helper
+  // =========================================================
 
-    effectName[0] = '\0';
+  void getEffectName(
+    uint8_t effectMode,
+    char* effectName,
+    size_t effectNameSize
+  )
+  {
+    if (
+      effectName == nullptr ||
+      effectNameSize == 0
+    )
+    {
+      return;
+    }
+
+    effectName[0] =
+      '\0';
 
     extractModeName(
       effectMode,
       nullptr,
       effectName,
-      sizeof(effectName) - 1
+      effectNameSize - 1
     );
 
-    if (strlen(effectName) > 24)
+    if (
+      strlen(effectName) ==
+      0
+    )
     {
-      effectName[24] = '\0';
-    }
-
-    if (strlen(effectName) == 0)
-    {
-      strcpy(
+      strncpy(
         effectName,
-        "Unknown"
+        "Unknown",
+        effectNameSize - 1
       );
+
+      effectName[
+        effectNameSize - 1
+      ] = '\0';
     }
 
-    display.setTextSize(2);
-
-    display.drawString(
-      effectName,
-      screenWidth / 2,
-      165
-    );
+    if (
+      strlen(effectName) >
+      22
+    )
+    {
+      effectName[22] =
+        '\0';
+    }
   }
 
   // =========================================================
-  // Power button
+  // Effect
   // =========================================================
 
-  void drawPowerButton(
-    bool ledOn,
-    bool pressed
+  void drawEffect(
+    uint8_t effectMode,
+    TouchTarget pressedTarget =
+      TOUCH_TARGET_NONE
   )
   {
-    uint16_t actionColor =
-      ledOn ? TFT_RED : TFT_GREEN;
-
     display.fillRect(
-      POWER_BUTTON_X - 2,
-      POWER_BUTTON_Y - 2,
-      POWER_BUTTON_W + 4,
-      POWER_BUTTON_H + 4,
+      0,
+      120,
+      screenWidth,
+      58,
       TFT_BLACK
     );
-
-    // -------------------------------------------------------
-    // Pressed
-    // -------------------------------------------------------
-
-    if (pressed)
-    {
-      display.fillRect(
-        POWER_BUTTON_X,
-        POWER_BUTTON_Y,
-        POWER_BUTTON_W,
-        POWER_BUTTON_H,
-        actionColor
-      );
-
-      display.setTextColor(
-        TFT_BLACK,
-        actionColor
-      );
-    }
-
-    // -------------------------------------------------------
-    // Normal
-    // -------------------------------------------------------
-
-    else
-    {
-      display.fillRect(
-        POWER_BUTTON_X,
-        POWER_BUTTON_Y,
-        POWER_BUTTON_W,
-        POWER_BUTTON_H,
-        TFT_BLACK
-      );
-
-      display.drawRect(
-        POWER_BUTTON_X,
-        POWER_BUTTON_Y,
-        POWER_BUTTON_W,
-        POWER_BUTTON_H,
-        actionColor
-      );
-
-      display.drawRect(
-        POWER_BUTTON_X + 1,
-        POWER_BUTTON_Y + 1,
-        POWER_BUTTON_W - 2,
-        POWER_BUTTON_H - 2,
-        actionColor
-      );
-
-      display.setTextColor(
-        actionColor,
-        TFT_BLACK
-      );
-    }
 
     display.setTextDatum(
       textdatum_t::middle_center
     );
 
-    display.setTextSize(2);
-
-    display.drawString(
-      ledOn ? "TURN OFF" : "TURN ON",
-      POWER_BUTTON_X + (POWER_BUTTON_W / 2),
-      POWER_BUTTON_Y + (POWER_BUTTON_H / 2)
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
     );
 
-    powerButtonVisualPressed =
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Effect",
+      screenWidth / 2,
+      128
+    );
+
+    // Previous
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      FX_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_EFFECT_PREV
+    );
+
+    // Next
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      FX_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_EFFECT_NEXT
+    );
+
+    char effectName[64];
+
+    getEffectName(
+      effectMode,
+      effectName,
+      sizeof(effectName)
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    if (
+      strlen(effectName) <=
+      12
+    )
+    {
+      display.setTextSize(
+        2
+      );
+    }
+    else
+    {
+      display.setTextSize(
+        1
+      );
+    }
+
+    display.drawString(
+      effectName,
+      screenWidth / 2,
+      155
+    );
+  }
+
+  // =========================================================
+  // MAIN screen Color button
+  //
+  // Shows a small preview of the current Primary Color.
+  // =========================================================
+
+  void drawColorButton(
+    uint32_t color,
+    bool pressed
+  )
+  {
+    const uint16_t buttonColor =
+      TFT_CYAN;
+
+    uint16_t backgroundColor =
+      pressed
+        ? buttonColor
+        : TFT_BLACK;
+
+    uint16_t textColor =
+      pressed
+        ? TFT_BLACK
+        : TFT_WHITE;
+
+    // RGBW32 = 0xWWRRGGBB
+    uint8_t r =
+      (uint8_t)((color >> 16) & 0xFF);
+
+    uint8_t g =
+      (uint8_t)((color >> 8) & 0xFF);
+
+    uint8_t b =
+      (uint8_t)(color & 0xFF);
+
+    uint16_t previewColor =
+      rgbTo565(
+        r,
+        g,
+        b
+      );
+
+    display.fillRect(
+      COLOR_BUTTON_X - 2,
+      COLOR_BUTTON_Y - 2,
+      COLOR_BUTTON_W + 4,
+      COLOR_BUTTON_H + 4,
+      TFT_BLACK
+    );
+
+    display.fillRect(
+      COLOR_BUTTON_X,
+      COLOR_BUTTON_Y,
+      COLOR_BUTTON_W,
+      COLOR_BUTTON_H,
+      backgroundColor
+    );
+
+    display.drawRect(
+      COLOR_BUTTON_X,
+      COLOR_BUTTON_Y,
+      COLOR_BUTTON_W,
+      COLOR_BUTTON_H,
+      buttonColor
+    );
+
+    display.drawRect(
+      COLOR_BUTTON_X + 1,
+      COLOR_BUTTON_Y + 1,
+      COLOR_BUTTON_W - 2,
+      COLOR_BUTTON_H - 2,
+      buttonColor
+    );
+
+    // -------------------------------------------------------
+    // Current Color swatch
+    // -------------------------------------------------------
+
+    static constexpr int16_t SWATCH_W = 26;
+    static constexpr int16_t SWATCH_H = 24;
+
+    int16_t swatchX =
+      COLOR_BUTTON_X + 14;
+
+    int16_t swatchY =
+      COLOR_BUTTON_Y +
+      ((COLOR_BUTTON_H - SWATCH_H) / 2);
+
+    display.fillRect(
+      swatchX,
+      swatchY,
+      SWATCH_W,
+      SWATCH_H,
+      previewColor
+    );
+
+    display.drawRect(
+      swatchX,
+      swatchY,
+      SWATCH_W,
+      SWATCH_H,
+      TFT_WHITE
+    );
+
+    // -------------------------------------------------------
+    // COLOR label
+    // -------------------------------------------------------
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      textColor,
+      backgroundColor
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      "COLOR",
+      COLOR_BUTTON_X +
+        115,
+      COLOR_BUTTON_Y +
+        (COLOR_BUTTON_H / 2)
+    );
+
+    colorButtonVisualPressed =
       pressed;
   }
 
   // =========================================================
-  // Hit testing
+  // Back button
+  //
+  // Right-top on COLOR screen.
+  // =========================================================
+
+  void drawBackButton(
+    bool pressed
+  )
+  {
+    const uint16_t buttonColor =
+      TFT_CYAN;
+
+    uint16_t backgroundColor =
+      pressed
+        ? buttonColor
+        : TFT_BLACK;
+
+    uint16_t iconColor =
+      pressed
+        ? TFT_BLACK
+        : buttonColor;
+
+    display.fillRect(
+      BACK_BUTTON_X - 2,
+      BACK_BUTTON_Y - 2,
+      BACK_BUTTON_W + 4,
+      BACK_BUTTON_H + 4,
+      TFT_BLACK
+    );
+
+    display.fillRect(
+      BACK_BUTTON_X,
+      BACK_BUTTON_Y,
+      BACK_BUTTON_W,
+      BACK_BUTTON_H,
+      backgroundColor
+    );
+
+    display.drawRect(
+      BACK_BUTTON_X,
+      BACK_BUTTON_Y,
+      BACK_BUTTON_W,
+      BACK_BUTTON_H,
+      buttonColor
+    );
+
+    display.drawRect(
+      BACK_BUTTON_X + 1,
+      BACK_BUTTON_Y + 1,
+      BACK_BUTTON_W - 2,
+      BACK_BUTTON_H - 2,
+      buttonColor
+    );
+
+    int16_t centerX =
+      BACK_BUTTON_X +
+      (BACK_BUTTON_W / 2);
+
+    int16_t centerY =
+      BACK_BUTTON_Y +
+      (BACK_BUTTON_H / 2);
+
+    // Left-pointing arrow head
+    display.fillTriangle(
+      centerX - 11,
+      centerY,
+
+      centerX - 1,
+      centerY - 9,
+
+      centerX - 1,
+      centerY + 9,
+
+      iconColor
+    );
+
+    // Arrow tail
+    display.fillRect(
+      centerX - 1,
+      centerY - 2,
+      13,
+      5,
+      iconColor
+    );
+
+    backButtonVisualPressed =
+      pressed;
+  }
+
+  // =========================================================
+  // COLOR screen current Primary Color
+  // =========================================================
+
+  void drawColorDetails(
+    uint32_t color
+  )
+  {
+    // Clear only the preview area.
+    // Lower screen remains available for Hue/Saturation.
+    display.fillRect(
+      0,
+      60,
+      screenWidth,
+      78,
+      TFT_BLACK
+    );
+
+    // RGBW32 = 0xWWRRGGBB
+    uint8_t r =
+      (uint8_t)((color >> 16) & 0xFF);
+
+    uint8_t g =
+      (uint8_t)((color >> 8) & 0xFF);
+
+    uint8_t b =
+      (uint8_t)(color & 0xFF);
+
+    uint16_t previewColor =
+      rgbTo565(
+        r,
+        g,
+        b
+      );
+
+    // -------------------------------------------------------
+    // Preview
+    // -------------------------------------------------------
+
+    display.fillRect(
+      COLOR_PREVIEW_X,
+      COLOR_PREVIEW_Y,
+      COLOR_PREVIEW_W,
+      COLOR_PREVIEW_H,
+      previewColor
+    );
+
+    display.drawRect(
+      COLOR_PREVIEW_X,
+      COLOR_PREVIEW_Y,
+      COLOR_PREVIEW_W,
+      COLOR_PREVIEW_H,
+      TFT_WHITE
+    );
+
+    display.drawRect(
+      COLOR_PREVIEW_X + 1,
+      COLOR_PREVIEW_Y + 1,
+      COLOR_PREVIEW_W - 2,
+      COLOR_PREVIEW_H - 2,
+      TFT_DARKGREY
+    );
+
+    // -------------------------------------------------------
+    // #RRGGBB
+    // -------------------------------------------------------
+
+    char hexText[16];
+
+    snprintf(
+      hexText,
+      sizeof(hexText),
+      "#%02X%02X%02X",
+      r,
+      g,
+      b
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      hexText,
+      screenWidth / 2,
+      121
+    );
+
+    // Divider for future controls
+    display.drawFastHLine(
+      32,
+      136,
+      screenWidth - 64,
+      TFT_DARKGREY
+    );
+  }
+
+  // =========================================================
+  // MAIN screen
+  // =========================================================
+
+  void drawMainScreen(
+    const String& ipAddress
+  )
+  {
+    display.fillScreen(
+      TFT_BLACK
+    );
+
+    currentPage =
+      SCREEN_MAIN;
+
+    readyScreenShown =
+      true;
+
+    connectingScreenShown =
+      false;
+
+    resetTouchGesture();
+
+    // -------------------------------------------------------
+    // Header
+    // -------------------------------------------------------
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      "WLED M5Stack CoreS3",
+      HEADER_CENTER_X,
+      HEADER_TITLE_Y
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      ipAddress,
+      HEADER_CENTER_X,
+      HEADER_IP_Y
+    );
+
+    display.drawFastHLine(
+      8,
+      58,
+      screenWidth - 16,
+      TFT_DARKGREY
+    );
+
+    // -------------------------------------------------------
+    // Controls
+    // -------------------------------------------------------
+
+    drawPowerButton(
+      bri > 0,
+      false
+    );
+
+    drawBrightness(
+      bri,
+      TOUCH_TARGET_NONE
+    );
+
+    uint8_t effectMode =
+      getCurrentEffectMode();
+
+    drawEffect(
+      effectMode,
+      TOUCH_TARGET_NONE
+    );
+
+    uint32_t primaryColor =
+      getPrimaryColor();
+
+    drawColorButton(
+      primaryColor,
+      false
+    );
+
+    // -------------------------------------------------------
+    // Cache current values
+    // -------------------------------------------------------
+
+    lastLedState =
+      bri > 0
+        ? 1
+        : 0;
+
+    lastBrightnessValue =
+      bri;
+
+    lastEffectMode =
+      effectMode;
+
+    lastPrimaryColor =
+      primaryColor;
+
+    lastPrimaryColorValid =
+      true;
+  }
+
+  // =========================================================
+  // COLOR screen
+  // =========================================================
+
+  void drawColorScreen()
+  {
+    display.fillScreen(
+      TFT_BLACK
+    );
+
+    currentPage =
+      SCREEN_COLOR;
+
+    readyScreenShown =
+      true;
+
+    connectingScreenShown =
+      false;
+
+    resetTouchGesture();
+
+    // -------------------------------------------------------
+    // Header
+    //
+    // Power and Back are symmetrical, so COLOR can use
+    // physical center X=160.
+    // -------------------------------------------------------
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      "COLOR",
+      screenWidth / 2,
+      18
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Primary Color",
+      screenWidth / 2,
+      41
+    );
+
+    display.drawFastHLine(
+      8,
+      58,
+      screenWidth - 16,
+      TFT_DARKGREY
+    );
+
+    // -------------------------------------------------------
+    // Navigation
+    // -------------------------------------------------------
+
+    drawPowerButton(
+      bri > 0,
+      false
+    );
+
+    drawBackButton(
+      false
+    );
+
+    // -------------------------------------------------------
+    // Primary Color
+    // -------------------------------------------------------
+
+    uint32_t primaryColor =
+      getPrimaryColor();
+
+    drawColorDetails(
+      primaryColor
+    );
+
+    lastLedState =
+      bri > 0
+        ? 1
+        : 0;
+
+    lastPrimaryColor =
+      primaryColor;
+
+    lastPrimaryColorValid =
+      true;
+  }
+
+  // =========================================================
+  // Generic hit test
+  // =========================================================
+
+  bool pointInsideRect(
+    int16_t px,
+    int16_t py,
+    int16_t x,
+    int16_t y,
+    int16_t w,
+    int16_t h
+  )
+  {
+    return (
+      px >= x &&
+      px < x + w &&
+      py >= y &&
+      py < y + h
+    );
+  }
+
+  // =========================================================
+  // Hit tests
   // =========================================================
 
   bool isPowerButtonTouched(
@@ -669,11 +1407,13 @@ private:
     int16_t y
   )
   {
-    return (
-      x >= POWER_BUTTON_X &&
-      x <  POWER_BUTTON_X + POWER_BUTTON_W &&
-      y >= POWER_BUTTON_Y &&
-      y <  POWER_BUTTON_Y + POWER_BUTTON_H
+    return pointInsideRect(
+      x,
+      y,
+      POWER_BUTTON_X,
+      POWER_BUTTON_Y,
+      POWER_BUTTON_W,
+      POWER_BUTTON_H
     );
   }
 
@@ -682,11 +1422,13 @@ private:
     int16_t y
   )
   {
-    return (
-      x >= BRI_LEFT_X &&
-      x <  BRI_LEFT_X + BRI_LEFT_W &&
-      y >= BRI_LEFT_Y &&
-      y <  BRI_LEFT_Y + BRI_LEFT_H
+    return pointInsideRect(
+      x,
+      y,
+      CONTROL_LEFT_X,
+      BRI_BUTTON_Y,
+      CONTROL_BUTTON_W,
+      CONTROL_BUTTON_H
     );
   }
 
@@ -695,21 +1437,84 @@ private:
     int16_t y
   )
   {
-    return (
-      x >= BRI_RIGHT_X &&
-      x <  BRI_RIGHT_X + BRI_RIGHT_W &&
-      y >= BRI_RIGHT_Y &&
-      y <  BRI_RIGHT_Y + BRI_RIGHT_H
+    return pointInsideRect(
+      x,
+      y,
+      CONTROL_RIGHT_X,
+      BRI_BUTTON_Y,
+      CONTROL_BUTTON_W,
+      CONTROL_BUTTON_H
+    );
+  }
+
+  bool isEffectPrevTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      CONTROL_LEFT_X,
+      FX_BUTTON_Y,
+      CONTROL_BUTTON_W,
+      CONTROL_BUTTON_H
+    );
+  }
+
+  bool isEffectNextTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      CONTROL_RIGHT_X,
+      FX_BUTTON_Y,
+      CONTROL_BUTTON_W,
+      CONTROL_BUTTON_H
+    );
+  }
+
+  bool isColorButtonTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      COLOR_BUTTON_X,
+      COLOR_BUTTON_Y,
+      COLOR_BUTTON_W,
+      COLOR_BUTTON_H
+    );
+  }
+
+  bool isBackButtonTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      BACK_BUTTON_X,
+      BACK_BUTTON_Y,
+      BACK_BUTTON_W,
+      BACK_BUTTON_H
     );
   }
 
   // =========================================================
-  // Reset gesture
+  // Reset touch state
   // =========================================================
 
   void resetTouchGesture()
   {
-    touchActive = false;
+    touchActive =
+      false;
 
     touchTarget =
       TOUCH_TARGET_NONE;
@@ -720,10 +1525,28 @@ private:
     lastTouchInsideBrightness =
       false;
 
+    lastTouchInsideEffect =
+      false;
+
+    lastTouchInsideColor =
+      false;
+
+    lastTouchInsideBack =
+      false;
+
     powerButtonVisualPressed =
       false;
 
     brightnessButtonVisualPressed =
+      false;
+
+    effectButtonVisualPressed =
+      false;
+
+    colorButtonVisualPressed =
+      false;
+
+    backButtonVisualPressed =
       false;
 
     brightnessLongPressActive =
@@ -746,7 +1569,7 @@ private:
   }
 
   // =========================================================
-  // WLED Power toggle
+  // Power
   // =========================================================
 
   void toggleLedPowerFromTouch()
@@ -773,20 +1596,15 @@ private:
     Serial.printf(
       "[CoreS3_Display] "
       "WLED Power -> %s, Brightness=%u\n",
-      bri > 0 ? "ON" : "OFF",
+      bri > 0
+        ? "ON"
+        : "OFF",
       bri
     );
   }
 
   // =========================================================
-  // Apply exact Brightness value
-  //
-  // WLED uses the same basic 0 / non-zero handling for its
-  // analog brightness input:
-  //
-  // - save previous brightness when moving to zero
-  // - restart effect runtime when moving from zero to non-zero
-  // - notify WLED interfaces through stateUpdated()
+  // Brightness exact value
   // =========================================================
 
   bool applyBrightnessValue(
@@ -800,31 +1618,37 @@ private:
         255
       );
 
-    if (newValue == bri)
+    if (
+      newValue ==
+      bri
+    )
     {
       return false;
     }
 
-    // -------------------------------------------------------
-    // Move to OFF
-    // -------------------------------------------------------
-
-    if (newValue == 0)
+    if (
+      newValue ==
+      0
+    )
     {
-      if (bri > 0)
+      if (
+        bri >
+        0
+      )
       {
-        briLast = bri;
-        bri = 0;
+        briLast =
+          bri;
+
+        bri =
+          0;
       }
     }
-
-    // -------------------------------------------------------
-    // Move to ON / change brightness
-    // -------------------------------------------------------
-
     else
     {
-      if (bri == 0)
+      if (
+        bri ==
+        0
+      )
       {
         strip.restartRuntime();
       }
@@ -837,7 +1661,6 @@ private:
       CALL_MODE_BUTTON
     );
 
-    // Power may have changed if we crossed zero.
     lastLedState =
       -1;
 
@@ -851,7 +1674,7 @@ private:
   }
 
   // =========================================================
-  // Apply Brightness step
+  // Brightness step
   // =========================================================
 
   void applyBrightnessStep(
@@ -859,7 +1682,8 @@ private:
   )
   {
     int newValue =
-      (int)bri + step;
+      (int)bri +
+      step;
 
     newValue =
       constrain(
@@ -874,11 +1698,16 @@ private:
       )
     )
     {
-      // Update LCD immediately.
-      drawBrightness(
-        bri,
-        touchTarget
-      );
+      if (
+        currentPage ==
+        SCREEN_MAIN
+      )
+      {
+        drawBrightness(
+          bri,
+          touchTarget
+        );
+      }
 
       lastBrightnessValue =
         bri;
@@ -914,7 +1743,7 @@ private:
   }
 
   // =========================================================
-  // Brightness long press step
+  // Brightness long press
   // =========================================================
 
   void brightnessLongPressStep(
@@ -942,7 +1771,100 @@ private:
   }
 
   // =========================================================
-  // Is finger still inside selected Brightness button?
+  // Effect step
+  // =========================================================
+
+  void applyEffectStep(
+    int step
+  )
+  {
+    uint8_t modeCount =
+      strip.getModeCount();
+
+    if (
+      modeCount ==
+      0
+    )
+    {
+      return;
+    }
+
+    Segment& mainSegment =
+      strip.getMainSegment();
+
+    int currentMode =
+      mainSegment.mode;
+
+    int newMode =
+      currentMode +
+      step;
+
+    if (
+      newMode <
+      0
+    )
+    {
+      newMode =
+        modeCount - 1;
+    }
+
+    if (
+      newMode >=
+      modeCount
+    )
+    {
+      newMode =
+        0;
+    }
+
+    if (
+      newMode ==
+      currentMode
+    )
+    {
+      return;
+    }
+
+    mainSegment.setMode(
+      (uint8_t)newMode
+    );
+
+    stateUpdated(
+      CALL_MODE_BUTTON
+    );
+
+    if (
+      currentPage ==
+      SCREEN_MAIN
+    )
+    {
+      drawEffect(
+        mainSegment.mode,
+        TOUCH_TARGET_NONE
+      );
+    }
+
+    lastEffectMode =
+      mainSegment.mode;
+
+    char effectName[64];
+
+    getEffectName(
+      mainSegment.mode,
+      effectName,
+      sizeof(effectName)
+    );
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Effect -> %u (%s)\n",
+      mainSegment.mode,
+      effectName
+    );
+  }
+
+  // =========================================================
+  // Selected Brightness button check
   // =========================================================
 
   bool isInsideSelectedBrightnessButton(
@@ -978,6 +1900,42 @@ private:
   }
 
   // =========================================================
+  // Selected Effect button check
+  // =========================================================
+
+  bool isInsideSelectedEffectButton(
+    int16_t x,
+    int16_t y
+  )
+  {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_EFFECT_PREV
+    )
+    {
+      return
+        isEffectPrevTouched(
+          x,
+          y
+        );
+    }
+
+    if (
+      touchTarget ==
+      TOUCH_TARGET_EFFECT_NEXT
+    )
+    {
+      return
+        isEffectNextTouched(
+          x,
+          y
+        );
+    }
+
+    return false;
+  }
+
+  // =========================================================
   // Touch processing
   // =========================================================
 
@@ -997,7 +1955,8 @@ private:
       millis();
 
     if (
-      now - lastTouchPoll <
+      now -
+      lastTouchPoll <
       TOUCH_POLL_MS
     )
     {
@@ -1025,7 +1984,6 @@ private:
 
     if (touching)
     {
-      // Cancel temporary release candidate.
       touchReleaseCandidate =
         0;
 
@@ -1035,26 +1993,92 @@ private:
       lastTouchY =
         touchY;
 
+      // -----------------------------------------------------
+      // Common control
+      // -----------------------------------------------------
+
       bool insidePower =
         isPowerButtonTouched(
           touchX,
           touchY
         );
 
+      // -----------------------------------------------------
+      // MAIN controls
+      // -----------------------------------------------------
+
       bool insideBrightnessDown =
-        isBrightnessDownTouched(
-          touchX,
-          touchY
-        );
+        false;
 
       bool insideBrightnessUp =
-        isBrightnessUpTouched(
-          touchX,
-          touchY
-        );
+        false;
+
+      bool insideEffectPrev =
+        false;
+
+      bool insideEffectNext =
+        false;
+
+      bool insideColor =
+        false;
+
+      if (
+        currentPage ==
+        SCREEN_MAIN
+      )
+      {
+        insideBrightnessDown =
+          isBrightnessDownTouched(
+            touchX,
+            touchY
+          );
+
+        insideBrightnessUp =
+          isBrightnessUpTouched(
+            touchX,
+            touchY
+          );
+
+        insideEffectPrev =
+          isEffectPrevTouched(
+            touchX,
+            touchY
+          );
+
+        insideEffectNext =
+          isEffectNextTouched(
+            touchX,
+            touchY
+          );
+
+        insideColor =
+          isColorButtonTouched(
+            touchX,
+            touchY
+          );
+      }
 
       // -----------------------------------------------------
-      // Start new gesture
+      // COLOR controls
+      // -----------------------------------------------------
+
+      bool insideBack =
+        false;
+
+      if (
+        currentPage ==
+        SCREEN_COLOR
+      )
+      {
+        insideBack =
+          isBackButtonTouched(
+            touchX,
+            touchY
+          );
+      }
+
+      // -----------------------------------------------------
+      // New gesture
       // -----------------------------------------------------
 
       if (!touchActive)
@@ -1070,18 +2094,15 @@ private:
 
         Serial.printf(
           "[CoreS3_Display] "
-          "Touch start X=%d Y=%d\n",
+          "Touch start X=%d Y=%d Page=%d\n",
           touchX,
-          touchY
+          touchY,
+          (int)currentPage
         );
       }
 
       // -----------------------------------------------------
-      // Select control
-      //
-      // If the first touch point is just outside a control,
-      // the user may still move into the visible control and
-      // select it.
+      // Select target
       // -----------------------------------------------------
 
       if (
@@ -1089,6 +2110,7 @@ private:
         TOUCH_TARGET_NONE
       )
       {
+        // Power is available on every page.
         if (insidePower)
         {
           touchTarget =
@@ -1097,43 +2119,97 @@ private:
           lastTouchInsidePower =
             true;
         }
+
+        // MAIN
         else if (
-          insideBrightnessDown
+          currentPage ==
+          SCREEN_MAIN
         )
         {
-          touchTarget =
-            TOUCH_TARGET_BRIGHTNESS_DOWN;
+          if (
+            insideBrightnessDown
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_BRIGHTNESS_DOWN;
 
-          lastTouchInsideBrightness =
-            true;
+            lastTouchInsideBrightness =
+              true;
 
-          controlPressStartTime =
-            now;
+            controlPressStartTime =
+              now;
 
-          lastBrightnessRepeat =
-            now;
+            lastBrightnessRepeat =
+              now;
+          }
 
-          brightnessLongPressActive =
-            false;
+          else if (
+            insideBrightnessUp
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_BRIGHTNESS_UP;
+
+            lastTouchInsideBrightness =
+              true;
+
+            controlPressStartTime =
+              now;
+
+            lastBrightnessRepeat =
+              now;
+          }
+
+          else if (
+            insideEffectPrev
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_EFFECT_PREV;
+
+            lastTouchInsideEffect =
+              true;
+          }
+
+          else if (
+            insideEffectNext
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_EFFECT_NEXT;
+
+            lastTouchInsideEffect =
+              true;
+          }
+
+          else if (
+            insideColor
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_COLOR_OPEN;
+
+            lastTouchInsideColor =
+              true;
+          }
         }
+
+        // COLOR
         else if (
-          insideBrightnessUp
+          currentPage ==
+          SCREEN_COLOR
         )
         {
-          touchTarget =
-            TOUCH_TARGET_BRIGHTNESS_UP;
+          if (
+            insideBack
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_BACK;
 
-          lastTouchInsideBrightness =
-            true;
-
-          controlPressStartTime =
-            now;
-
-          lastBrightnessRepeat =
-            now;
-
-          brightnessLongPressActive =
-            false;
+            lastTouchInsideBack =
+              true;
+          }
         }
       }
 
@@ -1164,7 +2240,7 @@ private:
       }
 
       // =====================================================
-      // Brightness LEFT / RIGHT
+      // Brightness
       // =====================================================
 
       if (
@@ -1183,10 +2259,6 @@ private:
         lastTouchInsideBrightness =
           insideSelectedButton;
 
-        // ---------------------------------------------------
-        // Pressed visual feedback
-        // ---------------------------------------------------
-
         if (
           insideSelectedButton !=
           brightnessButtonVisualPressed
@@ -1203,24 +2275,17 @@ private:
             insideSelectedButton;
         }
 
-        // ---------------------------------------------------
-        // Only repeat while the finger remains inside the
-        // selected button.
-        // ---------------------------------------------------
-
         if (!insideSelectedButton)
         {
           return;
         }
 
-        // ---------------------------------------------------
-        // Enter long-press mode
-        // ---------------------------------------------------
-
+        // Long press start
         if (
           !brightnessLongPressActive &&
-          now - controlPressStartTime >=
-            BRI_LONG_PRESS_MS
+          now -
+          controlPressStartTime >=
+          BRI_LONG_PRESS_MS
         )
         {
           brightnessLongPressActive =
@@ -1236,14 +2301,12 @@ private:
           return;
         }
 
-        // ---------------------------------------------------
-        // Repeated long-press action
-        // ---------------------------------------------------
-
+        // Repeat
         if (
           brightnessLongPressActive &&
-          now - lastBrightnessRepeat >=
-            BRI_REPEAT_MS
+          now -
+          lastBrightnessRepeat >=
+          BRI_REPEAT_MS
         )
         {
           lastBrightnessRepeat =
@@ -1251,6 +2314,96 @@ private:
 
           brightnessLongPressStep(
             touchTarget
+          );
+        }
+
+        return;
+      }
+
+      // =====================================================
+      // Effect
+      // =====================================================
+
+      if (
+        touchTarget ==
+          TOUCH_TARGET_EFFECT_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_EFFECT_NEXT
+      )
+      {
+        bool insideSelectedButton =
+          isInsideSelectedEffectButton(
+            touchX,
+            touchY
+          );
+
+        lastTouchInsideEffect =
+          insideSelectedButton;
+
+        if (
+          insideSelectedButton !=
+          effectButtonVisualPressed
+        )
+        {
+          drawEffect(
+            getCurrentEffectMode(),
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
+
+          effectButtonVisualPressed =
+            insideSelectedButton;
+        }
+
+        return;
+      }
+
+      // =====================================================
+      // Open COLOR screen
+      // =====================================================
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_COLOR_OPEN
+      )
+      {
+        lastTouchInsideColor =
+          insideColor;
+
+        if (
+          insideColor !=
+          colorButtonVisualPressed
+        )
+        {
+          drawColorButton(
+            getPrimaryColor(),
+            insideColor
+          );
+        }
+
+        return;
+      }
+
+      // =====================================================
+      // Back
+      // =====================================================
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_BACK
+      )
+      {
+        lastTouchInsideBack =
+          insideBack;
+
+        if (
+          insideBack !=
+          backButtonVisualPressed
+        )
+        {
+          drawBackButton(
+            insideBack
           );
         }
 
@@ -1285,11 +2438,12 @@ private:
     }
 
     // -------------------------------------------------------
-    // Ignore very short touch-loss samples
+    // Ignore temporary touch loss
     // -------------------------------------------------------
 
     if (
-      now - touchReleaseCandidate <
+      now -
+      touchReleaseCandidate <
       TOUCH_RELEASE_CONFIRM_MS
     )
     {
@@ -1313,7 +2467,8 @@ private:
       ) &&
       lastTouchInsidePower &&
       (
-        now - lastTouchAction >=
+        now -
+        lastTouchAction >=
         TOUCH_ACTION_COOLDOWN_MS
       );
 
@@ -1327,6 +2482,29 @@ private:
       lastTouchInsideBrightness &&
       !wasLongPress;
 
+    bool executeEffectAction =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_EFFECT_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_EFFECT_NEXT
+      ) &&
+      lastTouchInsideEffect;
+
+    bool executeColorOpen =
+      (
+        releasedTarget ==
+        TOUCH_TARGET_COLOR_OPEN
+      ) &&
+      lastTouchInsideColor;
+
+    bool executeBack =
+      (
+        releasedTarget ==
+        TOUCH_TARGET_BACK
+      ) &&
+      lastTouchInsideBack;
+
     Serial.printf(
       "[CoreS3_Display] "
       "Touch release X=%d Y=%d "
@@ -1334,11 +2512,13 @@ private:
       lastTouchX,
       lastTouchY,
       (int)releasedTarget,
-      wasLongPress ? "YES" : "NO"
+      wasLongPress
+        ? "YES"
+        : "NO"
     );
 
     // -------------------------------------------------------
-    // Restore visuals before applying release action
+    // Restore Power
     // -------------------------------------------------------
 
     if (
@@ -1352,6 +2532,10 @@ private:
         false
       );
     }
+
+    // -------------------------------------------------------
+    // Restore Brightness
+    // -------------------------------------------------------
 
     if (
       (
@@ -1370,7 +2554,58 @@ private:
     }
 
     // -------------------------------------------------------
-    // Reset touch state
+    // Restore Effect
+    // -------------------------------------------------------
+
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_EFFECT_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_EFFECT_NEXT
+      ) &&
+      effectButtonVisualPressed
+    )
+    {
+      drawEffect(
+        getCurrentEffectMode(),
+        TOUCH_TARGET_NONE
+      );
+    }
+
+    // -------------------------------------------------------
+    // Restore COLOR button
+    // -------------------------------------------------------
+
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_COLOR_OPEN &&
+      colorButtonVisualPressed
+    )
+    {
+      drawColorButton(
+        getPrimaryColor(),
+        false
+      );
+    }
+
+    // -------------------------------------------------------
+    // Restore Back
+    // -------------------------------------------------------
+
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_BACK &&
+      backButtonVisualPressed
+    )
+    {
+      drawBackButton(
+        false
+      );
+    }
+
+    // -------------------------------------------------------
+    // Reset gesture
     // -------------------------------------------------------
 
     touchActive =
@@ -1385,10 +2620,28 @@ private:
     lastTouchInsideBrightness =
       false;
 
+    lastTouchInsideEffect =
+      false;
+
+    lastTouchInsideColor =
+      false;
+
+    lastTouchInsideBack =
+      false;
+
     powerButtonVisualPressed =
       false;
 
     brightnessButtonVisualPressed =
+      false;
+
+    effectButtonVisualPressed =
+      false;
+
+    colorButtonVisualPressed =
+      false;
+
+    backButtonVisualPressed =
       false;
 
     brightnessLongPressActive =
@@ -1409,9 +2662,9 @@ private:
     lastTouchY =
       -1;
 
-    // -------------------------------------------------------
-    // Power action
-    // -------------------------------------------------------
+    // =======================================================
+    // Execute action
+    // =======================================================
 
     if (executePowerAction)
     {
@@ -1423,21 +2676,12 @@ private:
       return;
     }
 
-    // -------------------------------------------------------
-    // Brightness short press
-    //
-    // A long press has already changed the brightness while
-    // the finger was held, so no additional +/-1 is applied
-    // when a long press is released.
-    // -------------------------------------------------------
-
     if (executeBrightnessShortPress)
     {
       brightnessShortPress(
         releasedTarget
       );
 
-      // Return to normal button appearance.
       drawBrightness(
         bri,
         TOUCH_TARGET_NONE
@@ -1445,6 +2689,59 @@ private:
 
       lastBrightnessValue =
         bri;
+
+      return;
+    }
+
+    if (executeEffectAction)
+    {
+      if (
+        releasedTarget ==
+        TOUCH_TARGET_EFFECT_PREV
+      )
+      {
+        applyEffectStep(
+          -1
+        );
+      }
+      else
+      {
+        applyEffectStep(
+          1
+        );
+      }
+
+      return;
+    }
+
+    if (executeColorOpen)
+    {
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "Open COLOR screen"
+        )
+      );
+
+      drawColorScreen();
+
+      return;
+    }
+
+    if (executeBack)
+    {
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "Return MAIN screen"
+        )
+      );
+
+      drawMainScreen(
+        WiFi.localIP().toString()
+      );
+
+      return;
     }
   }
 
@@ -1461,13 +2758,9 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 5.1 start"
+        "Phase 7.1 + 7.2 start"
       )
     );
-
-    // -------------------------------------------------------
-    // Display
-    // -------------------------------------------------------
 
     display.begin();
 
@@ -1503,10 +2796,6 @@ public:
       return;
     }
 
-    // -------------------------------------------------------
-    // Touch
-    // -------------------------------------------------------
-
     touchReady =
       (
         display.touch() !=
@@ -1521,17 +2810,9 @@ public:
         : "NOT FOUND"
     );
 
-    // -------------------------------------------------------
-    // Backlight
-    // -------------------------------------------------------
-
     display.setBrightness(
       128
     );
-
-    // -------------------------------------------------------
-    // Boot screen
-    // -------------------------------------------------------
 
     drawBootScreen();
 
@@ -1548,7 +2829,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 5.1 setup complete"
+        "Phase 7.1 + 7.2 setup complete"
       )
     );
 
@@ -1566,18 +2847,22 @@ public:
       return;
     }
 
-    // Fast touch handling
+    // -------------------------------------------------------
+    // Fast touch processing
+    // -------------------------------------------------------
+
     handleTouch();
 
     unsigned long now =
       millis();
 
     // -------------------------------------------------------
-    // Normal LCD status refresh
+    // Normal LCD state update
     // -------------------------------------------------------
 
     if (
-      now - lastUpdate <
+      now -
+      lastUpdate <
       250
     )
     {
@@ -1599,7 +2884,9 @@ public:
 
     if (!wifiConnected)
     {
-      if (!connectingScreenShown)
+      if (
+        !connectingScreenShown
+      )
       {
         drawConnectingScreen();
       }
@@ -1614,7 +2901,7 @@ public:
     }
 
     // =======================================================
-    // Wi-Fi connected
+    // First connection / reconnection
     // =======================================================
 
     String currentIPAddress =
@@ -1622,12 +2909,10 @@ public:
 
     if (
       !lastWiFiConnected ||
-      !readyScreenShown ||
-      currentIPAddress !=
-        lastIPAddress
+      !readyScreenShown
     )
     {
-      drawReadyScreen(
+      drawMainScreen(
         currentIPAddress
       );
 
@@ -1639,13 +2924,46 @@ public:
 
       lastIPAddress =
         currentIPAddress;
+
+      lastWiFiConnected =
+        true;
+
+      return;
+    }
+
+    // =======================================================
+    // IP address changed
+    // =======================================================
+
+    if (
+      currentIPAddress !=
+      lastIPAddress
+    )
+    {
+      lastIPAddress =
+        currentIPAddress;
+
+      // IP is only shown on MAIN screen.
+      if (
+        currentPage ==
+        SCREEN_MAIN
+      )
+      {
+        drawMainScreen(
+          currentIPAddress
+        );
+
+        return;
+      }
     }
 
     lastWiFiConnected =
       true;
 
     // =======================================================
-    // LED Power
+    // Power
+    //
+    // Available on both MAIN and COLOR screens.
     // =======================================================
 
     bool ledOn =
@@ -1656,11 +2974,6 @@ public:
       lastLedState
     )
     {
-      drawLedPower(
-        ledOn
-      );
-
-      // Do not erase Power button pressed feedback.
       if (
         touchTarget !=
         TOUCH_TARGET_POWER
@@ -1673,71 +2986,136 @@ public:
       }
 
       lastLedState =
-        ledOn ? 1 : 0;
+        ledOn
+          ? 1
+          : 0;
     }
 
     // =======================================================
-    // Brightness
-    //
-    // Web UI changes are reflected here too.
-    //
-    // While one of the local Brightness buttons is being
-    // pressed, the touch handler owns this display area.
+    // Current Primary Color
     // =======================================================
 
-    int brightnessValue =
-      bri;
+    uint32_t primaryColor =
+      getPrimaryColor();
 
-    bool brightnessTouchActive =
+    bool primaryColorChanged =
       (
-        touchTarget ==
-          TOUCH_TARGET_BRIGHTNESS_DOWN ||
-        touchTarget ==
-          TOUCH_TARGET_BRIGHTNESS_UP
+        !lastPrimaryColorValid ||
+        primaryColor !=
+          lastPrimaryColor
       );
+
+    // =======================================================
+    // MAIN page updates
+    // =======================================================
 
     if (
-      !brightnessTouchActive &&
-      brightnessValue !=
-        lastBrightnessValue
+      currentPage ==
+      SCREEN_MAIN
     )
     {
-      drawBrightness(
-        brightnessValue,
-        TOUCH_TARGET_NONE
-      );
+      // -----------------------------------------------------
+      // Brightness
+      // -----------------------------------------------------
 
-      lastBrightnessValue =
-        brightnessValue;
+      bool brightnessTouchActive =
+        (
+          touchTarget ==
+            TOUCH_TARGET_BRIGHTNESS_DOWN ||
+          touchTarget ==
+            TOUCH_TARGET_BRIGHTNESS_UP
+        );
+
+      if (
+        !brightnessTouchActive &&
+        (int)bri !=
+          lastBrightnessValue
+      )
+      {
+        drawBrightness(
+          bri,
+          TOUCH_TARGET_NONE
+        );
+
+        lastBrightnessValue =
+          bri;
+      }
+
+      // -----------------------------------------------------
+      // Effect
+      // -----------------------------------------------------
+
+      uint8_t effectMode =
+        getCurrentEffectMode();
+
+      bool effectTouchActive =
+        (
+          touchTarget ==
+            TOUCH_TARGET_EFFECT_PREV ||
+          touchTarget ==
+            TOUCH_TARGET_EFFECT_NEXT
+        );
+
+      if (
+        !effectTouchActive &&
+        (int)effectMode !=
+          lastEffectMode
+      )
+      {
+        drawEffect(
+          effectMode,
+          TOUCH_TARGET_NONE
+        );
+
+        lastEffectMode =
+          effectMode;
+      }
+
+      // -----------------------------------------------------
+      // Primary Color preview button
+      // -----------------------------------------------------
+
+      if (
+        primaryColorChanged &&
+        touchTarget !=
+          TOUCH_TARGET_COLOR_OPEN
+      )
+      {
+        drawColorButton(
+          primaryColor,
+          false
+        );
+      }
     }
 
     // =======================================================
-    // Effect
+    // COLOR page updates
     // =======================================================
 
-    uint8_t effectMode =
-      0;
-
-    if (
-      strip.getSegmentsNum() >
-      0
+    else if (
+      currentPage ==
+      SCREEN_COLOR
     )
     {
-      effectMode =
-        strip.getMainSegment().mode;
+      if (primaryColorChanged)
+      {
+        drawColorDetails(
+          primaryColor
+        );
+      }
     }
 
-    if (
-      (int)effectMode !=
-      lastEffectMode
-    )
-    {
-      drawEffect(
-        effectMode
-      );
+    // -------------------------------------------------------
+    // Save Primary Color cache
+    // -------------------------------------------------------
 
-      lastEffectMode =
-        effectMode;
+    if (primaryColorChanged)
+    {
+      lastPrimaryColor =
+        primaryColor;
+
+      lastPrimaryColorValid =
+        true;
     }
   }
 
@@ -1752,7 +3130,9 @@ public:
     JsonObject user =
       root["u"];
 
-    if (user.isNull())
+    if (
+      user.isNull()
+    )
     {
       user =
         root.createNestedObject(
@@ -1858,6 +3238,106 @@ public:
 
     brightnessInfo.add(
       bri
+    );
+
+    // -------------------------------------------------------
+    // Effect
+    // -------------------------------------------------------
+
+    JsonArray effectInfo =
+      user.createNestedArray(
+        "CoreS3 Display Effect"
+      );
+
+    if (
+      strip.getSegmentsNum() >
+      0
+    )
+    {
+      uint8_t effectMode =
+        strip.getMainSegment().mode;
+
+      char effectName[64];
+
+      getEffectName(
+        effectMode,
+        effectName,
+        sizeof(effectName)
+      );
+
+      effectInfo.add(
+        effectName
+      );
+    }
+    else
+    {
+      effectInfo.add(
+        "No segment"
+      );
+    }
+
+    // -------------------------------------------------------
+    // Primary Color
+    // -------------------------------------------------------
+
+    JsonArray colorInfo =
+      user.createNestedArray(
+        "CoreS3 Display Color"
+      );
+
+    if (
+      strip.getSegmentsNum() >
+      0
+    )
+    {
+      uint32_t color =
+        getPrimaryColor();
+
+      uint8_t r =
+        (uint8_t)((color >> 16) & 0xFF);
+
+      uint8_t g =
+        (uint8_t)((color >> 8) & 0xFF);
+
+      uint8_t b =
+        (uint8_t)(color & 0xFF);
+
+      char colorText[16];
+
+      snprintf(
+        colorText,
+        sizeof(colorText),
+        "#%02X%02X%02X",
+        r,
+        g,
+        b
+      );
+
+      colorInfo.add(
+        colorText
+      );
+    }
+    else
+    {
+      colorInfo.add(
+        "No segment"
+      );
+    }
+
+    // -------------------------------------------------------
+    // Current display page
+    // -------------------------------------------------------
+
+    JsonArray pageInfo =
+      user.createNestedArray(
+        "CoreS3 Display Page"
+      );
+
+    pageInfo.add(
+      currentPage ==
+        SCREEN_MAIN
+        ? "MAIN"
+        : "COLOR"
     );
   }
 };
