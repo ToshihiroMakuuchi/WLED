@@ -7737,7 +7737,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.12" );
+    phaseInfo.add( "10.3.13" );
   }
 };
 
