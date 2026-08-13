@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.2.3
+// Phase 10.2.4
 //
 // MAIN
 //   Power
@@ -76,6 +76,13 @@
 //   Deleting the active Preset keeps the current LED state
 //   and changes the active Preset indication to Custom State.
 //   Phase 10.2.1 / 10.2.2 behavior is preserved.
+//
+// Phase 10.2.4
+//   Preset cache verification messages are simplified.
+//   Internal ID scan progress is no longer shown on the LCD.
+//   SAVE NEW / OVERWRITE / DELETE show meaningful
+//   verification messages instead of "x / 250" scan values.
+//   Preset management logic is unchanged.
 //
 // Common
 //   Startup animation
@@ -1131,11 +1138,6 @@ private:
   // =========================================================
   // Phase 10.1.1
   // Preset cache rebuild start
-  //
-  // IMPORTANT:
-  // No filesystem scan is performed here.
-  //
-  // servicePresetCache() processes only one ID at a time.
   // =========================================================
 
   void startPresetCacheRebuild()
@@ -1197,12 +1199,6 @@ private:
       (unsigned)presetCacheCount
     );
 
-    // -------------------------------------------------------
-    // Presets changed again while the cache was being built.
-    //
-    // Start again rather than publishing stale data.
-    // -------------------------------------------------------
-
     if (
       presetsModifiedTime !=
       presetCacheSourceModifiedTime
@@ -1219,10 +1215,6 @@ private:
 
       return;
     }
-
-    // -------------------------------------------------------
-    // If PRESET screen is currently visible, refresh it.
-    // -------------------------------------------------------
 
     if (
       currentPage ==
@@ -1349,30 +1341,10 @@ private:
   // =========================================================
   // Phase 10.1.1
   // Background Preset cache service
-  //
-  // One Preset ID is checked per service interval.
-  //
-  // This means:
-  //
-  // Phase 10.1
-  //   Arrow:
-  //     ID 3 -> scan 4..250 -> 1
-  //
-  // Phase 10.1.1
-  //   Background:
-  //     scan once
-  //
-  //   Arrow:
-  //     RAM cache index only
   // =========================================================
 
   void servicePresetCache()
   {
-    // -------------------------------------------------------
-    // If WLED Presets changed after a completed build,
-    // start a new background rebuild.
-    // -------------------------------------------------------
-
     if (
       presetCacheReady &&
       !presetCacheBuilding &&
@@ -1388,13 +1360,6 @@ private:
       return;
     }
 
-    // -------------------------------------------------------
-    // Do not query presets.json while a Preset is currently
-    // waiting for WLED's asynchronous Preset load.
-    //
-    // This reduces contention for WLED's shared JSON buffer.
-    // -------------------------------------------------------
-
     if (
       pendingPresetId >
       0
@@ -1402,13 +1367,6 @@ private:
     {
       return;
     }
-
-    // -------------------------------------------------------
-    // Phase 10.2.1
-    // Do not read presets.json while WLED is writing a
-    // Preset. savePreset() is asynchronous and uses the same
-    // shared JSON / filesystem path.
-    // -------------------------------------------------------
 
     if (
       presetNeedsSaving()
@@ -1492,7 +1450,6 @@ private:
   }
 
   // =========================================================
-  // Phase 10.1.1
   // Find Preset in RAM cache
   // =========================================================
 
@@ -1519,11 +1476,6 @@ private:
     return -1;
   }
 
-  // =========================================================
-  // Phase 10.1.1
-  // Get name from RAM cache
-  // =========================================================
-
   bool getCachedPresetName(
     uint8_t presetId,
     String& name
@@ -1549,11 +1501,6 @@ private:
 
     return true;
   }
-
-  // =========================================================
-  // Phase 10.2.1
-  // Find lowest unused Preset ID using RAM cache only
-  // =========================================================
 
   uint8_t findFirstFreePresetId()
   {
@@ -1620,11 +1567,6 @@ private:
     return 0;
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // Prepare new Preset candidate
-  // =========================================================
-
   bool preparePresetSaveCandidate()
   {
     presetSaveCandidateId =
@@ -1655,17 +1597,6 @@ private:
 
     return true;
   }
-
-  // =========================================================
-  // Phase 10.2.2
-  // Prepare overwrite target from RAM cache only
-  //
-  // Priority:
-  //   1. Current active Preset if it exists in cache
-  //   2. First saved Preset in cache
-  //
-  // No Preset is applied by this function.
-  // =========================================================
 
   bool preparePresetOverwriteTarget()
   {
@@ -1711,15 +1642,6 @@ private:
     return true;
   }
 
-  // =========================================================
-  // Phase 10.2.2
-  // Move overwrite target using RAM cache only
-  //
-  // IMPORTANT:
-  // This changes only the destination Preset selection.
-  // applyPreset() is intentionally NOT called.
-  // =========================================================
-
   bool stepPresetOverwriteTarget(
     int direction
   )
@@ -1761,17 +1683,6 @@ private:
 
     return true;
   }
-
-  // =========================================================
-  // Phase 10.2.3
-  // Prepare delete target from RAM cache only
-  //
-  // Priority:
-  //   1. Current active Preset if it exists in cache
-  //   2. First saved Preset in cache
-  //
-  // No Preset is applied by this function.
-  // =========================================================
 
   bool preparePresetDeleteTarget()
   {
@@ -1817,15 +1728,6 @@ private:
     return true;
   }
 
-  // =========================================================
-  // Phase 10.2.3
-  // Move delete target using RAM cache only
-  //
-  // IMPORTANT:
-  // This changes only the deletion target selection.
-  // applyPreset() is intentionally NOT called.
-  // =========================================================
-
   bool stepPresetDeleteTarget(
     int direction
   )
@@ -1868,11 +1770,6 @@ private:
     return true;
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // Save operation busy state
-  // =========================================================
-
   bool isPresetSaveBusy()
   {
     return
@@ -1882,11 +1779,6 @@ private:
       );
   }
 
-  // =========================================================
-  // Phase 10.2.3
-  // Delete operation busy state
-  // =========================================================
-
   bool isPresetDeleteBusy()
   {
     return
@@ -1895,11 +1787,6 @@ private:
         PRESET_DELETE_OP_IDLE
       );
   }
-
-  // =========================================================
-  // Phase 10.2.1
-  // Request WLED asynchronous Preset save
-  // =========================================================
 
   bool requestNewPresetSave()
   {
@@ -1987,15 +1874,6 @@ private:
 
     return true;
   }
-
-  // =========================================================
-  // Phase 10.2.2
-  // Request WLED asynchronous Preset overwrite
-  //
-  // The target ID and existing name come only from the
-  // Phase 10.1.1 RAM cache. savePreset() writes the current
-  // WLED state into that same existing Preset ID.
-  // =========================================================
 
   bool requestPresetOverwrite()
   {
@@ -2094,14 +1972,6 @@ private:
     return true;
   }
 
-  // =========================================================
-  // Phase 10.2.3
-  // Request WLED Preset deletion
-  //
-  // deletePreset() is synchronous. The deleted ID is verified
-  // after forcing one Phase 10.1.1 RAM cache rebuild.
-  // =========================================================
-
   bool requestPresetDelete()
   {
     if (
@@ -2152,11 +2022,6 @@ private:
       presetDeleteTargetId
     );
 
-    // -------------------------------------------------------
-    // Force one cache rebuild even if presetsModifiedTime
-    // happens to retain the same second value.
-    // -------------------------------------------------------
-
     if (
       !presetCacheBuilding
     )
@@ -2185,11 +2050,6 @@ private:
     return true;
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // Service asynchronous Preset save / cache verification
-  // =========================================================
-
   void servicePresetSaveOperation()
   {
     if (
@@ -2214,11 +2074,6 @@ private:
       {
         return;
       }
-
-      // -----------------------------------------------------
-      // Force one cache rebuild even if presetsModifiedTime
-      // happens to retain the same second value.
-      // -----------------------------------------------------
 
       if (
         !presetCacheBuilding
@@ -2354,12 +2209,6 @@ private:
         return;
       }
 
-      // -----------------------------------------------------
-      // Wait until the confirming finger has been released.
-      // This prevents the same physical hold from being seen
-      // as a new tap on the next screen.
-      // -----------------------------------------------------
-
       int16_t touchX = -1;
       int16_t touchY = -1;
 
@@ -2432,11 +2281,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Phase 10.2.3
-  // Service Preset delete cache verification
-  // =========================================================
-
   void servicePresetDeleteOperation()
   {
     if (
@@ -2479,12 +2323,6 @@ private:
             presetDeleteTargetId
         )
         {
-          // -------------------------------------------------
-          // The Preset data is gone, but the current LED state
-          // remains untouched. Only the active Preset marker is
-          // changed to Custom State.
-          // -------------------------------------------------
-
           currentPreset =
             0;
 
@@ -2650,10 +2488,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Startup connecting
-  // =========================================================
-
   void drawStartupConnectingStatus()
   {
     display.fillRect(
@@ -2724,10 +2558,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Startup connected
-  // =========================================================
-
   void drawStartupConnectedStatus(
     const String& ipAddress
   )
@@ -2774,10 +2604,6 @@ private:
       181
     );
   }
-
-  // =========================================================
-  // Startup sequence
-  // =========================================================
 
   void handleStartupSequence()
   {
@@ -2966,10 +2792,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Wake touch polling
-  // =========================================================
-
   bool pollWakeTouch(
     unsigned long now
   )
@@ -3001,10 +2823,6 @@ private:
     return
       wakeTouchState;
   }
-
-  // =========================================================
-  // Pending Preset helper
-  // =========================================================
 
   bool settlePendingPreset()
   {
@@ -3049,10 +2867,6 @@ private:
     return true;
   }
 
-  // =========================================================
-  // Preset ID displayed by CoreS3
-  // =========================================================
-
   uint8_t getDisplayedPresetId()
   {
     if (
@@ -3074,10 +2888,6 @@ private:
     return
       currentPreset;
   }
-
-  // =========================================================
-  // Redraw current page before Wake
-  // =========================================================
 
   void redrawCurrentPageForWake()
   {
@@ -3159,10 +2969,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Begin display sleep
-  // =========================================================
-
   void beginDisplaySleep(
     unsigned long now
   )
@@ -3191,10 +2997,6 @@ private:
     wakeReleaseCandidate =
       0;
   }
-
-  // =========================================================
-  // Begin display wake
-  // =========================================================
 
   void beginDisplayWake(
     unsigned long now
@@ -3231,10 +3033,6 @@ private:
     lastUserActivityMs =
       now;
   }
-
-  // =========================================================
-  // Display power management
-  // =========================================================
 
   bool handleDisplayPowerManagement()
   {
@@ -3425,10 +3223,6 @@ private:
     return false;
   }
 
-  // =========================================================
-  // RGB888 -> RGB565
-  // =========================================================
-
   uint16_t rgbTo565(
     uint8_t r,
     uint8_t g,
@@ -3442,10 +3236,6 @@ private:
         ((uint16_t)b >> 3)
       );
   }
-
-  // =========================================================
-  // Primary Color
-  // =========================================================
 
   uint32_t getPrimaryColor()
   {
@@ -3461,10 +3251,6 @@ private:
     return 0;
   }
 
-  // =========================================================
-  // Effect mode
-  // =========================================================
-
   uint8_t getCurrentEffectMode()
   {
     if (
@@ -3478,10 +3264,6 @@ private:
 
     return 0;
   }
-
-  // =========================================================
-  // Effect Speed
-  // =========================================================
 
   uint8_t getCurrentSpeed()
   {
@@ -3497,10 +3279,6 @@ private:
     return 0;
   }
 
-  // =========================================================
-  // Effect Intensity
-  // =========================================================
-
   uint8_t getCurrentIntensity()
   {
     if (
@@ -3514,10 +3292,6 @@ private:
 
     return 0;
   }
-
-  // =========================================================
-  // Current Palette
-  // =========================================================
 
   uint8_t getCurrentPalette()
   {
@@ -3533,10 +3307,6 @@ private:
     return 0;
   }
 
-  // =========================================================
-  // Palette count
-  // =========================================================
-
   size_t getSelectablePaletteCount()
   {
     return
@@ -3544,10 +3314,6 @@ private:
       customPalettes.size() +
       usermodPalettes.size();
   }
-
-  // =========================================================
-  // Logical Palette index -> WLED Palette ID
-  // =========================================================
 
   uint8_t paletteIdFromSequenceIndex(
     size_t sequenceIndex
@@ -3594,10 +3360,6 @@ private:
 
     return 0;
   }
-
-  // =========================================================
-  // WLED Palette ID -> Logical Palette index
-  // =========================================================
 
   int findPaletteSequenceIndex(
     uint8_t paletteId
@@ -3666,10 +3428,6 @@ private:
     return -1;
   }
 
-  // =========================================================
-  // Palette name
-  // =========================================================
-
   void getPaletteName(
     uint8_t paletteId,
     char* paletteName,
@@ -3707,21 +3465,6 @@ private:
       );
     }
   }
-
-  // =========================================================
-  // Phase 10.1.1
-  // Find next / previous existing Preset
-  //
-  // IMPORTANT:
-  //
-  // Phase 10.1:
-  //   getPresetName() was repeatedly called while navigating.
-  //
-  // Phase 10.1.1:
-  //   ONLY presetCache[] is searched here.
-  //
-  // No filesystem access occurs during arrow operation.
-  // =========================================================
 
   uint8_t findAdjacentPreset(
     uint8_t startPreset,
@@ -5334,6 +5077,11 @@ private:
       textdatum_t::middle_center
     );
 
+    // -------------------------------------------------------
+    // Phase 10.2.4
+    // Internal Preset ID scan number is intentionally hidden.
+    // -------------------------------------------------------
+
     if (
       !presetCacheReady
     )
@@ -5354,7 +5102,7 @@ private:
       );
 
       display.setTextColor(
-        TFT_DARKGREY,
+        TFT_WHITE,
         TFT_BLACK
       );
 
@@ -5362,31 +5110,15 @@ private:
         1
       );
 
-      char progressText[32];
-
-      uint16_t displayScanId =
-        presetCacheScanId;
-
-      if (
-        displayScanId >
-        250
-      )
-      {
-        displayScanId =
-          250;
-      }
-
-      snprintf(
-        progressText,
-        sizeof(progressText),
-        "Scanning ID: %u / 250",
-        (unsigned)displayScanId
-      );
-
       display.drawString(
-        progressText,
+        "Updating Preset List",
         screenWidth / 2,
         PRESET_ID_Y
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
       );
 
       display.drawString(
@@ -6653,6 +6385,14 @@ private:
         : 0;
   }
 
+  // =========================================================
+  // Phase 10.2.4
+  // SAVE NEW / OVERWRITE operation status
+  //
+  // Internal 1..250 cache scan position is intentionally
+  // hidden from the user.
+  // =========================================================
+
   void drawPresetSaveOperationStatus()
   {
     if (
@@ -6762,7 +6502,7 @@ private:
       );
 
       display.drawString(
-        "Updating Cache",
+        "Updating Preset List",
         screenWidth / 2,
         110
       );
@@ -6776,44 +6516,12 @@ private:
         1
       );
 
-      char progressText[32];
-
-      uint16_t displayScanId =
-        presetCacheScanId;
-
-      if (
-        displayScanId >
-        250
-      )
-      {
-        displayScanId =
-          250;
-      }
-
-      snprintf(
-        progressText,
-        sizeof(progressText),
-        "Scanning ID: %u / 250",
-        (unsigned)displayScanId
-      );
-
-      display.drawString(
-        progressText,
-        screenWidth / 2,
-        145
-      );
-
-      display.setTextColor(
-        TFT_DARKGREY,
-        TFT_BLACK
-      );
-
       display.drawString(
         presetSaveOperationIsOverwrite
-          ? "Verifying overwritten Preset"
-          : "Verifying saved Preset",
+          ? "Verifying Overwrite..."
+          : "Verifying New Preset...",
         screenWidth / 2,
-        172
+        158
       );
 
       return;
@@ -7519,6 +7227,13 @@ private:
       );
   }
 
+  // =========================================================
+  // Phase 10.2.4
+  // DELETE operation status
+  //
+  // Internal cache scan position is not displayed.
+  // =========================================================
+
   void drawPresetDeleteOperationStatus()
   {
     if (
@@ -7558,7 +7273,7 @@ private:
       );
 
       display.drawString(
-        "Deleting...",
+        "Updating Preset List",
         screenWidth / 2,
         105
       );
@@ -7575,22 +7290,7 @@ private:
       display.drawString(
         presetDeleteTargetName,
         screenWidth / 2,
-        138
-      );
-
-      char idText[24];
-
-      snprintf(
-        idText,
-        sizeof(idText),
-        "Preset ID: %u",
-        presetDeleteTargetId
-      );
-
-      display.drawString(
-        idText,
-        screenWidth / 2,
-        160
+        145
       );
 
       display.setTextColor(
@@ -7598,31 +7298,10 @@ private:
         TFT_BLACK
       );
 
-      char progressText[32];
-
-      uint16_t displayScanId =
-        presetCacheScanId;
-
-      if (
-        displayScanId >
-        250
-      )
-      {
-        displayScanId =
-          250;
-      }
-
-      snprintf(
-        progressText,
-        sizeof(progressText),
-        "Checking cache: %u / 250",
-        (unsigned)displayScanId
-      );
-
       display.drawString(
-        progressText,
+        "Verifying Deletion...",
         screenWidth / 2,
-        188
+        175
       );
 
       return;
@@ -10258,6 +9937,10 @@ private:
 
     return false;
   }
+
+  // =========================================================
+  // Touch processing
+  // =========================================================
 
   void handleTouch()
   {
@@ -13648,7 +13331,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 10.2.3 start"
+        "Phase 10.2.4 start"
       )
     );
 
@@ -13771,7 +13454,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 10.2.3 setup complete"
+        "Phase 10.2.4 setup complete"
       )
     );
 
@@ -14561,29 +14244,13 @@ public:
       presetCacheBuilding
     )
     {
-      char cacheText[32];
-
-      uint16_t displayScanId =
-        presetCacheScanId;
-
-      if (
-        displayScanId >
-        250
-      )
-      {
-        displayScanId =
-          250;
-      }
-
-      snprintf(
-        cacheText,
-        sizeof(cacheText),
-        "LOADING (%u/250)",
-        (unsigned)displayScanId
-      );
+      // -----------------------------------------------------
+      // Phase 10.2.4
+      // Do not expose the internal 1..250 scan position.
+      // -----------------------------------------------------
 
       presetCacheInfo.add(
-        cacheText
+        "LOADING"
       );
     }
     else
@@ -14821,7 +14488,7 @@ public:
       );
 
     phaseInfo.add(
-      "10.2.3"
+      "10.2.4"
     );
   }
 };
