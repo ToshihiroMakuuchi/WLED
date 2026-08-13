@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.2.2
+// Phase 10.2.3
 //
 // MAIN
 //   Power
@@ -65,6 +65,17 @@
 //   Existing Preset names are preserved.
 //   Overwrite requires a 1 second hold confirmation.
 //   Phase 10.2.1 SAVE NEW behavior is preserved.
+//
+// Phase 10.2.3
+//   Existing Presets can be deleted from CoreS3.
+//   DELETE target is selected from the RAM Preset cache.
+//   Target selection never applies the Preset.
+//   Delete requires a 1 second hold confirmation.
+//   WLED standard deletePreset() is used.
+//   Deletion is verified after the Preset cache rebuild.
+//   Deleting the active Preset keeps the current LED state
+//   and changes the active Preset indication to Custom State.
+//   Phase 10.2.1 / 10.2.2 behavior is preserved.
 //
 // Common
 //   Startup animation
@@ -285,7 +296,7 @@ private:
     SCREEN_MAIN;
 
   // =========================================================
-  // Phase 10.2.2
+  // Phase 10.2.3
   // Preset sub pages
   // =========================================================
 
@@ -294,7 +305,8 @@ private:
     PRESET_SUBPAGE_NAV = 0,
     PRESET_SUBPAGE_MANAGE,
     PRESET_SUBPAGE_SAVE,
-    PRESET_SUBPAGE_OVERWRITE
+    PRESET_SUBPAGE_OVERWRITE,
+    PRESET_SUBPAGE_DELETE
   };
 
   PresetSubPage presetSubPage =
@@ -337,6 +349,29 @@ private:
   String presetOverwriteTargetName = "";
 
   bool presetSaveOperationIsOverwrite = false;
+
+  // =========================================================
+  // Phase 10.2.3
+  // Existing Preset delete selection / operation
+  // =========================================================
+
+  enum PresetDeleteOperationState : uint8_t
+  {
+    PRESET_DELETE_OP_IDLE = 0,
+    PRESET_DELETE_OP_WAIT_CACHE,
+    PRESET_DELETE_OP_SUCCESS,
+    PRESET_DELETE_OP_FAILED
+  };
+
+  PresetDeleteOperationState presetDeleteOperationState =
+    PRESET_DELETE_OP_IDLE;
+
+  uint8_t presetDeleteTargetId = 0;
+  String presetDeleteTargetName = "";
+
+  bool presetDeleteWasCurrentPreset = false;
+
+  unsigned long presetDeleteResultStartMs = 0;
 
   // =========================================================
   // Touch targets
@@ -385,7 +420,12 @@ private:
     TOUCH_TARGET_PRESET_OVERWRITE_OPEN,
     TOUCH_TARGET_PRESET_OVERWRITE_PREV,
     TOUCH_TARGET_PRESET_OVERWRITE_NEXT,
-    TOUCH_TARGET_PRESET_OVERWRITE_HOLD
+    TOUCH_TARGET_PRESET_OVERWRITE_HOLD,
+
+    TOUCH_TARGET_PRESET_DELETE_OPEN,
+    TOUCH_TARGET_PRESET_DELETE_PREV,
+    TOUCH_TARGET_PRESET_DELETE_NEXT,
+    TOUCH_TARGET_PRESET_DELETE_HOLD
   };
 
   TouchTarget touchTarget =
@@ -427,6 +467,10 @@ private:
   bool lastTouchInsidePresetOverwriteNav = false;
   bool lastTouchInsidePresetOverwriteHold = false;
 
+  bool lastTouchInsidePresetDeleteOpen = false;
+  bool lastTouchInsidePresetDeleteNav = false;
+  bool lastTouchInsidePresetDeleteHold = false;
+
   // =========================================================
   // Visual pressed state
   // =========================================================
@@ -460,6 +504,10 @@ private:
   bool presetOverwriteOpenButtonVisualPressed = false;
   bool presetOverwriteNavButtonVisualPressed = false;
   bool presetOverwriteHoldButtonVisualPressed = false;
+
+  bool presetDeleteOpenButtonVisualPressed = false;
+  bool presetDeleteNavButtonVisualPressed = false;
+  bool presetDeleteHoldButtonVisualPressed = false;
 
   // =========================================================
   // Long press state
@@ -724,14 +772,14 @@ private:
   // =========================================================
 
   static constexpr int16_t PRESET_SAVE_NEW_BUTTON_X = 60;
-  static constexpr int16_t PRESET_SAVE_NEW_BUTTON_Y = 104;
+  static constexpr int16_t PRESET_SAVE_NEW_BUTTON_Y = 68;
   static constexpr int16_t PRESET_SAVE_NEW_BUTTON_W = 200;
-  static constexpr int16_t PRESET_SAVE_NEW_BUTTON_H = 48;
+  static constexpr int16_t PRESET_SAVE_NEW_BUTTON_H = 40;
 
   static constexpr int16_t PRESET_SAVE_NEW_TOUCH_X = 48;
-  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_Y = 92;
+  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_Y = 62;
   static constexpr int16_t PRESET_SAVE_NEW_TOUCH_W = 224;
-  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_H = 72;
+  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_H = 48;
 
   // =========================================================
   // Phase 10.2.2
@@ -739,14 +787,29 @@ private:
   // =========================================================
 
   static constexpr int16_t PRESET_OVERWRITE_BUTTON_X = 60;
-  static constexpr int16_t PRESET_OVERWRITE_BUTTON_Y = 176;
+  static constexpr int16_t PRESET_OVERWRITE_BUTTON_Y = 124;
   static constexpr int16_t PRESET_OVERWRITE_BUTTON_W = 200;
-  static constexpr int16_t PRESET_OVERWRITE_BUTTON_H = 48;
+  static constexpr int16_t PRESET_OVERWRITE_BUTTON_H = 40;
 
   static constexpr int16_t PRESET_OVERWRITE_TOUCH_X = 48;
-  static constexpr int16_t PRESET_OVERWRITE_TOUCH_Y = 166;
+  static constexpr int16_t PRESET_OVERWRITE_TOUCH_Y = 118;
   static constexpr int16_t PRESET_OVERWRITE_TOUCH_W = 224;
-  static constexpr int16_t PRESET_OVERWRITE_TOUCH_H = 70;
+  static constexpr int16_t PRESET_OVERWRITE_TOUCH_H = 50;
+
+  // =========================================================
+  // Phase 10.2.3
+  // PRESET MANAGE DELETE button
+  // =========================================================
+
+  static constexpr int16_t PRESET_DELETE_BUTTON_X = 60;
+  static constexpr int16_t PRESET_DELETE_BUTTON_Y = 178;
+  static constexpr int16_t PRESET_DELETE_BUTTON_W = 200;
+  static constexpr int16_t PRESET_DELETE_BUTTON_H = 40;
+
+  static constexpr int16_t PRESET_DELETE_TOUCH_X = 48;
+  static constexpr int16_t PRESET_DELETE_TOUCH_Y = 172;
+  static constexpr int16_t PRESET_DELETE_TOUCH_W = 224;
+  static constexpr int16_t PRESET_DELETE_TOUCH_H = 60;
 
   // =========================================================
   // Phase 10.2.1
@@ -785,6 +848,29 @@ private:
   static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_Y = 184;
   static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_W = 224;
   static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_H = 56;
+
+  // =========================================================
+  // Phase 10.2.3
+  // PRESET DELETE selection / confirmation screen
+  // =========================================================
+
+  static constexpr int16_t PRESET_DELETE_NAV_BUTTON_Y = 124;
+
+  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_LEFT_X = 8;
+  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_RIGHT_X = 232;
+  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_Y = 116;
+  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_W = 80;
+  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_H = 52;
+
+  static constexpr int16_t PRESET_DELETE_HOLD_BUTTON_X = 60;
+  static constexpr int16_t PRESET_DELETE_HOLD_BUTTON_Y = 194;
+  static constexpr int16_t PRESET_DELETE_HOLD_BUTTON_W = 200;
+  static constexpr int16_t PRESET_DELETE_HOLD_BUTTON_H = 40;
+
+  static constexpr int16_t PRESET_DELETE_HOLD_TOUCH_X = 48;
+  static constexpr int16_t PRESET_DELETE_HOLD_TOUCH_Y = 184;
+  static constexpr int16_t PRESET_DELETE_HOLD_TOUCH_W = 224;
+  static constexpr int16_t PRESET_DELETE_HOLD_TOUCH_H = 56;
 
   // =========================================================
   // Touch timing
@@ -1224,6 +1310,40 @@ private:
 
       drawPresetOverwriteScreen();
     }
+    else if (
+      currentPage ==
+        SCREEN_PRESET &&
+      presetSubPage ==
+        PRESET_SUBPAGE_DELETE &&
+      presetDeleteOperationState ==
+        PRESET_DELETE_OP_IDLE &&
+      displayPowerState ==
+        DISPLAY_POWER_ACTIVE &&
+      touchTarget ==
+        TOUCH_TARGET_NONE
+    )
+    {
+      String refreshedName;
+
+      if (
+        presetDeleteTargetId ==
+          0 ||
+        !getCachedPresetName(
+          presetDeleteTargetId,
+          refreshedName
+        )
+      )
+      {
+        preparePresetDeleteTarget();
+      }
+      else
+      {
+        presetDeleteTargetName =
+          refreshedName;
+      }
+
+      drawPresetDeleteScreen();
+    }
   }
 
   // =========================================================
@@ -1643,6 +1763,112 @@ private:
   }
 
   // =========================================================
+  // Phase 10.2.3
+  // Prepare delete target from RAM cache only
+  //
+  // Priority:
+  //   1. Current active Preset if it exists in cache
+  //   2. First saved Preset in cache
+  //
+  // No Preset is applied by this function.
+  // =========================================================
+
+  bool preparePresetDeleteTarget()
+  {
+    presetDeleteTargetId =
+      0;
+
+    presetDeleteTargetName =
+      "";
+
+    if (
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount ==
+        0
+    )
+    {
+      return false;
+    }
+
+    int currentIndex =
+      findPresetCacheIndex(
+        currentPreset
+      );
+
+    uint16_t targetIndex =
+      (
+        currentIndex >=
+        0
+      )
+        ? (uint16_t)currentIndex
+        : 0;
+
+    presetDeleteTargetId =
+      presetCache[
+        targetIndex
+      ].id;
+
+    presetDeleteTargetName =
+      presetCache[
+        targetIndex
+      ].name;
+
+    return true;
+  }
+
+  // =========================================================
+  // Phase 10.2.3
+  // Move delete target using RAM cache only
+  //
+  // IMPORTANT:
+  // This changes only the deletion target selection.
+  // applyPreset() is intentionally NOT called.
+  // =========================================================
+
+  bool stepPresetDeleteTarget(
+    int direction
+  )
+  {
+    if (
+      direction ==
+      0 ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount ==
+        0
+    )
+    {
+      return false;
+    }
+
+    String targetName;
+
+    uint8_t targetId =
+      findAdjacentPreset(
+        presetDeleteTargetId,
+        direction,
+        &targetName
+      );
+
+    if (
+      targetId ==
+      0
+    )
+    {
+      return false;
+    }
+
+    presetDeleteTargetId =
+      targetId;
+
+    presetDeleteTargetName =
+      targetName;
+
+    return true;
+  }
+
+  // =========================================================
   // Phase 10.2.1
   // Save operation busy state
   // =========================================================
@@ -1653,6 +1879,20 @@ private:
       (
         presetSaveOperationState !=
         PRESET_SAVE_OP_IDLE
+      );
+  }
+
+  // =========================================================
+  // Phase 10.2.3
+  // Delete operation busy state
+  // =========================================================
+
+  bool isPresetDeleteBusy()
+  {
+    return
+      (
+        presetDeleteOperationState !=
+        PRESET_DELETE_OP_IDLE
       );
   }
 
@@ -1849,6 +2089,97 @@ private:
       "Preset overwrite request: %u (%s)\n",
       presetSaveCandidateId,
       presetSaveCandidateName.c_str()
+    );
+
+    return true;
+  }
+
+  // =========================================================
+  // Phase 10.2.3
+  // Request WLED Preset deletion
+  //
+  // deletePreset() is synchronous. The deleted ID is verified
+  // after forcing one Phase 10.1.1 RAM cache rebuild.
+  // =========================================================
+
+  bool requestPresetDelete()
+  {
+    if (
+      presetDeleteOperationState !=
+        PRESET_DELETE_OP_IDLE ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount ==
+        0 ||
+      pendingPresetId >
+        0 ||
+      presetDeleteTargetId ==
+        0 ||
+      findPresetCacheIndex(
+        presetDeleteTargetId
+      ) <
+        0 ||
+      presetDeleteTargetName.length() ==
+        0 ||
+      presetNeedsSaving()
+    )
+    {
+      presetDeleteOperationState =
+        PRESET_DELETE_OP_FAILED;
+
+      presetDeleteResultStartMs =
+        millis();
+
+      drawPresetDeleteOperationStatus();
+
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "Preset delete request rejected"
+        )
+      );
+
+      return false;
+    }
+
+    presetDeleteWasCurrentPreset =
+      (
+        currentPreset ==
+        presetDeleteTargetId
+      );
+
+    deletePreset(
+      presetDeleteTargetId
+    );
+
+    // -------------------------------------------------------
+    // Force one cache rebuild even if presetsModifiedTime
+    // happens to retain the same second value.
+    // -------------------------------------------------------
+
+    if (
+      !presetCacheBuilding
+    )
+    {
+      startPresetCacheRebuild();
+    }
+
+    presetDeleteOperationState =
+      PRESET_DELETE_OP_WAIT_CACHE;
+
+    presetDeleteResultStartMs =
+      0;
+
+    lastUserActivityMs =
+      millis();
+
+    drawPresetDeleteOperationStatus();
+
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Preset delete request: %u (%s)\n",
+      presetDeleteTargetId,
+      presetDeleteTargetName.c_str()
     );
 
     return true;
@@ -2096,6 +2427,176 @@ private:
         presetSaveCandidateName =
           "";
 
+        drawPresetManageScreen();
+      }
+    }
+  }
+
+  // =========================================================
+  // Phase 10.2.3
+  // Service Preset delete cache verification
+  // =========================================================
+
+  void servicePresetDeleteOperation()
+  {
+    if (
+      presetDeleteOperationState ==
+      PRESET_DELETE_OP_IDLE
+    )
+    {
+      return;
+    }
+
+    unsigned long now =
+      millis();
+
+    if (
+      presetDeleteOperationState ==
+      PRESET_DELETE_OP_WAIT_CACHE
+    )
+    {
+      if (
+        !presetCacheReady ||
+        presetCacheBuilding
+      )
+      {
+        return;
+      }
+
+      bool deleteVerified =
+        (
+          findPresetCacheIndex(
+            presetDeleteTargetId
+          ) <
+          0
+        );
+
+      if (deleteVerified)
+      {
+        if (
+          presetDeleteWasCurrentPreset &&
+          currentPreset ==
+            presetDeleteTargetId
+        )
+        {
+          // -------------------------------------------------
+          // The Preset data is gone, but the current LED state
+          // remains untouched. Only the active Preset marker is
+          // changed to Custom State.
+          // -------------------------------------------------
+
+          currentPreset =
+            0;
+
+          lastPresetValue =
+            -1;
+        }
+
+        presetDeleteOperationState =
+          PRESET_DELETE_OP_SUCCESS;
+
+        Serial.printf(
+          "[CoreS3_Display] "
+          "Preset delete verified: %u (%s)\n",
+          presetDeleteTargetId,
+          presetDeleteTargetName.c_str()
+        );
+      }
+      else
+      {
+        presetDeleteOperationState =
+          PRESET_DELETE_OP_FAILED;
+
+        Serial.printf(
+          "[CoreS3_Display] "
+          "Preset delete verification failed: %u\n",
+          presetDeleteTargetId
+        );
+      }
+
+      presetDeleteResultStartMs =
+        now;
+
+      if (
+        currentPage ==
+          SCREEN_PRESET &&
+        presetSubPage ==
+          PRESET_SUBPAGE_DELETE &&
+        displayPowerState ==
+          DISPLAY_POWER_ACTIVE
+      )
+      {
+        drawPresetDeleteOperationStatus();
+      }
+
+      return;
+    }
+
+    if (
+      presetDeleteOperationState ==
+        PRESET_DELETE_OP_SUCCESS ||
+      presetDeleteOperationState ==
+        PRESET_DELETE_OP_FAILED
+    )
+    {
+      if (
+        now -
+        presetDeleteResultStartMs <
+        PRESET_SAVE_RESULT_HOLD_MS
+      )
+      {
+        return;
+      }
+
+      int16_t touchX = -1;
+      int16_t touchY = -1;
+
+      if (
+        display.getTouch(
+          &touchX,
+          &touchY
+        ) >
+        0
+      )
+      {
+        return;
+      }
+
+      bool deleteSucceeded =
+        (
+          presetDeleteOperationState ==
+          PRESET_DELETE_OP_SUCCESS
+        );
+
+      presetDeleteOperationState =
+        PRESET_DELETE_OP_IDLE;
+
+      presetDeleteResultStartMs =
+        0;
+
+      presetDeleteWasCurrentPreset =
+        false;
+
+      presetSaveHoldStartTime =
+        0;
+
+      presetSaveHoldTriggered =
+        false;
+
+      resetTouchGesture();
+
+      presetDeleteTargetId =
+        0;
+
+      presetDeleteTargetName =
+        "";
+
+      if (deleteSucceeded)
+      {
+        drawPresetScreen();
+      }
+      else
+      {
         drawPresetManageScreen();
       }
     }
@@ -2637,6 +3138,13 @@ private:
       )
       {
         drawPresetOverwriteScreen();
+      }
+      else if (
+        presetSubPage ==
+        PRESET_SUBPAGE_DELETE
+      )
+      {
+        drawPresetDeleteScreen();
       }
       else
       {
@@ -3245,16 +3753,6 @@ private:
 
     int newIndex;
 
-    // -------------------------------------------------------
-    // Custom State / active Preset is not in cache.
-    //
-    // NEXT:
-    //   First saved Preset
-    //
-    // PREVIOUS:
-    //   Last saved Preset
-    // -------------------------------------------------------
-
     if (
       currentIndex <
       0
@@ -3323,10 +3821,6 @@ private:
       ].id;
   }
 
-  // =========================================================
-  // Preset navigation base
-  // =========================================================
-
   uint8_t getPresetNavigationBaseId()
   {
     if (
@@ -3344,10 +3838,6 @@ private:
     return
       currentPreset;
   }
-
-  // =========================================================
-  // RGB -> Hue
-  // =========================================================
 
   uint8_t getHueFromColor(
     uint32_t color
@@ -3371,10 +3861,6 @@ private:
       );
   }
 
-  // =========================================================
-  // RGB -> Saturation
-  // =========================================================
-
   uint8_t getSaturationFromColor(
     uint32_t color
   )
@@ -3393,10 +3879,6 @@ private:
     return
       hsv.s;
   }
-
-  // =========================================================
-  // Logical HSV sync
-  // =========================================================
 
   void syncLogicalColorFromRgb(
     uint32_t color
@@ -3477,10 +3959,6 @@ private:
       );
   }
 
-  // =========================================================
-  // Wi-Fi reconnect screen
-  // =========================================================
-
   void drawConnectingScreen()
   {
     drawStartupBase();
@@ -3536,10 +4014,6 @@ private:
     resetTouchGesture();
   }
 
-  // =========================================================
-  // Power icon
-  // =========================================================
-
   void drawPowerIcon(
     int16_t centerX,
     int16_t centerY,
@@ -3590,10 +4064,6 @@ private:
       iconColor
     );
   }
-
-  // =========================================================
-  // Power button
-  // =========================================================
 
   void drawPowerButton(
     bool ledOn,
@@ -3665,10 +4135,6 @@ private:
     powerButtonVisualPressed =
       pressed;
   }
-
-  // =========================================================
-  // Triangle button
-  // =========================================================
 
   void drawTriangleButton(
     int16_t x,
@@ -3768,10 +4234,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Brightness
-  // =========================================================
-
   void drawBrightness(
     int brightnessValue,
     TouchTarget pressedTarget =
@@ -3846,10 +4308,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Effect name
-  // =========================================================
-
   void getEffectName(
     uint8_t effectMode,
     char* effectName,
@@ -3900,10 +4358,6 @@ private:
         '\0';
     }
   }
-
-  // =========================================================
-  // Effect Detail button
-  // =========================================================
 
   void drawEffectDetailButton(
     uint8_t effectMode,
@@ -4000,10 +4454,6 @@ private:
       pressed;
   }
 
-  // =========================================================
-  // Effect row
-  // =========================================================
-
   void drawEffect(
     uint8_t effectMode,
     TouchTarget pressedTarget =
@@ -4059,10 +4509,6 @@ private:
         TOUCH_TARGET_EFFECT_NEXT
     );
   }
-
-  // =========================================================
-  // MAIN Color button
-  // =========================================================
 
   void drawColorButton(
     uint32_t color,
@@ -4174,10 +4620,6 @@ private:
       pressed;
   }
 
-  // =========================================================
-  // MAIN Preset button
-  // =========================================================
-
   void drawPresetOpenButton(
     bool pressed
   )
@@ -4251,10 +4693,6 @@ private:
     presetOpenButtonVisualPressed =
       pressed;
   }
-
-  // =========================================================
-  // Back
-  // =========================================================
 
   void drawBackButton(
     bool pressed
@@ -4334,10 +4772,6 @@ private:
     backButtonVisualPressed =
       pressed;
   }
-
-  // =========================================================
-  // Color details
-  // =========================================================
 
   void drawColorDetails(
     uint32_t color
@@ -4420,10 +4854,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Hue
-  // =========================================================
-
   void drawHue(
     uint8_t hueValue,
     TouchTarget pressedTarget =
@@ -4493,10 +4923,6 @@ private:
         (CONTROL_BUTTON_H / 2)
     );
   }
-
-  // =========================================================
-  // Saturation
-  // =========================================================
 
   void drawSaturation(
     uint8_t saturationValue,
@@ -4568,10 +4994,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Speed row
-  // =========================================================
-
   void drawSpeed(
     uint8_t speedValue,
     TouchTarget pressedTarget =
@@ -4641,10 +5063,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Intensity row
-  // =========================================================
-
   void drawIntensity(
     uint8_t intensityValue,
     TouchTarget pressedTarget =
@@ -4713,10 +5131,6 @@ private:
       157
     );
   }
-
-  // =========================================================
-  // Palette row
-  // =========================================================
 
   void drawPalette(
     uint8_t paletteId,
@@ -4813,10 +5227,6 @@ private:
     );
   }
 
-  // =========================================================
-  // EFFECT page effect name
-  // =========================================================
-
   void drawEffectPageName(
     uint8_t effectMode
   )
@@ -4856,16 +5266,6 @@ private:
       42
     );
   }
-
-  // =========================================================
-  // Phase 10.1.1
-  // Preset name helper
-  //
-  // IMPORTANT:
-  // Do not call getPresetName() here.
-  //
-  // Navigation/display uses RAM cache.
-  // =========================================================
 
   String getPresetDisplayName(
     uint8_t presetId
@@ -4917,10 +5317,6 @@ private:
       String(fallback);
   }
 
-  // =========================================================
-  // Preset details
-  // =========================================================
-
   void drawPresetDetails(
     uint8_t presetId,
     bool applying = false
@@ -4937,11 +5333,6 @@ private:
     display.setTextDatum(
       textdatum_t::middle_center
     );
-
-    // -------------------------------------------------------
-    // Phase 10.1.1
-    // First cache build is still running.
-    // -------------------------------------------------------
 
     if (
       !presetCacheReady
@@ -5007,10 +5398,6 @@ private:
       return;
     }
 
-    // -------------------------------------------------------
-    // No Presets found
-    // -------------------------------------------------------
-
     if (
       presetNoEntries
     )
@@ -5046,17 +5433,13 @@ private:
       );
 
       display.drawString(
-        "Create presets in WLED",
+        "Use MANAGE to create",
         screenWidth / 2,
         PRESET_STATUS_Y
       );
 
       return;
     }
-
-    // -------------------------------------------------------
-    // Custom State
-    // -------------------------------------------------------
 
     if (
       presetId ==
@@ -5101,10 +5484,6 @@ private:
 
       return;
     }
-
-    // -------------------------------------------------------
-    // Active / pending Preset
-    // -------------------------------------------------------
 
     String presetName =
       getPresetDisplayName(
@@ -5219,11 +5598,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // Generic Preset text button
-  // =========================================================
-
   void drawPresetTextButton(
     int16_t x,
     int16_t y,
@@ -5314,10 +5688,95 @@ private:
     );
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET navigation MANAGE button
-  // =========================================================
+  void drawPresetDangerTextButton(
+    int16_t x,
+    int16_t y,
+    int16_t w,
+    int16_t h,
+    const char* label,
+    bool enabled,
+    bool pressed,
+    uint8_t textSize
+  )
+  {
+    uint16_t buttonColor =
+      enabled
+        ? TFT_RED
+        : TFT_DARKGREY;
+
+    uint16_t backgroundColor =
+      (
+        enabled &&
+        pressed
+      )
+        ? buttonColor
+        : TFT_BLACK;
+
+    uint16_t textColor =
+      (
+        enabled &&
+        pressed
+      )
+        ? TFT_BLACK
+        : (
+            enabled
+              ? TFT_RED
+              : TFT_DARKGREY
+          );
+
+    display.fillRect(
+      x - 2,
+      y - 2,
+      w + 4,
+      h + 4,
+      TFT_BLACK
+    );
+
+    display.fillRect(
+      x,
+      y,
+      w,
+      h,
+      backgroundColor
+    );
+
+    display.drawRect(
+      x,
+      y,
+      w,
+      h,
+      buttonColor
+    );
+
+    display.drawRect(
+      x + 1,
+      y + 1,
+      w - 2,
+      h - 2,
+      buttonColor
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      textColor,
+      backgroundColor
+    );
+
+    display.setTextSize(
+      textSize
+    );
+
+    display.drawString(
+      label,
+      x +
+        (w / 2),
+      y +
+        (h / 2)
+    );
+  }
 
   void drawPresetManageButton(
     bool pressed
@@ -5353,10 +5812,6 @@ private:
         enabled
       );
   }
-
-  // =========================================================
-  // Preset bottom navigation
-  // =========================================================
 
   void drawPresetNavigation(
     TouchTarget pressedTarget =
@@ -5411,10 +5866,6 @@ private:
         TOUCH_TARGET_PRESET_MANAGE
     );
   }
-
-  // =========================================================
-  // MAIN
-  // =========================================================
 
   void drawMainScreen(
     const String& ipAddress
@@ -5535,10 +5986,6 @@ private:
       true;
   }
 
-  // =========================================================
-  // COLOR
-  // =========================================================
-
   void drawColorScreen()
   {
     display.fillScreen(
@@ -5639,10 +6086,6 @@ private:
     lastSaturationValue =
       logicalSaturationValue;
   }
-
-  // =========================================================
-  // EFFECT detail screen
-  // =========================================================
 
   void drawEffectDetailScreen()
   {
@@ -5745,10 +6188,6 @@ private:
       paletteValue;
   }
 
-  // =========================================================
-  // PRESET screen
-  // =========================================================
-
   void drawPresetScreen()
   {
     display.fillScreen(
@@ -5778,6 +6217,21 @@ private:
 
     presetOverwriteTargetName =
       "";
+
+    presetDeleteOperationState =
+      PRESET_DELETE_OP_IDLE;
+
+    presetDeleteTargetId =
+      0;
+
+    presetDeleteTargetName =
+      "";
+
+    presetDeleteWasCurrentPreset =
+      false;
+
+    presetDeleteResultStartMs =
+      0;
 
     presetSaveHoldStartTime =
       0;
@@ -5871,11 +6325,6 @@ private:
       presetsModifiedTime;
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET MANAGE SAVE NEW button
-  // =========================================================
-
   void drawPresetSaveNewButton(
     bool pressed
   )
@@ -5912,11 +6361,6 @@ private:
       );
   }
 
-  // =========================================================
-  // Phase 10.2.2
-  // PRESET MANAGE OVERWRITE button
-  // =========================================================
-
   void drawPresetOverwriteOpenButton(
     bool pressed
   )
@@ -5950,10 +6394,38 @@ private:
       );
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET SAVE hold button
-  // =========================================================
+  void drawPresetDeleteOpenButton(
+    bool pressed
+  )
+  {
+    bool enabled =
+      (
+        presetCacheReady &&
+        !presetCacheBuilding &&
+        presetCacheCount >
+          0 &&
+        pendingPresetId ==
+          0 &&
+        !presetNeedsSaving()
+      );
+
+    drawPresetDangerTextButton(
+      PRESET_DELETE_BUTTON_X,
+      PRESET_DELETE_BUTTON_Y,
+      PRESET_DELETE_BUTTON_W,
+      PRESET_DELETE_BUTTON_H,
+      "DELETE",
+      enabled,
+      pressed && enabled,
+      2
+    );
+
+    presetDeleteOpenButtonVisualPressed =
+      (
+        pressed &&
+        enabled
+      );
+  }
 
   void drawPresetSaveHoldButton(
     bool pressed
@@ -5994,11 +6466,6 @@ private:
       );
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET MANAGE screen
-  // =========================================================
-
   void drawPresetManageScreen()
   {
     display.fillScreen(
@@ -6028,6 +6495,21 @@ private:
 
     presetOverwriteTargetName =
       "";
+
+    presetDeleteOperationState =
+      PRESET_DELETE_OP_IDLE;
+
+    presetDeleteTargetId =
+      0;
+
+    presetDeleteTargetName =
+      "";
+
+    presetDeleteWasCurrentPreset =
+      false;
+
+    presetDeleteResultStartMs =
+      0;
 
     presetSaveHoldStartTime =
       0;
@@ -6091,27 +6573,16 @@ private:
       false
     );
 
-    display.setTextColor(
-      TFT_WHITE,
-      TFT_BLACK
-    );
-
-    display.setTextSize(
-      1
-    );
-
-    display.drawString(
-      "Save current WLED state",
-      screenWidth / 2,
-      82
-    );
-
     drawPresetSaveNewButton(
       false
     );
 
     uint8_t freePresetId =
       findFirstFreePresetId();
+
+    display.setTextSize(
+      1
+    );
 
     if (
       !presetCacheReady ||
@@ -6126,7 +6597,7 @@ private:
       display.drawString(
         "Preset cache loading...",
         screenWidth / 2,
-        160
+        116
       );
     }
     else if (
@@ -6142,7 +6613,7 @@ private:
       display.drawString(
         "No free Preset ID",
         screenWidth / 2,
-        160
+        116
       );
     }
     else
@@ -6164,11 +6635,15 @@ private:
       display.drawString(
         idText,
         screenWidth / 2,
-        160
+        116
       );
     }
 
     drawPresetOverwriteOpenButton(
+      false
+    );
+
+    drawPresetDeleteOpenButton(
       false
     );
 
@@ -6177,11 +6652,6 @@ private:
         ? 1
         : 0;
   }
-
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET SAVE operation body
-  // =========================================================
 
   void drawPresetSaveOperationStatus()
   {
@@ -6465,11 +6935,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET SAVE confirmation screen
-  // =========================================================
-
   void drawPresetSaveScreen()
   {
     display.fillScreen(
@@ -6658,14 +7123,6 @@ private:
         : 0;
   }
 
-  // =========================================================
-  // Phase 10.2.2
-  // PRESET OVERWRITE destination navigation
-  //
-  // Arrows change only the destination Preset in RAM.
-  // They never call applyPreset().
-  // =========================================================
-
   void drawPresetOverwriteNavigation(
     TouchTarget pressedTarget =
       TOUCH_TARGET_NONE
@@ -6716,11 +7173,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Phase 10.2.2
-  // PRESET OVERWRITE hold button
-  // =========================================================
-
   void drawPresetOverwriteHoldButton(
     bool pressed
   )
@@ -6759,11 +7211,6 @@ private:
         enabled
       );
   }
-
-  // =========================================================
-  // Phase 10.2.2
-  // PRESET OVERWRITE screen
-  // =========================================================
 
   void drawPresetOverwriteScreen()
   {
@@ -6983,9 +7430,538 @@ private:
         : 0;
   }
 
-  // =========================================================
-  // Hit test helper
-  // =========================================================
+  void drawPresetDeleteNavigation(
+    TouchTarget pressedTarget =
+      TOUCH_TARGET_NONE
+  )
+  {
+    display.fillRect(
+      0,
+      112,
+      screenWidth,
+      58,
+      TFT_BLACK
+    );
+
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      PRESET_DELETE_NAV_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_PREV
+    );
+
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      PRESET_DELETE_NAV_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_NEXT
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_RED,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "TARGET",
+      screenWidth / 2,
+      PRESET_DELETE_NAV_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
+    );
+  }
+
+  void drawPresetDeleteHoldButton(
+    bool pressed
+  )
+  {
+    bool enabled =
+      (
+        presetDeleteOperationState ==
+          PRESET_DELETE_OP_IDLE &&
+        presetCacheReady &&
+        !presetCacheBuilding &&
+        presetDeleteTargetId >
+          0 &&
+        findPresetCacheIndex(
+          presetDeleteTargetId
+        ) >=
+          0 &&
+        pendingPresetId ==
+          0 &&
+        !presetNeedsSaving()
+      );
+
+    drawPresetDangerTextButton(
+      PRESET_DELETE_HOLD_BUTTON_X,
+      PRESET_DELETE_HOLD_BUTTON_Y,
+      PRESET_DELETE_HOLD_BUTTON_W,
+      PRESET_DELETE_HOLD_BUTTON_H,
+      "HOLD TO DELETE",
+      enabled,
+      pressed && enabled,
+      1
+    );
+
+    presetDeleteHoldButtonVisualPressed =
+      (
+        pressed &&
+        enabled
+      );
+  }
+
+  void drawPresetDeleteOperationStatus()
+  {
+    if (
+      currentPage !=
+        SCREEN_PRESET ||
+      presetSubPage !=
+        PRESET_SUBPAGE_DELETE
+    )
+    {
+      return;
+    }
+
+    display.fillRect(
+      0,
+      60,
+      screenWidth,
+      180,
+      TFT_BLACK
+    );
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    if (
+      presetDeleteOperationState ==
+      PRESET_DELETE_OP_WAIT_CACHE
+    )
+    {
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "Deleting...",
+        screenWidth / 2,
+        105
+      );
+
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      display.drawString(
+        presetDeleteTargetName,
+        screenWidth / 2,
+        138
+      );
+
+      char idText[24];
+
+      snprintf(
+        idText,
+        sizeof(idText),
+        "Preset ID: %u",
+        presetDeleteTargetId
+      );
+
+      display.drawString(
+        idText,
+        screenWidth / 2,
+        160
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      char progressText[32];
+
+      uint16_t displayScanId =
+        presetCacheScanId;
+
+      if (
+        displayScanId >
+        250
+      )
+      {
+        displayScanId =
+          250;
+      }
+
+      snprintf(
+        progressText,
+        sizeof(progressText),
+        "Checking cache: %u / 250",
+        (unsigned)displayScanId
+      );
+
+      display.drawString(
+        progressText,
+        screenWidth / 2,
+        188
+      );
+
+      return;
+    }
+
+    if (
+      presetDeleteOperationState ==
+      PRESET_DELETE_OP_SUCCESS
+    )
+    {
+      display.setTextColor(
+        TFT_GREEN,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "DELETED",
+        screenWidth / 2,
+        104
+      );
+
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      display.drawString(
+        presetDeleteTargetName,
+        screenWidth / 2,
+        140
+      );
+
+      char idText[24];
+
+      snprintf(
+        idText,
+        sizeof(idText),
+        "Preset ID: %u",
+        presetDeleteTargetId
+      );
+
+      display.drawString(
+        idText,
+        screenWidth / 2,
+        165
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        "Preset cache verified",
+        screenWidth / 2,
+        192
+      );
+
+      return;
+    }
+
+    if (
+      presetDeleteOperationState ==
+      PRESET_DELETE_OP_FAILED
+    )
+    {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "DELETE FAILED",
+        screenWidth / 2,
+        108
+      );
+
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      display.drawString(
+        "Preset still exists",
+        screenWidth / 2,
+        150
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.drawString(
+        "Returning to PRESET MANAGE",
+        screenWidth / 2,
+        180
+      );
+    }
+  }
+
+  void drawPresetDeleteScreen()
+  {
+    display.fillScreen(
+      TFT_BLACK
+    );
+
+    currentPage =
+      SCREEN_PRESET;
+
+    presetSubPage =
+      PRESET_SUBPAGE_DELETE;
+
+    readyScreenShown =
+      true;
+
+    connectingScreenShown =
+      false;
+
+    resetTouchGesture();
+
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      TFT_RED,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      2
+    );
+
+    display.drawString(
+      "DELETE PRESET",
+      screenWidth / 2,
+      18
+    );
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Select target only",
+      screenWidth / 2,
+      41
+    );
+
+    display.drawFastHLine(
+      8,
+      58,
+      screenWidth - 16,
+      TFT_DARKGREY
+    );
+
+    drawPowerButton(
+      bri > 0,
+      false
+    );
+
+    drawBackButton(
+      false
+    );
+
+    if (
+      presetDeleteOperationState !=
+      PRESET_DELETE_OP_IDLE
+    )
+    {
+      drawPresetDeleteOperationStatus();
+      return;
+    }
+
+    if (
+      presetDeleteTargetId ==
+        0 ||
+      findPresetCacheIndex(
+        presetDeleteTargetId
+      ) <
+        0
+    )
+    {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        2
+      );
+
+      display.drawString(
+        "No Preset",
+        screenWidth / 2,
+        104
+      );
+
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
+
+      display.setTextSize(
+        1
+      );
+
+      display.drawString(
+        "Nothing can be deleted",
+        screenWidth / 2,
+        145
+      );
+
+      return;
+    }
+
+    String displayName =
+      presetDeleteTargetName;
+
+    if (
+      displayName.length() >
+      28
+    )
+    {
+      displayName =
+        displayName.substring(
+          0,
+          25
+        ) +
+        "...";
+    }
+
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
+
+    if (
+      displayName.length() <=
+      12
+    )
+    {
+      display.setTextSize(
+        2
+      );
+    }
+    else
+    {
+      display.setTextSize(
+        1
+      );
+    }
+
+    display.drawString(
+      displayName,
+      screenWidth / 2,
+      82
+    );
+
+    char idText[24];
+
+    snprintf(
+      idText,
+      sizeof(idText),
+      "Preset ID: %u",
+      presetDeleteTargetId
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      idText,
+      screenWidth / 2,
+      105
+    );
+
+    drawPresetDeleteNavigation(
+      TOUCH_TARGET_NONE
+    );
+
+    display.setTextColor(
+      TFT_RED,
+      TFT_BLACK
+    );
+
+    display.setTextSize(
+      1
+    );
+
+    display.drawString(
+      "Delete this Preset",
+      screenWidth / 2,
+      174
+    );
+
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
+
+    display.drawString(
+      "Current LED state is kept",
+      screenWidth / 2,
+      187
+    );
+
+    drawPresetDeleteHoldButton(
+      false
+    );
+
+    lastLedState =
+      bri > 0
+        ? 1
+        : 0;
+  }
 
   bool pointInsideRect(
     int16_t px,
@@ -7003,10 +7979,6 @@ private:
       py < y + h
     );
   }
-
-  // =========================================================
-  // Hit tests
-  // =========================================================
 
   bool isPowerButtonTouched(
     int16_t x,
@@ -7098,10 +8070,6 @@ private:
     );
   }
 
-  // =========================================================
-  // MAIN Color expanded touch area
-  // =========================================================
-
   bool isColorButtonTouched(
     int16_t x,
     int16_t y
@@ -7116,10 +8084,6 @@ private:
       MAIN_BOTTOM_TOUCH_H
     );
   }
-
-  // =========================================================
-  // MAIN Preset expanded touch area
-  // =========================================================
 
   bool isPresetOpenButtonTouched(
     int16_t x,
@@ -7271,10 +8235,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Palette expanded hit tests
-  // =========================================================
-
   bool isPalettePrevTouched(
     int16_t x,
     int16_t y
@@ -7304,10 +8264,6 @@ private:
       PALETTE_TOUCH_H
     );
   }
-
-  // =========================================================
-  // Preset expanded hit tests
-  // =========================================================
 
   bool isPresetPrevTouched(
     int16_t x,
@@ -7339,11 +8295,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET MANAGE hit test
-  // =========================================================
-
   bool isPresetManageTouched(
     int16_t x,
     int16_t y
@@ -7358,11 +8309,6 @@ private:
       PRESET_MANAGE_TOUCH_H
     );
   }
-
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET SAVE NEW hit test
-  // =========================================================
 
   bool isPresetSaveNewTouched(
     int16_t x,
@@ -7379,11 +8325,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET HOLD TO SAVE hit test
-  // =========================================================
-
   bool isPresetSaveHoldTouched(
     int16_t x,
     int16_t y
@@ -7399,11 +8340,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Phase 10.2.2
-  // PRESET OVERWRITE open hit test
-  // =========================================================
-
   bool isPresetOverwriteOpenTouched(
     int16_t x,
     int16_t y
@@ -7418,11 +8354,6 @@ private:
       PRESET_OVERWRITE_TOUCH_H
     );
   }
-
-  // =========================================================
-  // Phase 10.2.2
-  // PRESET OVERWRITE target navigation hit tests
-  // =========================================================
 
   bool isPresetOverwritePrevTouched(
     int16_t x,
@@ -7454,11 +8385,6 @@ private:
     );
   }
 
-  // =========================================================
-  // Phase 10.2.2
-  // PRESET HOLD TO OVERWRITE hit test
-  // =========================================================
-
   bool isPresetOverwriteHoldTouched(
     int16_t x,
     int16_t y
@@ -7474,9 +8400,65 @@ private:
     );
   }
 
-  // =========================================================
-  // Begin Hue edit
-  // =========================================================
+  bool isPresetDeleteOpenTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_DELETE_TOUCH_X,
+      PRESET_DELETE_TOUCH_Y,
+      PRESET_DELETE_TOUCH_W,
+      PRESET_DELETE_TOUCH_H
+    );
+  }
+
+  bool isPresetDeletePrevTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_DELETE_NAV_TOUCH_LEFT_X,
+      PRESET_DELETE_NAV_TOUCH_Y,
+      PRESET_DELETE_NAV_TOUCH_W,
+      PRESET_DELETE_NAV_TOUCH_H
+    );
+  }
+
+  bool isPresetDeleteNextTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_DELETE_NAV_TOUCH_RIGHT_X,
+      PRESET_DELETE_NAV_TOUCH_Y,
+      PRESET_DELETE_NAV_TOUCH_W,
+      PRESET_DELETE_NAV_TOUCH_H
+    );
+  }
+
+  bool isPresetDeleteHoldTouched(
+    int16_t x,
+    int16_t y
+  )
+  {
+    return pointInsideRect(
+      x,
+      y,
+      PRESET_DELETE_HOLD_TOUCH_X,
+      PRESET_DELETE_HOLD_TOUCH_Y,
+      PRESET_DELETE_HOLD_TOUCH_W,
+      PRESET_DELETE_HOLD_TOUCH_H
+    );
+  }
 
   void beginHueEdit()
   {
@@ -7514,10 +8496,6 @@ private:
       true;
   }
 
-  // =========================================================
-  // Begin Saturation edit
-  // =========================================================
-
   void beginSaturationEdit()
   {
     uint32_t currentColor =
@@ -7553,10 +8531,6 @@ private:
     saturationEditValid =
       true;
   }
-
-  // =========================================================
-  // Reset touch gesture
-  // =========================================================
 
   void resetTouchGesture()
   {
@@ -7623,6 +8597,15 @@ private:
     lastTouchInsidePresetOverwriteHold =
       false;
 
+    lastTouchInsidePresetDeleteOpen =
+      false;
+
+    lastTouchInsidePresetDeleteNav =
+      false;
+
+    lastTouchInsidePresetDeleteHold =
+      false;
+
     powerButtonVisualPressed =
       false;
 
@@ -7678,6 +8661,15 @@ private:
       false;
 
     presetOverwriteHoldButtonVisualPressed =
+      false;
+
+    presetDeleteOpenButtonVisualPressed =
+      false;
+
+    presetDeleteNavButtonVisualPressed =
+      false;
+
+    presetDeleteHoldButtonVisualPressed =
       false;
 
     brightnessLongPressActive =
@@ -7774,10 +8766,6 @@ private:
       -1;
   }
 
-  // =========================================================
-  // Power action
-  // =========================================================
-
   void toggleLedPowerFromTouch()
   {
     toggleOnOff();
@@ -7792,10 +8780,6 @@ private:
     lastBrightnessValue =
       -1;
   }
-
-  // =========================================================
-  // Brightness actions
-  // =========================================================
 
   bool applyBrightnessValue(
     int newValue
@@ -7939,10 +8923,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Effect actions
-  // =========================================================
-
   void applyEffectStep(
     int step
   )
@@ -8046,10 +9026,6 @@ private:
       );
     }
   }
-
-  // =========================================================
-  // Speed actions
-  // =========================================================
 
   bool applySpeedValue(
     int newValue
@@ -8170,10 +9146,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Intensity actions
-  // =========================================================
-
   bool applyIntensityValue(
     int newValue
   )
@@ -8293,10 +9265,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Palette actions
-  // =========================================================
-
   bool applyPaletteValue(
     uint8_t newPalette
   )
@@ -8344,10 +9312,6 @@ private:
 
     return true;
   }
-
-  // =========================================================
-  // Move Palette by logical sequence
-  // =========================================================
 
   void applyPaletteStep(
     int step
@@ -8461,14 +9425,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Phase 10.1.1
-  // Apply adjacent Preset
-  //
-  // No getPresetName() call occurs here.
-  // Only cached IDs / names are used.
-  // =========================================================
-
   bool applyPresetStep(
     int direction
   )
@@ -8480,10 +9436,6 @@ private:
     {
       return false;
     }
-
-    // -------------------------------------------------------
-    // Initial cache has not completed yet.
-    // -------------------------------------------------------
 
     if (
       !presetCacheReady
@@ -8656,10 +9608,6 @@ private:
       );
     }
   }
-
-  // =========================================================
-  // Hue actions
-  // =========================================================
 
   bool applyHueValue(
     uint8_t newHue
@@ -8860,10 +9808,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Saturation actions
-  // =========================================================
-
   bool applySaturationValue(
     uint8_t newSaturation
   )
@@ -9059,10 +10003,6 @@ private:
     }
   }
 
-  // =========================================================
-  // Selected Brightness button
-  // =========================================================
-
   bool isInsideSelectedBrightnessButton(
     int16_t x,
     int16_t y
@@ -9094,10 +10034,6 @@ private:
 
     return false;
   }
-
-  // =========================================================
-  // Selected Effect button
-  // =========================================================
 
   bool isInsideSelectedEffectButton(
     int16_t x,
@@ -9131,10 +10067,6 @@ private:
     return false;
   }
 
-  // =========================================================
-  // Selected Hue button
-  // =========================================================
-
   bool isInsideSelectedHueButton(
     int16_t x,
     int16_t y
@@ -9166,10 +10098,6 @@ private:
 
     return false;
   }
-
-  // =========================================================
-  // Selected Saturation button
-  // =========================================================
 
   bool isInsideSelectedSaturationButton(
     int16_t x,
@@ -9203,10 +10131,6 @@ private:
     return false;
   }
 
-  // =========================================================
-  // Selected Speed button
-  // =========================================================
-
   bool isInsideSelectedSpeedButton(
     int16_t x,
     int16_t y
@@ -9238,10 +10162,6 @@ private:
 
     return false;
   }
-
-  // =========================================================
-  // Selected Intensity button
-  // =========================================================
 
   bool isInsideSelectedIntensityButton(
     int16_t x,
@@ -9275,10 +10195,6 @@ private:
     return false;
   }
 
-  // =========================================================
-  // Selected Palette button
-  // =========================================================
-
   bool isInsideSelectedPaletteButton(
     int16_t x,
     int16_t y
@@ -9310,10 +10226,6 @@ private:
 
     return false;
   }
-
-  // =========================================================
-  // Selected Preset button
-  // =========================================================
 
   bool isInsideSelectedPresetButton(
     int16_t x,
@@ -9347,10 +10259,6 @@ private:
     return false;
   }
 
-  // =========================================================
-  // Touch processing
-  // =========================================================
-
   void handleTouch()
   {
     if (!touchReady)
@@ -9363,14 +10271,9 @@ private:
       return;
     }
 
-    // =======================================================
-    // Phase 10.2.1
-    // Block normal touch while asynchronous Preset save /
-    // verification is in progress.
-    // =======================================================
-
     if (
-      isPresetSaveBusy()
+      isPresetSaveBusy() ||
+      isPresetDeleteBusy()
     )
     {
       return;
@@ -9403,10 +10306,6 @@ private:
         &touchY
       ) > 0;
 
-    // =======================================================
-    // Touching
-    // =======================================================
-
     if (touching)
     {
       lastUserActivityMs =
@@ -9426,10 +10325,6 @@ private:
           touchX,
           touchY
         );
-
-      // =====================================================
-      // MAIN page hit tests
-      // =====================================================
 
       bool insideBrightnessDown = false;
       bool insideBrightnessUp = false;
@@ -9489,10 +10384,6 @@ private:
           );
       }
 
-      // =====================================================
-      // COLOR page hit tests
-      // =====================================================
-
       bool insideBack = false;
 
       bool insideHueDown = false;
@@ -9536,10 +10427,6 @@ private:
             touchY
           );
       }
-
-      // =====================================================
-      // EFFECT page hit tests
-      // =====================================================
 
       bool insideSpeedDown = false;
       bool insideSpeedUp = false;
@@ -9598,10 +10485,6 @@ private:
           );
       }
 
-      // =====================================================
-      // PRESET page hit tests
-      // =====================================================
-
       bool insidePresetPrev = false;
       bool insidePresetNext = false;
 
@@ -9613,6 +10496,11 @@ private:
       bool insidePresetOverwritePrev = false;
       bool insidePresetOverwriteNext = false;
       bool insidePresetOverwriteHold = false;
+
+      bool insidePresetDeleteOpen = false;
+      bool insidePresetDeletePrev = false;
+      bool insidePresetDeleteNext = false;
+      bool insidePresetDeleteHold = false;
 
       if (
         currentPage ==
@@ -9682,6 +10570,21 @@ private:
                 0 &&
               !presetNeedsSaving() &&
               isPresetOverwriteOpenTouched(
+                touchX,
+                touchY
+              )
+            );
+
+          insidePresetDeleteOpen =
+            (
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              presetCacheCount >
+                0 &&
+              pendingPresetId ==
+                0 &&
+              !presetNeedsSaving() &&
+              isPresetDeleteOpenTouched(
                 touchX,
                 touchY
               )
@@ -9763,11 +10666,57 @@ private:
               )
             );
         }
-      }
+        else if (
+          presetSubPage ==
+          PRESET_SUBPAGE_DELETE
+        )
+        {
+          insidePresetDeletePrev =
+            (
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              presetCacheCount >
+                0 &&
+              isPresetDeletePrevTouched(
+                touchX,
+                touchY
+              )
+            );
 
-      // =====================================================
-      // New gesture
-      // =====================================================
+          insidePresetDeleteNext =
+            (
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              presetCacheCount >
+                0 &&
+              isPresetDeleteNextTouched(
+                touchX,
+                touchY
+              )
+            );
+
+          insidePresetDeleteHold =
+            (
+              presetDeleteOperationState ==
+                PRESET_DELETE_OP_IDLE &&
+              presetCacheReady &&
+              !presetCacheBuilding &&
+              presetDeleteTargetId >
+                0 &&
+              findPresetCacheIndex(
+                presetDeleteTargetId
+              ) >=
+                0 &&
+              pendingPresetId ==
+                0 &&
+              !presetNeedsSaving() &&
+              isPresetDeleteHoldTouched(
+                touchX,
+                touchY
+              )
+            );
+        }
+      }
 
       if (!touchActive)
       {
@@ -9808,10 +10757,6 @@ private:
           false;
       }
 
-      // =====================================================
-      // Select touch target
-      // =====================================================
-
       if (
         touchTarget ==
         TOUCH_TARGET_NONE
@@ -9825,10 +10770,6 @@ private:
           lastTouchInsidePower =
             true;
         }
-
-        // ===================================================
-        // MAIN
-        // ===================================================
 
         else if (
           currentPage ==
@@ -9849,7 +10790,6 @@ private:
             lastBrightnessRepeat =
               now;
           }
-
           else if (insideBrightnessUp)
           {
             touchTarget =
@@ -9864,7 +10804,6 @@ private:
             lastBrightnessRepeat =
               now;
           }
-
           else if (insideEffectPrev)
           {
             touchTarget =
@@ -9882,7 +10821,6 @@ private:
             effectLongPressActive =
               false;
           }
-
           else if (insideEffectDetail)
           {
             touchTarget =
@@ -9891,7 +10829,6 @@ private:
             lastTouchInsideEffectDetail =
               true;
           }
-
           else if (insideEffectNext)
           {
             touchTarget =
@@ -9909,7 +10846,6 @@ private:
             effectLongPressActive =
               false;
           }
-
           else if (insideColor)
           {
             touchTarget =
@@ -9918,7 +10854,6 @@ private:
             lastTouchInsideColor =
               true;
           }
-
           else if (insidePresetOpen)
           {
             touchTarget =
@@ -9928,10 +10863,6 @@ private:
               true;
           }
         }
-
-        // ===================================================
-        // COLOR
-        // ===================================================
 
         else if (
           currentPage ==
@@ -9946,7 +10877,6 @@ private:
             lastTouchInsideBack =
               true;
           }
-
           else if (insideHueDown)
           {
             touchTarget =
@@ -9963,7 +10893,6 @@ private:
 
             beginHueEdit();
           }
-
           else if (insideHueUp)
           {
             touchTarget =
@@ -9980,7 +10909,6 @@ private:
 
             beginHueEdit();
           }
-
           else if (insideSaturationDown)
           {
             touchTarget =
@@ -9997,7 +10925,6 @@ private:
 
             beginSaturationEdit();
           }
-
           else if (insideSaturationUp)
           {
             touchTarget =
@@ -10016,10 +10943,6 @@ private:
           }
         }
 
-        // ===================================================
-        // EFFECT
-        // ===================================================
-
         else if (
           currentPage ==
           SCREEN_EFFECT
@@ -10033,7 +10956,6 @@ private:
             lastTouchInsideBack =
               true;
           }
-
           else if (insideSpeedDown)
           {
             touchTarget =
@@ -10048,7 +10970,6 @@ private:
             lastSpeedRepeat =
               now;
           }
-
           else if (insideSpeedUp)
           {
             touchTarget =
@@ -10063,7 +10984,6 @@ private:
             lastSpeedRepeat =
               now;
           }
-
           else if (insideIntensityDown)
           {
             touchTarget =
@@ -10078,7 +10998,6 @@ private:
             lastIntensityRepeat =
               now;
           }
-
           else if (insideIntensityUp)
           {
             touchTarget =
@@ -10093,7 +11012,6 @@ private:
             lastIntensityRepeat =
               now;
           }
-
           else if (insidePalettePrev)
           {
             touchTarget =
@@ -10111,7 +11029,6 @@ private:
             paletteLongPressActive =
               false;
           }
-
           else if (insidePaletteNext)
           {
             touchTarget =
@@ -10131,10 +11048,6 @@ private:
           }
         }
 
-        // ===================================================
-        // PRESET
-        // ===================================================
-
         else if (
           currentPage ==
           SCREEN_PRESET
@@ -10148,7 +11061,6 @@ private:
             lastTouchInsideBack =
               true;
           }
-
           else if (
             presetSubPage ==
               PRESET_SUBPAGE_NAV &&
@@ -10170,7 +11082,6 @@ private:
             presetLongPressActive =
               false;
           }
-
           else if (
             presetSubPage ==
               PRESET_SUBPAGE_NAV &&
@@ -10192,7 +11103,6 @@ private:
             presetLongPressActive =
               false;
           }
-
           else if (
             presetSubPage ==
               PRESET_SUBPAGE_NAV &&
@@ -10205,7 +11115,6 @@ private:
             lastTouchInsidePresetManage =
               true;
           }
-
           else if (
             presetSubPage ==
               PRESET_SUBPAGE_MANAGE &&
@@ -10218,7 +11127,6 @@ private:
             lastTouchInsidePresetSaveNew =
               true;
           }
-
           else if (
             presetSubPage ==
               PRESET_SUBPAGE_MANAGE &&
@@ -10231,7 +11139,18 @@ private:
             lastTouchInsidePresetOverwriteOpen =
               true;
           }
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_MANAGE &&
+            insidePresetDeleteOpen
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_DELETE_OPEN;
 
+            lastTouchInsidePresetDeleteOpen =
+              true;
+          }
           else if (
             presetSubPage ==
               PRESET_SUBPAGE_SAVE &&
@@ -10250,7 +11169,6 @@ private:
             presetSaveHoldTriggered =
               false;
           }
-
           else if (
             presetSubPage ==
               PRESET_SUBPAGE_OVERWRITE &&
@@ -10263,7 +11181,6 @@ private:
             lastTouchInsidePresetOverwriteNav =
               true;
           }
-
           else if (
             presetSubPage ==
               PRESET_SUBPAGE_OVERWRITE &&
@@ -10276,7 +11193,6 @@ private:
             lastTouchInsidePresetOverwriteNav =
               true;
           }
-
           else if (
             presetSubPage ==
               PRESET_SUBPAGE_OVERWRITE &&
@@ -10295,12 +11211,50 @@ private:
             presetSaveHoldTriggered =
               false;
           }
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_DELETE &&
+            insidePresetDeletePrev
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_DELETE_PREV;
+
+            lastTouchInsidePresetDeleteNav =
+              true;
+          }
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_DELETE &&
+            insidePresetDeleteNext
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_DELETE_NEXT;
+
+            lastTouchInsidePresetDeleteNav =
+              true;
+          }
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_DELETE &&
+            insidePresetDeleteHold
+          )
+          {
+            touchTarget =
+              TOUCH_TARGET_PRESET_DELETE_HOLD;
+
+            lastTouchInsidePresetDeleteHold =
+              true;
+
+            presetSaveHoldStartTime =
+              now;
+
+            presetSaveHoldTriggered =
+              false;
+          }
         }
       }
-
-      // =====================================================
-      // Power
-      // =====================================================
 
       if (
         touchTarget ==
@@ -10323,10 +11277,6 @@ private:
 
         return;
       }
-
-      // =====================================================
-      // Brightness
-      // =====================================================
 
       if (
         touchTarget ==
@@ -10403,10 +11353,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // Effect Prev / Next
-      // =====================================================
-
       if (
         touchTarget ==
           TOUCH_TARGET_EFFECT_PREV ||
@@ -10482,10 +11428,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // Effect Detail
-      // =====================================================
-
       if (
         touchTarget ==
         TOUCH_TARGET_EFFECT_DETAIL
@@ -10514,10 +11456,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // COLOR open
-      // =====================================================
-
       if (
         touchTarget ==
         TOUCH_TARGET_COLOR_OPEN
@@ -10540,10 +11478,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // PRESET open
-      // =====================================================
-
       if (
         touchTarget ==
         TOUCH_TARGET_PRESET_OPEN
@@ -10565,10 +11499,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // Back
-      // =====================================================
-
       if (
         touchTarget ==
         TOUCH_TARGET_BACK
@@ -10589,10 +11519,6 @@ private:
 
         return;
       }
-
-      // =====================================================
-      // Hue
-      // =====================================================
 
       if (
         touchTarget ==
@@ -10669,10 +11595,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // Saturation
-      // =====================================================
-
       if (
         touchTarget ==
           TOUCH_TARGET_SATURATION_DOWN ||
@@ -10747,10 +11669,6 @@ private:
 
         return;
       }
-
-      // =====================================================
-      // Speed
-      // =====================================================
 
       if (
         touchTarget ==
@@ -10827,10 +11745,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // Intensity
-      // =====================================================
-
       if (
         touchTarget ==
           TOUCH_TARGET_INTENSITY_DOWN ||
@@ -10905,10 +11819,6 @@ private:
 
         return;
       }
-
-      // =====================================================
-      // Palette
-      // =====================================================
 
       if (
         touchTarget ==
@@ -10985,10 +11895,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // Preset Prev / Next
-      // =====================================================
-
       if (
         touchTarget ==
           TOUCH_TARGET_PRESET_PREV ||
@@ -11063,11 +11969,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // Phase 10.2.1
-      // PRESET MANAGE
-      // =====================================================
-
       if (
         touchTarget ==
         TOUCH_TARGET_PRESET_MANAGE
@@ -11089,11 +11990,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // Phase 10.2.1
-      // PRESET SAVE NEW
-      // =====================================================
-
       if (
         touchTarget ==
         TOUCH_TARGET_PRESET_SAVE_NEW
@@ -11114,11 +12010,6 @@ private:
 
         return;
       }
-
-      // =====================================================
-      // Phase 10.2.1
-      // PRESET HOLD TO SAVE
-      // =====================================================
 
       if (
         touchTarget ==
@@ -11173,11 +12064,6 @@ private:
         return;
       }
 
-      // =====================================================
-      // Phase 10.2.2
-      // PRESET OVERWRITE open
-      // =====================================================
-
       if (
         touchTarget ==
         TOUCH_TARGET_PRESET_OVERWRITE_OPEN
@@ -11198,11 +12084,6 @@ private:
 
         return;
       }
-
-      // =====================================================
-      // Phase 10.2.2
-      // PRESET OVERWRITE target Prev / Next
-      // =====================================================
 
       if (
         touchTarget ==
@@ -11239,11 +12120,6 @@ private:
 
         return;
       }
-
-      // =====================================================
-      // Phase 10.2.2
-      // PRESET HOLD TO OVERWRITE
-      // =====================================================
 
       if (
         touchTarget ==
@@ -11298,12 +12174,118 @@ private:
         return;
       }
 
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_DELETE_OPEN
+      )
+      {
+        lastTouchInsidePresetDeleteOpen =
+          insidePresetDeleteOpen;
+
+        if (
+          insidePresetDeleteOpen !=
+          presetDeleteOpenButtonVisualPressed
+        )
+        {
+          drawPresetDeleteOpenButton(
+            insidePresetDeleteOpen
+          );
+        }
+
+        return;
+      }
+
+      if (
+        touchTarget ==
+          TOUCH_TARGET_PRESET_DELETE_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_PRESET_DELETE_NEXT
+      )
+      {
+        bool insideSelectedButton =
+          (
+            touchTarget ==
+              TOUCH_TARGET_PRESET_DELETE_PREV
+          )
+            ? insidePresetDeletePrev
+            : insidePresetDeleteNext;
+
+        lastTouchInsidePresetDeleteNav =
+          insideSelectedButton;
+
+        if (
+          insideSelectedButton !=
+          presetDeleteNavButtonVisualPressed
+        )
+        {
+          drawPresetDeleteNavigation(
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
+
+          presetDeleteNavButtonVisualPressed =
+            insideSelectedButton;
+        }
+
+        return;
+      }
+
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_DELETE_HOLD
+      )
+      {
+        lastTouchInsidePresetDeleteHold =
+          insidePresetDeleteHold;
+
+        if (
+          insidePresetDeleteHold !=
+          presetDeleteHoldButtonVisualPressed
+        )
+        {
+          drawPresetDeleteHoldButton(
+            insidePresetDeleteHold
+          );
+        }
+
+        if (!insidePresetDeleteHold)
+        {
+          presetSaveHoldStartTime =
+            0;
+
+          return;
+        }
+
+        if (
+          presetSaveHoldStartTime ==
+          0
+        )
+        {
+          presetSaveHoldStartTime =
+            now;
+        }
+
+        if (
+          !presetSaveHoldTriggered &&
+          now -
+          presetSaveHoldStartTime >=
+          PRESET_SAVE_HOLD_MS
+        )
+        {
+          presetSaveHoldTriggered =
+            true;
+
+          requestPresetDelete();
+
+          return;
+        }
+
+        return;
+      }
+
       return;
     }
-
-    // =======================================================
-    // No Touch
-    // =======================================================
 
     if (!touchActive)
     {
@@ -11329,10 +12311,6 @@ private:
     {
       return;
     }
-
-    // =======================================================
-    // Confirmed release
-    // =======================================================
 
     TouchTarget releasedTarget =
       touchTarget;
@@ -11360,10 +12338,6 @@ private:
 
     bool wasPresetLongPress =
       presetLongPressActive;
-
-    // =======================================================
-    // Determine actions
-    // =======================================================
 
     bool executePowerAction =
       (
@@ -11515,9 +12489,21 @@ private:
       ) &&
       lastTouchInsidePresetOverwriteNav;
 
-    // =======================================================
-    // Restore visuals
-    // =======================================================
+    bool executePresetDeleteOpen =
+      (
+        releasedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_OPEN
+      ) &&
+      lastTouchInsidePresetDeleteOpen;
+
+    bool executePresetDeleteStep =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_NEXT
+      ) &&
+      lastTouchInsidePresetDeleteNav;
 
     if (
       releasedTarget ==
@@ -11774,9 +12760,42 @@ private:
       );
     }
 
-    // =======================================================
-    // Preserve HSV gesture state through reset
-    // =======================================================
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_OPEN &&
+      presetDeleteOpenButtonVisualPressed
+    )
+    {
+      drawPresetDeleteOpenButton(
+        false
+      );
+    }
+
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_NEXT
+      ) &&
+      presetDeleteNavButtonVisualPressed
+    )
+    {
+      drawPresetDeleteNavigation(
+        TOUCH_TARGET_NONE
+      );
+    }
+
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_HOLD &&
+      presetDeleteHoldButtonVisualPressed
+    )
+    {
+      drawPresetDeleteHoldButton(
+        false
+      );
+    }
 
     bool savedHueEditValid =
       hueEditValid;
@@ -11828,10 +12847,6 @@ private:
     saturationEditWhite =
       savedSaturationEditWhite;
 
-    // =======================================================
-    // Power
-    // =======================================================
-
     if (executePowerAction)
     {
       lastTouchAction =
@@ -11847,10 +12862,6 @@ private:
 
       return;
     }
-
-    // =======================================================
-    // Brightness short
-    // =======================================================
 
     if (executeBrightnessShortPress)
     {
@@ -11874,10 +12885,6 @@ private:
 
       return;
     }
-
-    // =======================================================
-    // Effect short
-    // =======================================================
 
     if (executeEffectAction)
     {
@@ -11911,10 +12918,6 @@ private:
       return;
     }
 
-    // =======================================================
-    // Open Effect Detail
-    // =======================================================
-
     if (executeEffectDetail)
     {
       hueEditValid =
@@ -11928,10 +12931,6 @@ private:
       return;
     }
 
-    // =======================================================
-    // Open COLOR
-    // =======================================================
-
     if (executeColorOpen)
     {
       hueEditValid =
@@ -11944,10 +12943,6 @@ private:
 
       return;
     }
-
-    // =======================================================
-    // Open PRESET
-    // =======================================================
 
     if (executePresetOpen)
     {
@@ -11965,11 +12960,6 @@ private:
       return;
     }
 
-    // =======================================================
-    // Phase 10.2.1
-    // Open PRESET MANAGE
-    // =======================================================
-
     if (executePresetManageOpen)
     {
       hueEditValid =
@@ -11982,11 +12972,6 @@ private:
 
       return;
     }
-
-    // =======================================================
-    // Phase 10.2.1
-    // Open SAVE NEW confirmation
-    // =======================================================
 
     if (executePresetSaveNew)
     {
@@ -12010,11 +12995,6 @@ private:
       return;
     }
 
-    // =======================================================
-    // Phase 10.2.2
-    // Open OVERWRITE destination selection
-    // =======================================================
-
     if (executePresetOverwriteOpen)
     {
       hueEditValid =
@@ -12036,13 +13016,6 @@ private:
 
       return;
     }
-
-    // =======================================================
-    // Phase 10.2.2
-    // Change overwrite target only
-    //
-    // No Preset is applied here.
-    // =======================================================
 
     if (executePresetOverwriteStep)
     {
@@ -12072,9 +13045,55 @@ private:
       return;
     }
 
-    // =======================================================
-    // Back
-    // =======================================================
+    if (executePresetDeleteOpen)
+    {
+      hueEditValid =
+        false;
+
+      saturationEditValid =
+        false;
+
+      if (
+        preparePresetDeleteTarget()
+      )
+      {
+        drawPresetDeleteScreen();
+      }
+      else
+      {
+        drawPresetManageScreen();
+      }
+
+      return;
+    }
+
+    if (executePresetDeleteStep)
+    {
+      int direction =
+        (
+          releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_PREV
+        )
+          ? -1
+          : 1;
+
+      if (
+        stepPresetDeleteTarget(
+          direction
+        )
+      )
+      {
+        drawPresetDeleteScreen();
+      }
+
+      hueEditValid =
+        false;
+
+      saturationEditValid =
+        false;
+
+      return;
+    }
 
     if (executeBack)
     {
@@ -12083,6 +13102,33 @@ private:
 
       saturationEditValid =
         false;
+
+      if (
+        currentPage ==
+          SCREEN_PRESET &&
+        presetSubPage ==
+          PRESET_SUBPAGE_DELETE
+      )
+      {
+        presetDeleteOperationState =
+          PRESET_DELETE_OP_IDLE;
+
+        presetDeleteTargetId =
+          0;
+
+        presetDeleteTargetName =
+          "";
+
+        presetDeleteWasCurrentPreset =
+          false;
+
+        presetDeleteResultStartMs =
+          0;
+
+        drawPresetManageScreen();
+
+        return;
+      }
 
       if (
         currentPage ==
@@ -12154,10 +13200,6 @@ private:
       return;
     }
 
-    // =======================================================
-    // Hue short
-    // =======================================================
-
     if (executeHueShortPress)
     {
       hueShortPress(
@@ -12182,10 +13224,6 @@ private:
 
       return;
     }
-
-    // =======================================================
-    // Saturation short
-    // =======================================================
 
     if (executeSaturationShortPress)
     {
@@ -12212,10 +13250,6 @@ private:
       return;
     }
 
-    // =======================================================
-    // Speed short
-    // =======================================================
-
     if (executeSpeedShortPress)
     {
       speedShortPress(
@@ -12238,10 +13272,6 @@ private:
 
       return;
     }
-
-    // =======================================================
-    // Intensity short
-    // =======================================================
 
     if (executeIntensityShortPress)
     {
@@ -12266,10 +13296,6 @@ private:
       return;
     }
 
-    // =======================================================
-    // Palette short
-    // =======================================================
-
     if (executePaletteShortPress)
     {
       paletteShortPress(
@@ -12292,10 +13318,6 @@ private:
 
       return;
     }
-
-    // =======================================================
-    // Preset short
-    // =======================================================
 
     if (executePresetShortPress)
     {
@@ -12324,10 +13346,6 @@ private:
   }
 
 public:
-
-  // =========================================================
-  // Usermod configuration
-  // =========================================================
 
   void addToConfig(
     JsonObject& root
@@ -12360,10 +13378,6 @@ public:
     ] =
       fadeDurationMs;
   }
-
-  // =========================================================
-  // Read configuration
-  // =========================================================
 
   bool readFromConfig(
     JsonObject& root
@@ -12504,10 +13518,6 @@ public:
       configComplete;
   }
 
-  // =========================================================
-  // Usermod Settings UI enhancement
-  // =========================================================
-
   void appendConfigData(
     Print& settingsScript
   ) override
@@ -12631,10 +13641,6 @@ public:
     );
   }
 
-  // =========================================================
-  // Setup
-  // =========================================================
-
   void setup() override
   {
     Serial.println();
@@ -12642,7 +13648,7 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 10.2.2 start"
+        "Phase 10.2.3 start"
       )
     );
 
@@ -12741,16 +13747,6 @@ public:
     lastPresetsModifiedTime =
       presetsModifiedTime;
 
-    // -------------------------------------------------------
-    // Phase 10.2.1
-    //
-    // Phase 10.1.1 cache behavior is preserved.
-    // Only initialize the cache builder here.
-    //
-    // Actual presets.json scanning starts later from loop()
-    // after the normal startup sequence has completed.
-    // -------------------------------------------------------
-
     presetCacheCount =
       0;
 
@@ -12775,16 +13771,12 @@ public:
     Serial.println(
       F(
         "[CoreS3_Display] "
-        "Phase 10.2.2 setup complete"
+        "Phase 10.2.3 setup complete"
       )
     );
 
     Serial.println();
   }
-
-  // =========================================================
-  // Main loop
-  // =========================================================
 
   void loop() override
   {
@@ -12792,10 +13784,6 @@ public:
     {
       return;
     }
-
-    // =======================================================
-    // Startup
-    // =======================================================
 
     if (
       startupState !=
@@ -12807,19 +13795,6 @@ public:
       return;
     }
 
-    // =======================================================
-    // Phase 10.1.1
-    // Preset cache
-    //
-    // Start the first build after WLED startup is complete.
-    //
-    // Thereafter servicePresetCache() performs at most
-    // one Preset ID check per interval.
-    //
-    // This is before sleep / update early returns so the
-    // cache can continue building without blocking the UI.
-    // =======================================================
-
     if (
       !presetCacheReady &&
       !presetCacheBuilding
@@ -12830,16 +13805,9 @@ public:
 
     servicePresetCache();
 
-    // =======================================================
-    // Phase 10.2.2
-    // Preset save / overwrite service
-    // =======================================================
-
     servicePresetSaveOperation();
 
-    // =======================================================
-    // Normal touch
-    // =======================================================
+    servicePresetDeleteOperation();
 
     if (
       displayPowerState ==
@@ -12848,10 +13816,6 @@ public:
     {
       handleTouch();
     }
-
-    // =======================================================
-    // Sleep / Wake
-    // =======================================================
 
     if (
       handleDisplayPowerManagement()
@@ -12875,10 +13839,6 @@ public:
     lastUpdate =
       now;
 
-    // =======================================================
-    // Pending Preset settle
-    // =======================================================
-
     bool presetPendingSettled =
       settlePendingPreset();
 
@@ -12887,10 +13847,6 @@ public:
         WiFi.status() ==
         WL_CONNECTED
       );
-
-    // =======================================================
-    // Wi-Fi disconnected
-    // =======================================================
 
     if (!wifiConnected)
     {
@@ -12913,10 +13869,6 @@ public:
     String currentIPAddress =
       WiFi.localIP().toString();
 
-    // =======================================================
-    // Reconnected
-    // =======================================================
-
     if (
       !lastWiFiConnected ||
       !readyScreenShown
@@ -12934,10 +13886,6 @@ public:
 
       return;
     }
-
-    // =======================================================
-    // IP changed
-    // =======================================================
 
     if (
       currentIPAddress !=
@@ -12962,10 +13910,6 @@ public:
 
     lastWiFiConnected =
       true;
-
-    // =======================================================
-    // Power sync
-    // =======================================================
 
     bool ledOn =
       (bri > 0);
@@ -12992,10 +13936,6 @@ public:
           : 0;
     }
 
-    // =======================================================
-    // Current main segment values
-    // =======================================================
-
     uint8_t effectMode =
       getCurrentEffectMode();
 
@@ -13010,10 +13950,6 @@ public:
 
     uint8_t displayedPreset =
       getDisplayedPresetId();
-
-    // =======================================================
-    // Primary Color
-    // =======================================================
 
     uint32_t primaryColor =
       getPrimaryColor();
@@ -13049,10 +13985,6 @@ public:
 
     bool primaryColorChangeHandled =
       false;
-
-    // =======================================================
-    // MAIN
-    // =======================================================
 
     if (
       currentPage ==
@@ -13154,10 +14086,6 @@ public:
       }
     }
 
-    // =======================================================
-    // COLOR
-    // =======================================================
-
     else if (
       currentPage ==
       SCREEN_COLOR
@@ -13196,10 +14124,6 @@ public:
           true;
       }
     }
-
-    // =======================================================
-    // EFFECT
-    // =======================================================
 
     else if (
       currentPage ==
@@ -13288,10 +14212,6 @@ public:
       }
     }
 
-    // =======================================================
-    // PRESET
-    // =======================================================
-
     else if (
       currentPage ==
         SCREEN_PRESET &&
@@ -13346,10 +14266,6 @@ public:
       }
     }
 
-    // =======================================================
-    // Cache Primary Color
-    // =======================================================
-
     if (
       primaryColorChanged &&
       primaryColorChangeHandled
@@ -13362,10 +14278,6 @@ public:
         true;
     }
   }
-
-  // =========================================================
-  // WLED Info
-  // =========================================================
 
   void addToJsonInfo(
     JsonObject& root
@@ -13383,10 +14295,6 @@ public:
           "u"
         );
     }
-
-    // -------------------------------------------------------
-    // Display
-    // -------------------------------------------------------
 
     JsonArray displayInfo =
       user.createNestedArray(
@@ -13416,10 +14324,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Touch
-    // -------------------------------------------------------
-
     JsonArray touchInfo =
       user.createNestedArray(
         "CoreS3 Display Touch"
@@ -13430,10 +14334,6 @@ public:
         ? "READY"
         : "NOT FOUND"
     );
-
-    // -------------------------------------------------------
-    // Wi-Fi
-    // -------------------------------------------------------
 
     JsonArray wifiInfo =
       user.createNestedArray(
@@ -13456,10 +14356,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // LED Power
-    // -------------------------------------------------------
-
     JsonArray ledInfo =
       user.createNestedArray(
         "CoreS3 Display LED"
@@ -13471,10 +14367,6 @@ public:
         : "OFF"
     );
 
-    // -------------------------------------------------------
-    // WLED Brightness
-    // -------------------------------------------------------
-
     JsonArray brightnessInfo =
       user.createNestedArray(
         "CoreS3 Display Brightness"
@@ -13483,10 +14375,6 @@ public:
     brightnessInfo.add(
       bri
     );
-
-    // -------------------------------------------------------
-    // Effect
-    // -------------------------------------------------------
 
     JsonArray effectInfo =
       user.createNestedArray(
@@ -13517,10 +14405,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Effect Speed
-    // -------------------------------------------------------
-
     JsonArray speedInfo =
       user.createNestedArray(
         "CoreS3 Effect Speed"
@@ -13542,10 +14426,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Effect Intensity
-    // -------------------------------------------------------
-
     JsonArray intensityInfo =
       user.createNestedArray(
         "CoreS3 Effect Intensity"
@@ -13566,10 +14446,6 @@ public:
         "No segment"
       );
     }
-
-    // -------------------------------------------------------
-    // Palette
-    // -------------------------------------------------------
 
     JsonArray paletteInfo =
       user.createNestedArray(
@@ -13600,10 +14476,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Palette ID
-    // -------------------------------------------------------
-
     JsonArray paletteIdInfo =
       user.createNestedArray(
         "CoreS3 Effect Palette ID"
@@ -13625,10 +14497,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Palette touch area
-    // -------------------------------------------------------
-
     JsonArray paletteTouchInfo =
       user.createNestedArray(
         "CoreS3 Palette Touch Area"
@@ -13637,13 +14505,6 @@ public:
     paletteTouchInfo.add(
       "Expanded"
     );
-
-    // -------------------------------------------------------
-    // Preset
-    //
-    // Do not call getPresetName() from addToJsonInfo()
-    // because WLED may already own the shared JSON buffer.
-    // -------------------------------------------------------
 
     JsonArray presetInfo =
       user.createNestedArray(
@@ -13673,11 +14534,6 @@ public:
     presetTouchInfo.add(
       "Expanded"
     );
-
-    // -------------------------------------------------------
-    // Phase 10.1.1
-    // Preset cache
-    // -------------------------------------------------------
 
     JsonArray presetCacheInfo =
       user.createNestedArray(
@@ -13737,10 +14593,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Color
-    // -------------------------------------------------------
-
     JsonArray colorInfo =
       user.createNestedArray(
         "CoreS3 Display Color"
@@ -13776,10 +14628,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Hue
-    // -------------------------------------------------------
-
     JsonArray hueInfo =
       user.createNestedArray(
         "CoreS3 Display Hue"
@@ -13801,10 +14649,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Saturation
-    // -------------------------------------------------------
-
     JsonArray saturationInfo =
       user.createNestedArray(
         "CoreS3 Display Saturation"
@@ -13825,10 +14669,6 @@ public:
         "No segment"
       );
     }
-
-    // -------------------------------------------------------
-    // Page
-    // -------------------------------------------------------
 
     JsonArray pageInfo =
       user.createNestedArray(
@@ -13868,10 +14708,6 @@ public:
         "PRESET"
       );
     }
-
-    // -------------------------------------------------------
-    // Display Power State
-    // -------------------------------------------------------
 
     JsonArray powerStateInfo =
       user.createNestedArray(
@@ -13913,10 +14749,6 @@ public:
         break;
     }
 
-    // -------------------------------------------------------
-    // LCD brightness
-    // -------------------------------------------------------
-
     JsonArray lcdBrightnessInfo =
       user.createNestedArray(
         "CoreS3 LCD Brightness"
@@ -13925,10 +14757,6 @@ public:
     lcdBrightnessInfo.add(
       lcdBrightness
     );
-
-    // -------------------------------------------------------
-    // Sleep
-    // -------------------------------------------------------
 
     JsonArray sleepInfo =
       user.createNestedArray(
@@ -13960,10 +14788,6 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Fade
-    // -------------------------------------------------------
-
     JsonArray fadeInfo =
       user.createNestedArray(
         "CoreS3 Display Fade"
@@ -13991,17 +14815,13 @@ public:
       );
     }
 
-    // -------------------------------------------------------
-    // Phase
-    // -------------------------------------------------------
-
     JsonArray phaseInfo =
       user.createNestedArray(
         "CoreS3 Display Phase"
       );
 
     phaseInfo.add(
-      "10.2.2"
+      "10.2.3"
     );
   }
 };
