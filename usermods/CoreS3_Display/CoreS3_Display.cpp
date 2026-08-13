@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.4
+// Phase 10.3.5
 //
 // MAIN
 //   Power
@@ -121,6 +121,13 @@
 //   Intensity / Palette / Preset share one timing-state type.
 //   Existing timing constants, repeat actions, touch areas,
 //   release behavior, WLED operations, and UI are unchanged.
+//
+// Phase 10.3.5
+//   Repeated numeric control drawing is consolidated.
+//   Brightness / Hue / Saturation / Speed / Intensity keep
+//   their existing wrapper functions and exact coordinates.
+//   Touch areas, value logic, long-press/repeat behavior,
+//   WLED operations, and visible UI are unchanged.
 //
 // Common
 //   Startup animation
@@ -2609,8 +2616,13 @@ class CoreS3DisplayUsermod : public Usermod {
     }
   }
 
-  void drawBrightness( int brightnessValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 62, screenWidth, 58, TFT_BLACK );
+  // =========================================================
+  // Phase 10.3.5
+  // Shared numeric control drawing
+  // =========================================================
+
+  void drawNumericControl( int16_t clearY, int16_t clearH, const char* label, int16_t labelY, int16_t buttonY, int16_t valueY, const char* valueText, TouchTarget pressedTarget, TouchTarget downTarget, TouchTarget upTarget ) {
+    display.fillRect( 0, clearY, screenWidth, clearH, TFT_BLACK );
 
     display.setTextDatum( textdatum_t::middle_center );
 
@@ -2618,21 +2630,25 @@ class CoreS3DisplayUsermod : public Usermod {
 
     display.setTextSize( 1 );
 
-    display.drawString( "Brightness", screenWidth / 2, 70 );
+    display.drawString( label, screenWidth / 2, labelY );
 
-    drawTriangleButton( CONTROL_LEFT_X, BRI_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_BRIGHTNESS_DOWN );
+    drawTriangleButton( CONTROL_LEFT_X, buttonY, false, pressedTarget == downTarget );
 
-    drawTriangleButton( CONTROL_RIGHT_X, BRI_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_BRIGHTNESS_UP );
-
-    char valueText[8];
-
-    snprintf( valueText, sizeof(valueText), "%d", brightnessValue );
+    drawTriangleButton( CONTROL_RIGHT_X, buttonY, true, pressedTarget == upTarget );
 
     display.setTextSize( 2 );
 
     display.setTextColor( TFT_WHITE, TFT_BLACK );
 
-    display.drawString( valueText, screenWidth / 2, 99 );
+    display.drawString( valueText, screenWidth / 2, valueY );
+  }
+
+  void drawBrightness( int brightnessValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
+    char valueText[8];
+
+    snprintf( valueText, sizeof(valueText), "%d", brightnessValue );
+
+    drawNumericControl( 62, 58, "Brightness", 70, BRI_BUTTON_Y, 99, valueText, pressedTarget, TOUCH_TARGET_BRIGHTNESS_DOWN, TOUCH_TARGET_BRIGHTNESS_UP );
   }
 
   void getEffectName( uint8_t effectMode, char* effectName, size_t effectNameSize ) {
@@ -2825,99 +2841,35 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void drawHue( uint8_t hueValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 138, screenWidth, 56, TFT_BLACK );
-
-    display.setTextDatum( textdatum_t::middle_center );
-
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
-
-    display.setTextSize( 1 );
-
-    display.drawString( "Hue", screenWidth / 2, 144 );
-
-    drawTriangleButton( CONTROL_LEFT_X, HUE_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_HUE_DOWN );
-
-    drawTriangleButton( CONTROL_RIGHT_X, HUE_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_HUE_UP );
-
     char valueText[8];
 
     snprintf( valueText, sizeof(valueText), "%u", hueValue );
 
-    display.setTextSize( 2 );
-
-    display.drawString( valueText, screenWidth / 2, HUE_BUTTON_Y + (CONTROL_BUTTON_H / 2) );
+    drawNumericControl( 138, 56, "Hue", 144, HUE_BUTTON_Y, HUE_BUTTON_Y + (CONTROL_BUTTON_H / 2), valueText, pressedTarget, TOUCH_TARGET_HUE_DOWN, TOUCH_TARGET_HUE_UP );
   }
 
   void drawSaturation( uint8_t saturationValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 194, screenWidth, 46, TFT_BLACK );
-
-    display.setTextDatum( textdatum_t::middle_center );
-
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
-
-    display.setTextSize( 1 );
-
-    display.drawString( "Saturation", screenWidth / 2, SATURATION_LABEL_Y );
-
-    drawTriangleButton( CONTROL_LEFT_X, SATURATION_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_SATURATION_DOWN );
-
-    drawTriangleButton( CONTROL_RIGHT_X, SATURATION_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_SATURATION_UP );
-
     char valueText[8];
 
     snprintf( valueText, sizeof(valueText), "%u", saturationValue );
 
-    display.setTextSize( 2 );
-
-    display.drawString( valueText, screenWidth / 2, SATURATION_BUTTON_Y + (CONTROL_BUTTON_H / 2) );
+    drawNumericControl( 194, 46, "Saturation", SATURATION_LABEL_Y, SATURATION_BUTTON_Y, SATURATION_BUTTON_Y + (CONTROL_BUTTON_H / 2), valueText, pressedTarget, TOUCH_TARGET_SATURATION_DOWN, TOUCH_TARGET_SATURATION_UP );
   }
 
   void drawSpeed( uint8_t speedValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 62, screenWidth, 58, TFT_BLACK );
-
-    display.setTextDatum( textdatum_t::middle_center );
-
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
-
-    display.setTextSize( 1 );
-
-    display.drawString( "Speed", screenWidth / 2, 70 );
-
-    drawTriangleButton( CONTROL_LEFT_X, SPEED_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_SPEED_DOWN );
-
-    drawTriangleButton( CONTROL_RIGHT_X, SPEED_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_SPEED_UP );
-
     char valueText[8];
 
     snprintf( valueText, sizeof(valueText), "%u", speedValue );
 
-    display.setTextSize( 2 );
-
-    display.drawString( valueText, screenWidth / 2, 99 );
+    drawNumericControl( 62, 58, "Speed", 70, SPEED_BUTTON_Y, 99, valueText, pressedTarget, TOUCH_TARGET_SPEED_DOWN, TOUCH_TARGET_SPEED_UP );
   }
 
   void drawIntensity( uint8_t intensityValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 120, screenWidth, 60, TFT_BLACK );
-
-    display.setTextDatum( textdatum_t::middle_center );
-
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
-
-    display.setTextSize( 1 );
-
-    display.drawString( "Intensity", screenWidth / 2, 128 );
-
-    drawTriangleButton( CONTROL_LEFT_X, INTENSITY_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_INTENSITY_DOWN );
-
-    drawTriangleButton( CONTROL_RIGHT_X, INTENSITY_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_INTENSITY_UP );
-
     char valueText[8];
 
     snprintf( valueText, sizeof(valueText), "%u", intensityValue );
 
-    display.setTextSize( 2 );
-
-    display.drawString( valueText, screenWidth / 2, 157 );
+    drawNumericControl( 120, 60, "Intensity", 128, INTENSITY_BUTTON_Y, 157, valueText, pressedTarget, TOUCH_TARGET_INTENSITY_DOWN, TOUCH_TARGET_INTENSITY_UP );
   }
 
   void drawPalette( uint8_t paletteId, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
@@ -6601,7 +6553,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.4 start" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.5 start" ) );
 
     Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
 
@@ -6661,7 +6613,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.4 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.5 setup complete" ) );
 
     Serial.println();
   }
@@ -7144,7 +7096,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.4" );
+    phaseInfo.add( "10.3.5" );
   }
 };
 
