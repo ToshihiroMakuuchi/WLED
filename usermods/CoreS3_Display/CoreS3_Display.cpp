@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.7
+// Phase 10.3.8
 //
 // MAIN
 //   Power
@@ -142,6 +142,14 @@
 //   Pressed-visual release and Back navigation are isolated helpers.
 //   Release confirmation, action conditions, action order semantics,
 //   coordinates, timings, WLED operations, and visible UI are unchanged.
+//
+// Phase 10.3.8
+//   Runtime display synchronization is split by page.
+//   MAIN / COLOR / EFFECT / PRESET update logic is moved out of loop().
+//   The helpers remain hardware-neutral so the UI/WLED state logic can
+//   be reused when Core2 / Core2 for AWS support is added later.
+//   Update order, 250 ms polling, Wi-Fi handling, touch suppression,
+//   WLED state reads, cache updates, and visible UI are unchanged.
 //
 // Common
 //   Startup animation
@@ -6394,6 +6402,142 @@ class CoreS3DisplayUsermod : public Usermod {
     handleTouchRelease( now );
   }
 
+  // =========================================================
+  // Phase 10.3.8
+  // Page-specific runtime display synchronization
+  //
+  // These helpers contain only UI/WLED state synchronization.
+  // Hardware-specific display/touch access remains outside this layer
+  // so the same page logic can be reused for Core2 variants later.
+  // =========================================================
+
+  bool updateMainPageState( uint8_t effectMode, uint8_t currentSpeed, uint8_t currentIntensity, uint8_t currentPalette, uint32_t primaryColor, bool primaryColorChanged ) {
+    bool brightnessTouchActive = ( touchTarget == TOUCH_TARGET_BRIGHTNESS_DOWN || touchTarget == TOUCH_TARGET_BRIGHTNESS_UP );
+
+    if ( !brightnessTouchActive && (int)bri != lastBrightnessValue ) {
+      drawBrightness( bri, TOUCH_TARGET_NONE );
+
+      lastBrightnessValue = bri;
+    }
+
+    bool effectTouchActive = ( touchTarget == TOUCH_TARGET_EFFECT_PREV || touchTarget == TOUCH_TARGET_EFFECT_DETAIL || touchTarget == TOUCH_TARGET_EFFECT_NEXT );
+
+    if ( !effectTouchActive && (int)effectMode != lastEffectMode ) {
+      drawEffect( effectMode, TOUCH_TARGET_NONE );
+
+      lastEffectMode = effectMode;
+
+      lastSpeedValue = currentSpeed;
+
+      lastIntensityValue = currentIntensity;
+
+      lastPaletteValue = currentPalette;
+    }
+
+    if ( (int)currentPalette != lastPaletteValue ) {
+      lastPaletteValue = currentPalette;
+    }
+
+    if ( (int)currentPreset != lastPresetValue ) {
+      lastPresetValue = currentPreset;
+    }
+
+    if ( primaryColorChanged && touchTarget != TOUCH_TARGET_COLOR_OPEN ) {
+      syncLogicalColorFromRgb( primaryColor );
+
+      drawColorButton( primaryColor, false );
+
+      return true;
+    }
+
+    return false;
+  }
+
+  bool updateColorPageState( uint32_t primaryColor, bool primaryColorChanged, bool colorControlTouchActive ) {
+    if ( primaryColorChanged && !colorControlTouchActive ) {
+      syncLogicalColorFromRgb( primaryColor );
+
+      drawColorDetails( primaryColor );
+
+      drawHue( logicalHueValue, TOUCH_TARGET_NONE );
+
+      drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+
+      lastHueValue = logicalHueValue;
+
+      lastSaturationValue = logicalSaturationValue;
+
+      return true;
+    }
+
+    return false;
+  }
+
+  bool updateEffectPageState( uint8_t effectMode, uint8_t currentSpeed, uint8_t currentIntensity, uint8_t currentPalette ) {
+    bool speedTouchActive = ( touchTarget == TOUCH_TARGET_SPEED_DOWN || touchTarget == TOUCH_TARGET_SPEED_UP );
+
+    bool intensityTouchActive = ( touchTarget == TOUCH_TARGET_INTENSITY_DOWN || touchTarget == TOUCH_TARGET_INTENSITY_UP );
+
+    bool paletteTouchActive = ( touchTarget == TOUCH_TARGET_PALETTE_PREV || touchTarget == TOUCH_TARGET_PALETTE_NEXT );
+
+    if ( touchTarget == TOUCH_TARGET_NONE && (int)effectMode != lastEffectMode ) {
+      drawEffectDetailScreen();
+
+      return true;
+    }
+
+    if ( !speedTouchActive && (int)currentSpeed != lastSpeedValue ) {
+      drawSpeed( currentSpeed, TOUCH_TARGET_NONE );
+
+      lastSpeedValue = currentSpeed;
+    }
+
+    if ( !intensityTouchActive && (int)currentIntensity != lastIntensityValue ) {
+      drawIntensity( currentIntensity, TOUCH_TARGET_NONE );
+
+      lastIntensityValue = currentIntensity;
+    }
+
+    if ( !paletteTouchActive && (int)currentPalette != lastPaletteValue ) {
+      drawPalette( currentPalette, TOUCH_TARGET_NONE );
+
+      lastPaletteValue = currentPalette;
+    }
+
+    return false;
+  }
+
+  void updatePresetPageState( uint8_t displayedPreset, bool presetPendingSettled ) {
+    if ( presetSubPage == PRESET_SUBPAGE_NAV ) {
+      bool presetTouchActive = ( touchTarget == TOUCH_TARGET_PRESET_PREV || touchTarget == TOUCH_TARGET_PRESET_NEXT );
+
+      bool presetFileChanged = ( presetsModifiedTime != lastPresetsModifiedTime );
+
+      if (presetFileChanged) {
+        lastPresetsModifiedTime = presetsModifiedTime;
+
+        presetNoEntries = false;
+      }
+
+      if ( !presetTouchActive && ( (int)displayedPreset != lastPresetValue || presetPendingSettled || presetFileChanged ) ) {
+        drawPresetDetails( displayedPreset, pendingPresetId > 0 );
+
+        drawPresetNavigation( TOUCH_TARGET_NONE );
+
+        lastPresetValue = displayedPreset;
+      }
+
+      return;
+    }
+
+    if ( presetSubPage == PRESET_SUBPAGE_BOOT ) {
+      if ( touchTarget == TOUCH_TARGET_NONE && (int)bootPreset != lastBootPresetValue ) {
+        drawPresetBootScreen();
+        lastBootPresetValue = bootPreset;
+      }
+    }
+  }
+
   public:
 
   void addToConfig( JsonObject& root ) override {
@@ -6487,7 +6631,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.7 start" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.8 start" ) );
 
     Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
 
@@ -6547,7 +6691,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.7 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.8 setup complete" ) );
 
     Serial.println();
   }
@@ -6664,119 +6808,18 @@ class CoreS3DisplayUsermod : public Usermod {
     bool primaryColorChangeHandled = false;
 
     if ( currentPage == SCREEN_MAIN ) {
-      bool brightnessTouchActive = ( touchTarget == TOUCH_TARGET_BRIGHTNESS_DOWN || touchTarget == TOUCH_TARGET_BRIGHTNESS_UP );
-
-      if ( !brightnessTouchActive && (int)bri != lastBrightnessValue ) {
-        drawBrightness( bri, TOUCH_TARGET_NONE );
-
-        lastBrightnessValue = bri;
-      }
-
-      bool effectTouchActive = ( touchTarget == TOUCH_TARGET_EFFECT_PREV || touchTarget == TOUCH_TARGET_EFFECT_DETAIL || touchTarget == TOUCH_TARGET_EFFECT_NEXT );
-
-      if ( !effectTouchActive && (int)effectMode != lastEffectMode ) {
-        drawEffect( effectMode, TOUCH_TARGET_NONE );
-
-        lastEffectMode = effectMode;
-
-        lastSpeedValue = currentSpeed;
-
-        lastIntensityValue = currentIntensity;
-
-        lastPaletteValue = currentPalette;
-      }
-
-      if ( (int)currentPalette != lastPaletteValue ) {
-        lastPaletteValue = currentPalette;
-      }
-
-      if ( (int)currentPreset != lastPresetValue ) {
-        lastPresetValue = currentPreset;
-      }
-
-      if ( primaryColorChanged && touchTarget != TOUCH_TARGET_COLOR_OPEN ) {
-        syncLogicalColorFromRgb( primaryColor );
-
-        drawColorButton( primaryColor, false );
-
-        primaryColorChangeHandled = true;
-      }
+      primaryColorChangeHandled = updateMainPageState( effectMode, currentSpeed, currentIntensity, currentPalette, primaryColor, primaryColorChanged );
     }
-
     else if ( currentPage == SCREEN_COLOR ) {
-      if ( primaryColorChanged && !colorControlTouchActive ) {
-        syncLogicalColorFromRgb( primaryColor );
-
-        drawColorDetails( primaryColor );
-
-        drawHue( logicalHueValue, TOUCH_TARGET_NONE );
-
-        drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
-
-        lastHueValue = logicalHueValue;
-
-        lastSaturationValue = logicalSaturationValue;
-
-        primaryColorChangeHandled = true;
-      }
+      primaryColorChangeHandled = updateColorPageState( primaryColor, primaryColorChanged, colorControlTouchActive );
     }
-
     else if ( currentPage == SCREEN_EFFECT ) {
-      bool speedTouchActive = ( touchTarget == TOUCH_TARGET_SPEED_DOWN || touchTarget == TOUCH_TARGET_SPEED_UP );
-
-      bool intensityTouchActive = ( touchTarget == TOUCH_TARGET_INTENSITY_DOWN || touchTarget == TOUCH_TARGET_INTENSITY_UP );
-
-      bool paletteTouchActive = ( touchTarget == TOUCH_TARGET_PALETTE_PREV || touchTarget == TOUCH_TARGET_PALETTE_NEXT );
-
-      if ( touchTarget == TOUCH_TARGET_NONE && (int)effectMode != lastEffectMode ) {
-        drawEffectDetailScreen();
-
+      if ( updateEffectPageState( effectMode, currentSpeed, currentIntensity, currentPalette ) ) {
         return;
       }
-
-      if ( !speedTouchActive && (int)currentSpeed != lastSpeedValue ) {
-        drawSpeed( currentSpeed, TOUCH_TARGET_NONE );
-
-        lastSpeedValue = currentSpeed;
-      }
-
-      if ( !intensityTouchActive && (int)currentIntensity != lastIntensityValue ) {
-        drawIntensity( currentIntensity, TOUCH_TARGET_NONE );
-
-        lastIntensityValue = currentIntensity;
-      }
-
-      if ( !paletteTouchActive && (int)currentPalette != lastPaletteValue ) {
-        drawPalette( currentPalette, TOUCH_TARGET_NONE );
-
-        lastPaletteValue = currentPalette;
-      }
     }
-
-    else if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_NAV ) {
-      bool presetTouchActive = ( touchTarget == TOUCH_TARGET_PRESET_PREV || touchTarget == TOUCH_TARGET_PRESET_NEXT );
-
-      bool presetFileChanged = ( presetsModifiedTime != lastPresetsModifiedTime );
-
-      if (presetFileChanged) {
-        lastPresetsModifiedTime = presetsModifiedTime;
-
-        presetNoEntries = false;
-      }
-
-      if ( !presetTouchActive && ( (int)displayedPreset != lastPresetValue || presetPendingSettled || presetFileChanged ) ) {
-        drawPresetDetails( displayedPreset, pendingPresetId > 0 );
-
-        drawPresetNavigation( TOUCH_TARGET_NONE );
-
-        lastPresetValue = displayedPreset;
-      }
-    }
-    else if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_BOOT ) {
-      if ( touchTarget == TOUCH_TARGET_NONE && (int)bootPreset != lastBootPresetValue ) {
-        drawPresetBootScreen();
-        lastBootPresetValue = bootPreset;
-      }
+    else if ( currentPage == SCREEN_PRESET ) {
+      updatePresetPageState( displayedPreset, presetPendingSettled );
     }
 
     if ( primaryColorChanged && primaryColorChangeHandled ) {
@@ -7030,7 +7073,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.7" );
+    phaseInfo.add( "10.3.8" );
   }
 };
 
