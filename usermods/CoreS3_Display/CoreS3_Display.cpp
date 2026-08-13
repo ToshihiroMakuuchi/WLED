@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.9
+// Phase 10.3.10
 //
 // MAIN
 //   Power
@@ -158,6 +158,16 @@
 //   changing the current CoreS3 UI, timings, coordinates, Touch
 //   behavior, WLED operations, or runtime synchronization.
 //
+// Phase 10.3.10
+//   A compile-time M5Stack hardware profile is introduced.
+//   CoreS3 / Core2 / Core2 for AWS model identities and optional
+//   hardware revision metadata now have one explicit boundary.
+//   Only the CoreS3 profile is enabled in this phase; Core2 family
+//   profiles are prepared but intentionally blocked until their
+//   display/power behavior is implemented and hardware-tested.
+//   The active CoreS3 profile keeps the exact Phase 10.3.9 UI,
+//   Touch, brightness, timings, WLED operations, and synchronization.
+//
 // Common
 //   Startup animation
 //   Auto suspend
@@ -166,6 +176,66 @@
 // ===========================================================
 
 static const char CORES3_DISPLAY_CONFIG_NAME[] PROGMEM = "CoreS3_Display";
+
+// ===========================================================
+// Phase 10.3.10
+// Compile-time M5Stack hardware profile
+//
+// The default remains CoreS3 so existing builds do not need any
+// new PlatformIO flags. Core2 / Core2 for AWS values are reserved
+// for the following hardware-port phases. Hardware revision can be
+// left UNKNOWN until a board marking or hardware probe identifies it.
+// ===========================================================
+
+#define WLED_M5STACK_DISPLAY_PROFILE_CORES3        0
+#define WLED_M5STACK_DISPLAY_PROFILE_CORE2         1
+#define WLED_M5STACK_DISPLAY_PROFILE_CORE2_AWS     2
+
+#define WLED_M5STACK_DISPLAY_REVISION_UNKNOWN      0
+#define WLED_M5STACK_DISPLAY_REVISION_V1_0        10
+#define WLED_M5STACK_DISPLAY_REVISION_V1_1        11
+#define WLED_M5STACK_DISPLAY_REVISION_V1_3        13
+
+#ifndef WLED_M5STACK_DISPLAY_PROFILE
+  #define WLED_M5STACK_DISPLAY_PROFILE WLED_M5STACK_DISPLAY_PROFILE_CORES3
+#endif
+
+#ifndef WLED_M5STACK_DISPLAY_REVISION
+  #define WLED_M5STACK_DISPLAY_REVISION WLED_M5STACK_DISPLAY_REVISION_UNKNOWN
+#endif
+
+static_assert(
+  WLED_M5STACK_DISPLAY_PROFILE >= WLED_M5STACK_DISPLAY_PROFILE_CORES3 &&
+  WLED_M5STACK_DISPLAY_PROFILE <= WLED_M5STACK_DISPLAY_PROFILE_CORE2_AWS,
+  "Invalid WLED_M5STACK_DISPLAY_PROFILE"
+);
+
+static_assert(
+  WLED_M5STACK_DISPLAY_REVISION == WLED_M5STACK_DISPLAY_REVISION_UNKNOWN ||
+  WLED_M5STACK_DISPLAY_REVISION == WLED_M5STACK_DISPLAY_REVISION_V1_0 ||
+  WLED_M5STACK_DISPLAY_REVISION == WLED_M5STACK_DISPLAY_REVISION_V1_1 ||
+  WLED_M5STACK_DISPLAY_REVISION == WLED_M5STACK_DISPLAY_REVISION_V1_3,
+  "Invalid WLED_M5STACK_DISPLAY_REVISION"
+);
+
+enum M5StackDisplayHardwareProfile : uint8_t {
+  M5STACK_DISPLAY_HARDWARE_CORES3 = WLED_M5STACK_DISPLAY_PROFILE_CORES3,
+  M5STACK_DISPLAY_HARDWARE_CORE2 = WLED_M5STACK_DISPLAY_PROFILE_CORE2,
+  M5STACK_DISPLAY_HARDWARE_CORE2_AWS = WLED_M5STACK_DISPLAY_PROFILE_CORE2_AWS
+};
+
+enum M5StackDisplayHardwareRevision : uint8_t {
+  M5STACK_DISPLAY_REVISION_UNKNOWN = WLED_M5STACK_DISPLAY_REVISION_UNKNOWN,
+  M5STACK_DISPLAY_REVISION_V1_0 = WLED_M5STACK_DISPLAY_REVISION_V1_0,
+  M5STACK_DISPLAY_REVISION_V1_1 = WLED_M5STACK_DISPLAY_REVISION_V1_1,
+  M5STACK_DISPLAY_REVISION_V1_3 = WLED_M5STACK_DISPLAY_REVISION_V1_3
+};
+
+static constexpr M5StackDisplayHardwareProfile ACTIVE_M5STACK_DISPLAY_PROFILE =
+  static_cast<M5StackDisplayHardwareProfile>( WLED_M5STACK_DISPLAY_PROFILE );
+
+static constexpr M5StackDisplayHardwareRevision ACTIVE_M5STACK_DISPLAY_REVISION =
+  static_cast<M5StackDisplayHardwareRevision>( WLED_M5STACK_DISPLAY_REVISION );
 
 // ===========================================================
 // Phase 10.3.1
@@ -1052,12 +1122,62 @@ class CoreS3DisplayUsermod : public Usermod {
   // Core2 / Core2 for AWS without touching UI/WLED logic.
   // =========================================================
 
-  static constexpr uint8_t DISPLAY_ROTATION = 1;
+  const char* getHardwareProfileName() {
+    switch ( ACTIVE_M5STACK_DISPLAY_PROFILE ) {
+      case M5STACK_DISPLAY_HARDWARE_CORES3:
+        return "M5Stack CoreS3";
+
+      case M5STACK_DISPLAY_HARDWARE_CORE2:
+        return "M5Stack Core2";
+
+      case M5STACK_DISPLAY_HARDWARE_CORE2_AWS:
+        return "M5Stack Core2 for AWS";
+    }
+
+    return "Unknown M5Stack";
+  }
+
+  const char* getHardwareRevisionName() {
+    switch ( ACTIVE_M5STACK_DISPLAY_REVISION ) {
+      case M5STACK_DISPLAY_REVISION_V1_0:
+        return "v1.0";
+
+      case M5STACK_DISPLAY_REVISION_V1_1:
+        return "v1.1";
+
+      case M5STACK_DISPLAY_REVISION_V1_3:
+        return "v1.3";
+
+      case M5STACK_DISPLAY_REVISION_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+  bool isHardwareProfileImplemented() {
+    return ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORES3;
+  }
+
+  uint8_t getHardwareDisplayRotation() {
+    // CoreS3 Phase 10.3.9 behavior is rotation 1.
+    // Future profiles can select their rotation here after hardware test.
+    return 1;
+  }
 
   bool initializeDisplayHardware() {
+    if ( !isHardwareProfileImplemented() ) {
+      Serial.printf(
+        "[CoreS3_Display] Hardware profile not enabled in Phase 10.3.10: %s (%s)\n",
+        getHardwareProfileName(),
+        getHardwareRevisionName()
+      );
+
+      return false;
+    }
+
     display.begin();
 
-    display.setRotation( DISPLAY_ROTATION );
+    display.setRotation( getHardwareDisplayRotation() );
 
     screenWidth = display.width();
 
@@ -6681,7 +6801,13 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.9 start" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.10 start" ) );
+
+    Serial.printf(
+      "[CoreS3_Display] " "Hardware: %s, Revision=%s\n",
+      getHardwareProfileName(),
+      getHardwareRevisionName()
+    );
 
     Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
 
@@ -6725,7 +6851,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.9 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.10 setup complete" ) );
 
     Serial.println();
   }
@@ -6869,6 +6995,14 @@ class CoreS3DisplayUsermod : public Usermod {
     if ( user.isNull() ) {
       user = root.createNestedObject( "u" );
     }
+
+    JsonArray hardwareProfileInfo = user.createNestedArray( "M5Stack Hardware Profile" );
+
+    hardwareProfileInfo.add( getHardwareProfileName() );
+
+    JsonArray hardwareRevisionInfo = user.createNestedArray( "M5Stack Hardware Revision" );
+
+    hardwareRevisionInfo.add( getHardwareRevisionName() );
 
     JsonArray displayInfo = user.createNestedArray( "CoreS3 Display" );
 
@@ -7107,7 +7241,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.9" );
+    phaseInfo.add( "10.3.10" );
   }
 };
 
