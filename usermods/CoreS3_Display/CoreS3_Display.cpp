@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.8
+// Phase 10.3.9
 //
 // MAIN
 //   Power
@@ -150,6 +150,13 @@
 //   be reused when Core2 / Core2 for AWS support is added later.
 //   Update order, 250 ms polling, Wi-Fi handling, touch suppression,
 //   WLED state reads, cache updates, and visible UI are unchanged.
+//
+// Phase 10.3.9
+//   Display lifecycle, Touch sampling, and LCD brightness writes
+//   are routed through a thin hardware-access boundary.
+//   This prepares later Core2 / Core2 for AWS support without
+//   changing the current CoreS3 UI, timings, coordinates, Touch
+//   behavior, WLED operations, or runtime synchronization.
 //
 // Common
 //   Startup animation
@@ -1037,13 +1044,56 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
+  // Phase 10.3.9
+  // Display / Touch hardware access boundary
+  //
+  // CoreS3 behavior is intentionally unchanged here.
+  // Later hardware profiles can adapt these helpers for
+  // Core2 / Core2 for AWS without touching UI/WLED logic.
+  // =========================================================
+
+  static constexpr uint8_t DISPLAY_ROTATION = 1;
+
+  bool initializeDisplayHardware() {
+    display.begin();
+
+    display.setRotation( DISPLAY_ROTATION );
+
+    screenWidth = display.width();
+
+    screenHeight = display.height();
+
+    Serial.printf( "[CoreS3_Display] " "Display size: %d x %d\n", screenWidth, screenHeight );
+
+    if ( screenWidth <= 0 || screenHeight <= 0 ) {
+      Serial.println( F( "[CoreS3_Display] " "ERROR: Display not detected" ) );
+
+      return false;
+    }
+
+    touchReady = ( display.touch() != nullptr );
+
+    Serial.printf( "[CoreS3_Display] " "Touch: %s\n", touchReady ? "READY" : "NOT FOUND" );
+
+    return true;
+  }
+
+  bool readDisplayTouch( int16_t& touchX, int16_t& touchY ) {
+    return ( display.getTouch( &touchX, &touchY ) > 0 );
+  }
+
+  void writeDisplayBrightness( uint8_t value ) {
+    display.setBrightness( value );
+  }
+
+  // =========================================================
   // Display brightness
   // =========================================================
 
   void setDisplayBrightness( uint8_t value ) {
     currentDisplayBrightness = value;
 
-    display.setBrightness( value );
+    writeDisplayBrightness( value );
   }
 
   // =========================================================
@@ -1728,7 +1778,7 @@ class CoreS3DisplayUsermod : public Usermod {
       int16_t touchX = -1;
       int16_t touchY = -1;
 
-      if ( display.getTouch( &touchX, &touchY ) > 0 ) {
+      if ( readDisplayTouch( touchX, touchY ) ) {
         return;
       }
 
@@ -1827,7 +1877,7 @@ class CoreS3DisplayUsermod : public Usermod {
       int16_t touchX = -1;
       int16_t touchY = -1;
 
-      if ( display.getTouch( &touchX, &touchY ) > 0 ) {
+      if ( readDisplayTouch( touchX, touchY ) ) {
         return;
       }
 
@@ -1905,7 +1955,7 @@ class CoreS3DisplayUsermod : public Usermod {
       int16_t touchX = -1;
       int16_t touchY = -1;
 
-      if ( display.getTouch( &touchX, &touchY ) > 0 ) {
+      if ( readDisplayTouch( touchX, touchY ) ) {
         return;
       }
 
@@ -2095,7 +2145,7 @@ class CoreS3DisplayUsermod : public Usermod {
     int16_t x = -1;
     int16_t y = -1;
 
-    wakeTouchState = ( display.getTouch( &x, &y ) > 0 );
+    wakeTouchState = ( readDisplayTouch( x, y ) );
 
     return wakeTouchState;
   }
@@ -6378,7 +6428,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     int16_t touchY = -1;
 
-    bool touching = display.getTouch( &touchX, &touchY ) > 0;
+    bool touching = readDisplayTouch( touchX, touchY );
 
     if (touching) {
 
@@ -6631,29 +6681,13 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.8 start" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.9 start" ) );
 
     Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
 
-    display.begin();
-
-    display.setRotation( 1 );
-
-    screenWidth = display.width();
-
-    screenHeight = display.height();
-
-    Serial.printf( "[CoreS3_Display] " "Display size: %d x %d\n", screenWidth, screenHeight );
-
-    if ( screenWidth <= 0 || screenHeight <= 0 ) {
-      Serial.println( F( "[CoreS3_Display] " "ERROR: Display not detected" ) );
-
+    if ( !initializeDisplayHardware() ) {
       return;
     }
-
-    touchReady = ( display.touch() != nullptr );
-
-    Serial.printf( "[CoreS3_Display] " "Touch: %s\n", touchReady ? "READY" : "NOT FOUND" );
 
     setDisplayBrightness( 0 );
 
@@ -6691,7 +6725,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.8 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.9 setup complete" ) );
 
     Serial.println();
   }
@@ -7073,7 +7107,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.8" );
+    phaseInfo.add( "10.3.9" );
   }
 };
 
