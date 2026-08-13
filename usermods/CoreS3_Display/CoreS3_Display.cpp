@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.0
+// Phase 10.3.1
 //
 // MAIN
 //   Power
@@ -90,6 +90,14 @@
 //   WLED operations, timings, coordinates, and UI behavior
 //   are intentionally unchanged from Phase 10.2.4.
 //
+// Phase 10.3.1
+//   Low-risk structural cleanup.
+//   Touch hit areas are grouped into fixed rectangle data.
+//   Repeated hit-test bodies use one rectangle helper.
+//   Common page header drawing is shared by Preset/Color pages.
+//   Touch state machines, timings, WLED operations, coordinates,
+//   and visible UI behavior remain unchanged.
+//
 // Common
 //   Startup animation
 //   Auto suspend
@@ -98,6 +106,54 @@
 // ===========================================================
 
 static const char CORES3_DISPLAY_CONFIG_NAME[] PROGMEM = "CoreS3_Display";
+
+// ===========================================================
+// Phase 10.3.1
+// Fixed touch rectangles
+//
+// These values are identical to the Phase 10.3.0 hit areas.
+// Only their representation is consolidated here.
+// ===========================================================
+
+struct CoreS3TouchRect {
+  int16_t x;
+  int16_t y;
+  int16_t w;
+  int16_t h;
+};
+
+static constexpr CoreS3TouchRect CORES3_TOUCH_POWER              = {   8,   8,  44, 44 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_BRIGHTNESS_DOWN    = {  16,  82,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_BRIGHTNESS_UP      = { 240,  82,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_EFFECT_PREV        = {  16, 138,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_EFFECT_DETAIL      = {  88, 138, 144, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_EFFECT_NEXT        = { 240, 138,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_COLOR_OPEN         = {   8, 180, 152, 60 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_OPEN        = { 160, 180, 152, 60 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_BACK               = { 268,   8,  44, 44 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_HUE_DOWN           = {  16, 151,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_HUE_UP             = { 240, 151,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_SATURATION_DOWN    = {  16, 204,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_SATURATION_UP      = { 240, 204,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_SPEED_DOWN         = {  16,  82,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_SPEED_UP           = { 240,  82,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_INTENSITY_DOWN     = {  16, 140,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_INTENSITY_UP       = { 240, 140,  64, 34 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_PALETTE_PREV       = {   8, 188,  80, 52 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_PALETTE_NEXT       = { 232, 188,  80, 52 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_PREV        = {   8, 188,  80, 52 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_NEXT        = { 232, 188,  80, 52 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_MANAGE      = {  88, 188, 144, 52 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_SAVE_NEW    = {  48,  62, 224, 48 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_SAVE_HOLD   = {  48, 170, 224, 66 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_OVERWRITE_OPEN     = {  48, 118, 224, 50 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_OVERWRITE_PREV     = {   8, 116,  80, 52 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_OVERWRITE_NEXT     = { 232, 116,  80, 52 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_OVERWRITE_HOLD     = {  48, 184, 224, 56 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_DELETE_OPEN        = {  48, 172, 224, 60 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_DELETE_PREV        = {   8, 116,  80, 52 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_DELETE_NEXT        = { 232, 116,  80, 52 };
+static constexpr CoreS3TouchRect CORES3_TOUCH_DELETE_HOLD        = {  48, 184, 224, 56 };
 
 class CoreS3DisplayUsermod : public Usermod {
   private:
@@ -171,16 +227,6 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
   // Phase 10.1.1
   // Preset RAM cache
-  //
-  // WLED Preset names are limited to 32 characters.
-  //
-  // Cache is intentionally a fixed array:
-  //   - no repeated heap allocation during navigation
-  //   - predictable memory use
-  //   - maximum WLED persistent Presets = 250
-  //
-  // Approximate RAM:
-  //   250 x 34 bytes = about 8.5KB
   // =========================================================
 
   struct PresetCacheEntry {
@@ -210,12 +256,8 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   uint16_t lcdBrightness = 128;
-
-  // 0 = Never
   uint16_t sleepTimeoutSec = 30;
-
   bool fadeEnabled = true;
-
   uint16_t fadeDurationMs = 250;
 
   // =========================================================
@@ -231,7 +273,12 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr uint8_t DISPLAY_FADE_STEP = 4;
 
   enum DisplayPowerState : uint8_t {
-    DISPLAY_POWER_ACTIVE = 0, DISPLAY_POWER_SLEEP_FADE_OUT, DISPLAY_POWER_SLEEPING, DISPLAY_POWER_WAKE_FADE_IN, DISPLAY_POWER_WAKE_WAIT_RELEASE };
+    DISPLAY_POWER_ACTIVE = 0,
+    DISPLAY_POWER_SLEEP_FADE_OUT,
+    DISPLAY_POWER_SLEEPING,
+    DISPLAY_POWER_WAKE_FADE_IN,
+    DISPLAY_POWER_WAKE_WAIT_RELEASE
+  };
 
   DisplayPowerState displayPowerState = DISPLAY_POWER_ACTIVE;
 
@@ -248,7 +295,13 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   enum StartupState : uint8_t {
-    STARTUP_FADE_IN = 0, STARTUP_WAIT_WIFI, STARTUP_CONNECTED_HOLD, STARTUP_FADE_OUT, STARTUP_MAIN_FADE_IN, STARTUP_DONE };
+    STARTUP_FADE_IN = 0,
+    STARTUP_WAIT_WIFI,
+    STARTUP_CONNECTED_HOLD,
+    STARTUP_FADE_OUT,
+    STARTUP_MAIN_FADE_IN,
+    STARTUP_DONE
+  };
 
   StartupState startupState = STARTUP_FADE_IN;
 
@@ -280,7 +333,11 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   enum ScreenPage : uint8_t {
-    SCREEN_MAIN = 0, SCREEN_COLOR, SCREEN_EFFECT, SCREEN_PRESET };
+    SCREEN_MAIN = 0,
+    SCREEN_COLOR,
+    SCREEN_EFFECT,
+    SCREEN_PRESET
+  };
 
   ScreenPage currentPage = SCREEN_MAIN;
 
@@ -290,7 +347,12 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   enum PresetSubPage : uint8_t {
-    PRESET_SUBPAGE_NAV = 0, PRESET_SUBPAGE_MANAGE, PRESET_SUBPAGE_SAVE, PRESET_SUBPAGE_OVERWRITE, PRESET_SUBPAGE_DELETE };
+    PRESET_SUBPAGE_NAV = 0,
+    PRESET_SUBPAGE_MANAGE,
+    PRESET_SUBPAGE_SAVE,
+    PRESET_SUBPAGE_OVERWRITE,
+    PRESET_SUBPAGE_DELETE
+  };
 
   PresetSubPage presetSubPage = PRESET_SUBPAGE_NAV;
 
@@ -300,7 +362,12 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   enum PresetSaveOperationState : uint8_t {
-    PRESET_SAVE_OP_IDLE = 0, PRESET_SAVE_OP_WAIT_WLED, PRESET_SAVE_OP_WAIT_CACHE, PRESET_SAVE_OP_SUCCESS, PRESET_SAVE_OP_FAILED };
+    PRESET_SAVE_OP_IDLE = 0,
+    PRESET_SAVE_OP_WAIT_WLED,
+    PRESET_SAVE_OP_WAIT_CACHE,
+    PRESET_SAVE_OP_SUCCESS,
+    PRESET_SAVE_OP_FAILED
+  };
 
   PresetSaveOperationState presetSaveOperationState = PRESET_SAVE_OP_IDLE;
 
@@ -331,7 +398,11 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   enum PresetDeleteOperationState : uint8_t {
-    PRESET_DELETE_OP_IDLE = 0, PRESET_DELETE_OP_WAIT_CACHE, PRESET_DELETE_OP_SUCCESS, PRESET_DELETE_OP_FAILED };
+    PRESET_DELETE_OP_IDLE = 0,
+    PRESET_DELETE_OP_WAIT_CACHE,
+    PRESET_DELETE_OP_SUCCESS,
+    PRESET_DELETE_OP_FAILED
+  };
 
   PresetDeleteOperationState presetDeleteOperationState = PRESET_DELETE_OP_IDLE;
 
@@ -351,31 +422,50 @@ class CoreS3DisplayUsermod : public Usermod {
 
     TOUCH_TARGET_POWER,
 
-    TOUCH_TARGET_BRIGHTNESS_DOWN, TOUCH_TARGET_BRIGHTNESS_UP,
+    TOUCH_TARGET_BRIGHTNESS_DOWN,
+    TOUCH_TARGET_BRIGHTNESS_UP,
 
-    TOUCH_TARGET_EFFECT_PREV, TOUCH_TARGET_EFFECT_DETAIL, TOUCH_TARGET_EFFECT_NEXT,
+    TOUCH_TARGET_EFFECT_PREV,
+    TOUCH_TARGET_EFFECT_DETAIL,
+    TOUCH_TARGET_EFFECT_NEXT,
 
-    TOUCH_TARGET_COLOR_OPEN, TOUCH_TARGET_PRESET_OPEN,
+    TOUCH_TARGET_COLOR_OPEN,
+    TOUCH_TARGET_PRESET_OPEN,
 
     TOUCH_TARGET_BACK,
 
-    TOUCH_TARGET_HUE_DOWN, TOUCH_TARGET_HUE_UP,
+    TOUCH_TARGET_HUE_DOWN,
+    TOUCH_TARGET_HUE_UP,
 
-    TOUCH_TARGET_SATURATION_DOWN, TOUCH_TARGET_SATURATION_UP,
+    TOUCH_TARGET_SATURATION_DOWN,
+    TOUCH_TARGET_SATURATION_UP,
 
-    TOUCH_TARGET_SPEED_DOWN, TOUCH_TARGET_SPEED_UP,
+    TOUCH_TARGET_SPEED_DOWN,
+    TOUCH_TARGET_SPEED_UP,
 
-    TOUCH_TARGET_INTENSITY_DOWN, TOUCH_TARGET_INTENSITY_UP,
+    TOUCH_TARGET_INTENSITY_DOWN,
+    TOUCH_TARGET_INTENSITY_UP,
 
-    TOUCH_TARGET_PALETTE_PREV, TOUCH_TARGET_PALETTE_NEXT,
+    TOUCH_TARGET_PALETTE_PREV,
+    TOUCH_TARGET_PALETTE_NEXT,
 
-    TOUCH_TARGET_PRESET_PREV, TOUCH_TARGET_PRESET_NEXT,
+    TOUCH_TARGET_PRESET_PREV,
+    TOUCH_TARGET_PRESET_NEXT,
 
-    TOUCH_TARGET_PRESET_MANAGE, TOUCH_TARGET_PRESET_SAVE_NEW, TOUCH_TARGET_PRESET_SAVE_HOLD,
+    TOUCH_TARGET_PRESET_MANAGE,
+    TOUCH_TARGET_PRESET_SAVE_NEW,
+    TOUCH_TARGET_PRESET_SAVE_HOLD,
 
-    TOUCH_TARGET_PRESET_OVERWRITE_OPEN, TOUCH_TARGET_PRESET_OVERWRITE_PREV, TOUCH_TARGET_PRESET_OVERWRITE_NEXT, TOUCH_TARGET_PRESET_OVERWRITE_HOLD,
+    TOUCH_TARGET_PRESET_OVERWRITE_OPEN,
+    TOUCH_TARGET_PRESET_OVERWRITE_PREV,
+    TOUCH_TARGET_PRESET_OVERWRITE_NEXT,
+    TOUCH_TARGET_PRESET_OVERWRITE_HOLD,
 
-    TOUCH_TARGET_PRESET_DELETE_OPEN, TOUCH_TARGET_PRESET_DELETE_PREV, TOUCH_TARGET_PRESET_DELETE_NEXT, TOUCH_TARGET_PRESET_DELETE_HOLD };
+    TOUCH_TARGET_PRESET_DELETE_OPEN,
+    TOUCH_TARGET_PRESET_DELETE_PREV,
+    TOUCH_TARGET_PRESET_DELETE_NEXT,
+    TOUCH_TARGET_PRESET_DELETE_HOLD
+  };
 
   TouchTarget touchTarget = TOUCH_TARGET_NONE;
 
@@ -386,35 +476,24 @@ class CoreS3DisplayUsermod : public Usermod {
   bool touchActive = false;
 
   bool lastTouchInsidePower = false;
-
   bool lastTouchInsideBrightness = false;
-
   bool lastTouchInsideEffect = false;
   bool lastTouchInsideEffectDetail = false;
-
   bool lastTouchInsideColor = false;
   bool lastTouchInsidePresetOpen = false;
-
   bool lastTouchInsideBack = false;
-
   bool lastTouchInsideHue = false;
   bool lastTouchInsideSaturation = false;
-
   bool lastTouchInsideSpeed = false;
   bool lastTouchInsideIntensity = false;
-
   bool lastTouchInsidePalette = false;
-
   bool lastTouchInsidePresetNav = false;
-
   bool lastTouchInsidePresetManage = false;
   bool lastTouchInsidePresetSaveNew = false;
   bool lastTouchInsidePresetSaveHold = false;
-
   bool lastTouchInsidePresetOverwriteOpen = false;
   bool lastTouchInsidePresetOverwriteNav = false;
   bool lastTouchInsidePresetOverwriteHold = false;
-
   bool lastTouchInsidePresetDeleteOpen = false;
   bool lastTouchInsidePresetDeleteNav = false;
   bool lastTouchInsidePresetDeleteHold = false;
@@ -424,35 +503,24 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   bool powerButtonVisualPressed = false;
-
   bool brightnessButtonVisualPressed = false;
-
   bool effectButtonVisualPressed = false;
   bool effectDetailVisualPressed = false;
-
   bool colorButtonVisualPressed = false;
   bool presetOpenButtonVisualPressed = false;
-
   bool backButtonVisualPressed = false;
-
   bool hueButtonVisualPressed = false;
   bool saturationButtonVisualPressed = false;
-
   bool speedButtonVisualPressed = false;
   bool intensityButtonVisualPressed = false;
-
   bool paletteButtonVisualPressed = false;
-
   bool presetNavButtonVisualPressed = false;
-
   bool presetManageButtonVisualPressed = false;
   bool presetSaveNewButtonVisualPressed = false;
   bool presetSaveHoldButtonVisualPressed = false;
-
   bool presetOverwriteOpenButtonVisualPressed = false;
   bool presetOverwriteNavButtonVisualPressed = false;
   bool presetOverwriteHoldButtonVisualPressed = false;
-
   bool presetDeleteOpenButtonVisualPressed = false;
   bool presetDeleteNavButtonVisualPressed = false;
   bool presetDeleteHoldButtonVisualPressed = false;
@@ -463,96 +531,48 @@ class CoreS3DisplayUsermod : public Usermod {
 
   bool brightnessLongPressActive = false;
   bool effectLongPressActive = false;
-
   bool hueLongPressActive = false;
   bool saturationLongPressActive = false;
-
   bool speedLongPressActive = false;
   bool intensityLongPressActive = false;
-
   bool paletteLongPressActive = false;
-
   bool presetLongPressActive = false;
 
   int16_t lastTouchX = -1;
   int16_t lastTouchY = -1;
 
   // =========================================================
-  // Brightness timing
+  // Timing
   // =========================================================
 
   unsigned long controlPressStartTime = 0;
   unsigned long lastBrightnessRepeat = 0;
-
-  // =========================================================
-  // Effect timing
-  // =========================================================
-
   unsigned long effectPressStartTime = 0;
   unsigned long lastEffectRepeat = 0;
-
-  // =========================================================
-  // Hue timing
-  // =========================================================
-
   unsigned long huePressStartTime = 0;
   unsigned long lastHueRepeat = 0;
-
-  // =========================================================
-  // Saturation timing
-  // =========================================================
-
   unsigned long saturationPressStartTime = 0;
   unsigned long lastSaturationRepeat = 0;
-
-  // =========================================================
-  // Speed timing
-  // =========================================================
-
   unsigned long speedPressStartTime = 0;
   unsigned long lastSpeedRepeat = 0;
-
-  // =========================================================
-  // Intensity timing
-  // =========================================================
-
   unsigned long intensityPressStartTime = 0;
   unsigned long lastIntensityRepeat = 0;
-
-  // =========================================================
-  // Palette timing
-  // =========================================================
-
   unsigned long palettePressStartTime = 0;
   unsigned long lastPaletteRepeat = 0;
-
-  // =========================================================
-  // Phase 10.1
-  // Preset timing
-  // =========================================================
-
   unsigned long presetPressStartTime = 0;
   unsigned long lastPresetRepeat = 0;
 
   // =========================================================
-  // Hue gesture
+  // Hue / Saturation gesture
   // =========================================================
 
   CHSV32 hueEditHsv;
-
   bool hueEditValid = false;
-
   uint8_t hueEditValue = 0;
   uint8_t hueEditWhite = 0;
 
-  // =========================================================
-  // Saturation gesture
-  // =========================================================
-
   CHSV32 saturationEditHsv;
-
   bool saturationEditValid = false;
-
   uint8_t saturationEditValue = 0;
   uint8_t saturationEditWhite = 0;
 
@@ -567,7 +587,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
   static constexpr int16_t HEADER_CONTENT_LEFT = 60;
   static constexpr int16_t HEADER_CONTENT_RIGHT = 312;
-
   static constexpr int16_t HEADER_CENTER_X = ( HEADER_CONTENT_LEFT + HEADER_CONTENT_RIGHT ) / 2;
 
   static constexpr int16_t HEADER_TITLE_Y = 18;
@@ -575,13 +594,8 @@ class CoreS3DisplayUsermod : public Usermod {
 
   static constexpr int16_t CONTROL_LEFT_X = 16;
   static constexpr int16_t CONTROL_RIGHT_X = 240;
-
   static constexpr int16_t CONTROL_BUTTON_W = 64;
   static constexpr int16_t CONTROL_BUTTON_H = 34;
-
-  // =========================================================
-  // MAIN layout
-  // =========================================================
 
   static constexpr int16_t BRI_BUTTON_Y = 82;
   static constexpr int16_t FX_BUTTON_Y = 138;
@@ -590,11 +604,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t EFFECT_DETAIL_Y = 138;
   static constexpr int16_t EFFECT_DETAIL_W = 144;
   static constexpr int16_t EFFECT_DETAIL_H = 34;
-
-  // =========================================================
-  // Phase 10.1
-  // MAIN bottom visible buttons
-  // =========================================================
 
   static constexpr int16_t MAIN_BOTTOM_BUTTON_Y = 188;
   static constexpr int16_t MAIN_BOTTOM_BUTTON_H = 40;
@@ -605,32 +614,10 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_OPEN_BUTTON_X = 164;
   static constexpr int16_t PRESET_OPEN_BUTTON_W = 140;
 
-  // =========================================================
-  // Phase 10.1
-  // MAIN bottom invisible touch areas
-  // =========================================================
-
-  static constexpr int16_t MAIN_BOTTOM_TOUCH_Y = 180;
-  static constexpr int16_t MAIN_BOTTOM_TOUCH_H = 60;
-
-  static constexpr int16_t COLOR_TOUCH_X = 8;
-  static constexpr int16_t COLOR_TOUCH_W = 152;
-
-  static constexpr int16_t PRESET_OPEN_TOUCH_X = 160;
-  static constexpr int16_t PRESET_OPEN_TOUCH_W = 152;
-
-  // =========================================================
-  // Back button
-  // =========================================================
-
   static constexpr int16_t BACK_BUTTON_X = 268;
   static constexpr int16_t BACK_BUTTON_Y = 8;
   static constexpr int16_t BACK_BUTTON_W = 44;
   static constexpr int16_t BACK_BUTTON_H = 44;
-
-  // =========================================================
-  // COLOR layout
-  // =========================================================
 
   static constexpr int16_t COLOR_PREVIEW_X = 92;
   static constexpr int16_t COLOR_PREVIEW_Y = 68;
@@ -638,288 +625,110 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t COLOR_PREVIEW_H = 36;
 
   static constexpr int16_t HUE_BUTTON_Y = 151;
-
   static constexpr int16_t SATURATION_LABEL_Y = 198;
   static constexpr int16_t SATURATION_BUTTON_Y = 204;
 
-  // =========================================================
-  // EFFECT detail layout
-  // =========================================================
-
   static constexpr int16_t SPEED_BUTTON_Y = 82;
-
   static constexpr int16_t INTENSITY_BUTTON_Y = 140;
-
-  // =========================================================
-  // Palette visible layout
-  // =========================================================
 
   static constexpr int16_t PALETTE_LABEL_Y = 188;
   static constexpr int16_t PALETTE_BUTTON_Y = 198;
 
-  // =========================================================
-  // Phase 9.2.1
-  // Palette invisible touch areas
-  // =========================================================
-
-  static constexpr int16_t PALETTE_TOUCH_LEFT_X = 8;
-  static constexpr int16_t PALETTE_TOUCH_RIGHT_X = 232;
-
-  static constexpr int16_t PALETTE_TOUCH_Y = 188;
-
-  static constexpr int16_t PALETTE_TOUCH_W = 80;
-  static constexpr int16_t PALETTE_TOUCH_H = 52;
-
-  // =========================================================
-  // Phase 10.1
-  // PRESET screen layout
-  // =========================================================
-
   static constexpr int16_t PRESET_NAME_Y = 92;
   static constexpr int16_t PRESET_ID_Y = 128;
   static constexpr int16_t PRESET_STATUS_Y = 154;
-
   static constexpr int16_t PRESET_NAV_LABEL_Y = 188;
   static constexpr int16_t PRESET_NAV_BUTTON_Y = 198;
-
-  // =========================================================
-  // Phase 10.1
-  // PRESET bottom invisible touch areas
-  // =========================================================
-
-  static constexpr int16_t PRESET_NAV_TOUCH_LEFT_X = 8;
-  static constexpr int16_t PRESET_NAV_TOUCH_RIGHT_X = 232;
-
-  static constexpr int16_t PRESET_NAV_TOUCH_Y = 188;
-
-  static constexpr int16_t PRESET_NAV_TOUCH_W = 80;
-  static constexpr int16_t PRESET_NAV_TOUCH_H = 52;
-
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET MANAGE button on navigation screen
-  // =========================================================
 
   static constexpr int16_t PRESET_MANAGE_BUTTON_X = 88;
   static constexpr int16_t PRESET_MANAGE_BUTTON_Y = 198;
   static constexpr int16_t PRESET_MANAGE_BUTTON_W = 144;
   static constexpr int16_t PRESET_MANAGE_BUTTON_H = 34;
 
-  static constexpr int16_t PRESET_MANAGE_TOUCH_X = 88;
-  static constexpr int16_t PRESET_MANAGE_TOUCH_Y = 188;
-  static constexpr int16_t PRESET_MANAGE_TOUCH_W = 144;
-  static constexpr int16_t PRESET_MANAGE_TOUCH_H = 52;
-
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET MANAGE screen
-  // =========================================================
-
   static constexpr int16_t PRESET_SAVE_NEW_BUTTON_X = 60;
   static constexpr int16_t PRESET_SAVE_NEW_BUTTON_Y = 68;
   static constexpr int16_t PRESET_SAVE_NEW_BUTTON_W = 200;
   static constexpr int16_t PRESET_SAVE_NEW_BUTTON_H = 40;
-
-  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_X = 48;
-  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_Y = 62;
-  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_W = 224;
-  static constexpr int16_t PRESET_SAVE_NEW_TOUCH_H = 48;
-
-  // =========================================================
-  // Phase 10.2.2
-  // PRESET MANAGE OVERWRITE button
-  // =========================================================
 
   static constexpr int16_t PRESET_OVERWRITE_BUTTON_X = 60;
   static constexpr int16_t PRESET_OVERWRITE_BUTTON_Y = 124;
   static constexpr int16_t PRESET_OVERWRITE_BUTTON_W = 200;
   static constexpr int16_t PRESET_OVERWRITE_BUTTON_H = 40;
 
-  static constexpr int16_t PRESET_OVERWRITE_TOUCH_X = 48;
-  static constexpr int16_t PRESET_OVERWRITE_TOUCH_Y = 118;
-  static constexpr int16_t PRESET_OVERWRITE_TOUCH_W = 224;
-  static constexpr int16_t PRESET_OVERWRITE_TOUCH_H = 50;
-
-  // =========================================================
-  // Phase 10.2.3
-  // PRESET MANAGE DELETE button
-  // =========================================================
-
   static constexpr int16_t PRESET_DELETE_BUTTON_X = 60;
   static constexpr int16_t PRESET_DELETE_BUTTON_Y = 178;
   static constexpr int16_t PRESET_DELETE_BUTTON_W = 200;
   static constexpr int16_t PRESET_DELETE_BUTTON_H = 40;
-
-  static constexpr int16_t PRESET_DELETE_TOUCH_X = 48;
-  static constexpr int16_t PRESET_DELETE_TOUCH_Y = 172;
-  static constexpr int16_t PRESET_DELETE_TOUCH_W = 224;
-  static constexpr int16_t PRESET_DELETE_TOUCH_H = 60;
-
-  // =========================================================
-  // Phase 10.2.1
-  // PRESET SAVE confirmation screen
-  // =========================================================
 
   static constexpr int16_t PRESET_SAVE_HOLD_BUTTON_X = 60;
   static constexpr int16_t PRESET_SAVE_HOLD_BUTTON_Y = 180;
   static constexpr int16_t PRESET_SAVE_HOLD_BUTTON_W = 200;
   static constexpr int16_t PRESET_SAVE_HOLD_BUTTON_H = 44;
 
-  static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_X = 48;
-  static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_Y = 170;
-  static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_W = 224;
-  static constexpr int16_t PRESET_SAVE_HOLD_TOUCH_H = 66;
-
-  // =========================================================
-  // Phase 10.2.2
-  // PRESET OVERWRITE selection / confirmation screen
-  // =========================================================
-
   static constexpr int16_t PRESET_OVERWRITE_NAV_BUTTON_Y = 124;
-
-  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_LEFT_X = 8;
-  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_RIGHT_X = 232;
-  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_Y = 116;
-  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_W = 80;
-  static constexpr int16_t PRESET_OVERWRITE_NAV_TOUCH_H = 52;
-
   static constexpr int16_t PRESET_OVERWRITE_HOLD_BUTTON_X = 60;
   static constexpr int16_t PRESET_OVERWRITE_HOLD_BUTTON_Y = 194;
   static constexpr int16_t PRESET_OVERWRITE_HOLD_BUTTON_W = 200;
   static constexpr int16_t PRESET_OVERWRITE_HOLD_BUTTON_H = 40;
 
-  static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_X = 48;
-  static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_Y = 184;
-  static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_W = 224;
-  static constexpr int16_t PRESET_OVERWRITE_HOLD_TOUCH_H = 56;
-
-  // =========================================================
-  // Phase 10.2.3
-  // PRESET DELETE selection / confirmation screen
-  // =========================================================
-
   static constexpr int16_t PRESET_DELETE_NAV_BUTTON_Y = 124;
-
-  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_LEFT_X = 8;
-  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_RIGHT_X = 232;
-  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_Y = 116;
-  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_W = 80;
-  static constexpr int16_t PRESET_DELETE_NAV_TOUCH_H = 52;
-
   static constexpr int16_t PRESET_DELETE_HOLD_BUTTON_X = 60;
   static constexpr int16_t PRESET_DELETE_HOLD_BUTTON_Y = 194;
   static constexpr int16_t PRESET_DELETE_HOLD_BUTTON_W = 200;
   static constexpr int16_t PRESET_DELETE_HOLD_BUTTON_H = 40;
-
-  static constexpr int16_t PRESET_DELETE_HOLD_TOUCH_X = 48;
-  static constexpr int16_t PRESET_DELETE_HOLD_TOUCH_Y = 184;
-  static constexpr int16_t PRESET_DELETE_HOLD_TOUCH_W = 224;
-  static constexpr int16_t PRESET_DELETE_HOLD_TOUCH_H = 56;
 
   // =========================================================
   // Touch timing
   // =========================================================
 
   static constexpr unsigned long TOUCH_POLL_MS = 15;
-
   static constexpr unsigned long TOUCH_RELEASE_CONFIRM_MS = 70;
-
   static constexpr unsigned long TOUCH_ACTION_COOLDOWN_MS = 250;
-
-  // =========================================================
-  // Brightness behavior
-  // =========================================================
 
   static constexpr unsigned long BRI_LONG_PRESS_MS = 400;
   static constexpr unsigned long BRI_REPEAT_MS = 80;
-
   static constexpr int BRI_SHORT_STEP = 1;
   static constexpr int BRI_LONG_STEP = 5;
-
-  // =========================================================
-  // Effect behavior
-  // =========================================================
 
   static constexpr unsigned long EFFECT_LONG_PRESS_MS = 400;
   static constexpr unsigned long EFFECT_REPEAT_MS = 250;
 
-  // =========================================================
-  // Hue behavior
-  // =========================================================
-
   static constexpr unsigned long HUE_LONG_PRESS_MS = 400;
   static constexpr unsigned long HUE_REPEAT_MS = 80;
-
   static constexpr int HUE_SHORT_STEP = 1;
   static constexpr int HUE_LONG_STEP = 5;
 
-  // =========================================================
-  // Saturation behavior
-  // =========================================================
-
   static constexpr unsigned long SATURATION_LONG_PRESS_MS = 400;
   static constexpr unsigned long SATURATION_REPEAT_MS = 80;
-
   static constexpr int SATURATION_SHORT_STEP = 1;
   static constexpr int SATURATION_LONG_STEP = 5;
 
-  // =========================================================
-  // Speed behavior
-  // =========================================================
-
   static constexpr unsigned long SPEED_LONG_PRESS_MS = 400;
   static constexpr unsigned long SPEED_REPEAT_MS = 80;
-
   static constexpr int SPEED_SHORT_STEP = 1;
   static constexpr int SPEED_LONG_STEP = 5;
 
-  // =========================================================
-  // Intensity behavior
-  // =========================================================
-
   static constexpr unsigned long INTENSITY_LONG_PRESS_MS = 400;
   static constexpr unsigned long INTENSITY_REPEAT_MS = 80;
-
   static constexpr int INTENSITY_SHORT_STEP = 1;
   static constexpr int INTENSITY_LONG_STEP = 5;
-
-  // =========================================================
-  // Palette behavior
-  // =========================================================
 
   static constexpr unsigned long PALETTE_LONG_PRESS_MS = 400;
   static constexpr unsigned long PALETTE_REPEAT_MS = 250;
 
-  // =========================================================
-  // Preset behavior
-  // =========================================================
-
   static constexpr unsigned long PRESET_LONG_PRESS_MS = 400;
   static constexpr unsigned long PRESET_REPEAT_MS = 600;
-
-  // =========================================================
-  // Normal LCD brightness
-  // =========================================================
 
   uint8_t getNormalDisplayBrightness() {
     return (uint8_t)constrain( (int)lcdBrightness, 1, 255 );
   }
 
-  // =========================================================
-  // Sleep timeout
-  // =========================================================
-
   unsigned long getSleepTimeoutMs() {
     return (unsigned long)sleepTimeoutSec * 1000UL;
   }
 
-  // =========================================================
-  // Fade interval calculation
-  // =========================================================
-
   unsigned long getFadeIntervalMs() {
     uint16_t normalBrightness = getNormalDisplayBrightness();
-
     uint16_t steps = ( normalBrightness + DISPLAY_FADE_STEP - 1 ) / DISPLAY_FADE_STEP;
 
     if ( steps == 0 ) {
@@ -935,19 +744,10 @@ class CoreS3DisplayUsermod : public Usermod {
     return interval;
   }
 
-  // =========================================================
-  // Display brightness
-  // =========================================================
-
   void setDisplayBrightness( uint8_t value ) {
     currentDisplayBrightness = value;
-
     display.setBrightness( value );
   }
-
-  // =========================================================
-  // Generic Fade
-  // =========================================================
 
   bool updateFade( uint8_t targetBrightness, unsigned long now, unsigned long& lastFadeStep ) {
     if ( currentDisplayBrightness == targetBrightness ) {
@@ -956,7 +756,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if (!fadeEnabled) {
       setDisplayBrightness( targetBrightness );
-
       return true;
     }
 
@@ -990,71 +789,82 @@ class CoreS3DisplayUsermod : public Usermod {
     return ( currentDisplayBrightness == targetBrightness );
   }
 
-  // =========================================================
-  // Phase 10.1.1
-  // Preset cache rebuild start
-  // =========================================================
-
   void startPresetCacheRebuild() {
     presetCacheCount = 0;
-
     presetCacheScanId = 1;
-
     presetCacheLastScanMs = 0;
-
     presetCacheReady = false;
-
     presetCacheBuilding = true;
-
     presetNoEntries = false;
-
     presetCacheBuildSourceModifiedTime = presetsModifiedTime;
 
-    Serial.printf( "[CoreS3_Display] " "Preset cache rebuild start " "(modified=%lu)\n", presetCacheBuildSourceModifiedTime );
+    Serial.printf(
+      "[CoreS3_Display] Preset cache rebuild start (modified=%lu)\n",
+      presetCacheBuildSourceModifiedTime
+    );
   }
-
-  // =========================================================
-  // Phase 10.1.1
-  // Preset cache rebuild complete
-  // =========================================================
 
   void finishPresetCacheRebuild() {
     presetCacheBuilding = false;
-
     presetCacheReady = true;
-
     presetCacheSourceModifiedTime = presetCacheBuildSourceModifiedTime;
-
     presetNoEntries = ( presetCacheCount == 0 );
 
-    Serial.printf( "[CoreS3_Display] " "Preset cache ready: %u preset(s)\n", (unsigned)presetCacheCount );
+    Serial.printf(
+      "[CoreS3_Display] Preset cache ready: %u preset(s)\n",
+      (unsigned)presetCacheCount
+    );
 
     if ( presetsModifiedTime != presetCacheSourceModifiedTime ) {
-      Serial.println( F( "[CoreS3_Display] " "Preset changed during cache build. Rebuilding." ) );
+      Serial.println(
+        F("[CoreS3_Display] Preset changed during cache build. Rebuilding.")
+      );
 
       startPresetCacheRebuild();
-
       return;
     }
 
-    if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_NAV && displayPowerState == DISPLAY_POWER_ACTIVE && touchTarget == TOUCH_TARGET_NONE ) {
+    if (
+      currentPage == SCREEN_PRESET &&
+      presetSubPage == PRESET_SUBPAGE_NAV &&
+      displayPowerState == DISPLAY_POWER_ACTIVE &&
+      touchTarget == TOUCH_TARGET_NONE
+    ) {
       drawPresetDetails( getDisplayedPresetId(), pendingPresetId > 0 );
-
       drawPresetNavigation( TOUCH_TARGET_NONE );
-
       lastPresetValue = getDisplayedPresetId();
     }
-    else if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_MANAGE && displayPowerState == DISPLAY_POWER_ACTIVE && touchTarget == TOUCH_TARGET_NONE ) {
+    else if (
+      currentPage == SCREEN_PRESET &&
+      presetSubPage == PRESET_SUBPAGE_MANAGE &&
+      displayPowerState == DISPLAY_POWER_ACTIVE &&
+      touchTarget == TOUCH_TARGET_NONE
+    ) {
       drawPresetManageScreen();
     }
-    else if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_SAVE && presetSaveOperationState == PRESET_SAVE_OP_IDLE && displayPowerState == DISPLAY_POWER_ACTIVE && touchTarget == TOUCH_TARGET_NONE ) {
+    else if (
+      currentPage == SCREEN_PRESET &&
+      presetSubPage == PRESET_SUBPAGE_SAVE &&
+      presetSaveOperationState == PRESET_SAVE_OP_IDLE &&
+      displayPowerState == DISPLAY_POWER_ACTIVE &&
+      touchTarget == TOUCH_TARGET_NONE
+    ) {
       preparePresetSaveCandidate();
       drawPresetSaveScreen();
     }
-    else if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_OVERWRITE && presetSaveOperationState == PRESET_SAVE_OP_IDLE && displayPowerState == DISPLAY_POWER_ACTIVE && touchTarget == TOUCH_TARGET_NONE ) {
+    else if (
+      currentPage == SCREEN_PRESET &&
+      presetSubPage == PRESET_SUBPAGE_OVERWRITE &&
+      presetSaveOperationState == PRESET_SAVE_OP_IDLE &&
+      displayPowerState == DISPLAY_POWER_ACTIVE &&
+      touchTarget == TOUCH_TARGET_NONE
+    ) {
       String refreshedName;
 
-      if ( presetOverwriteTargetId == 0 || !getCachedPresetName( presetOverwriteTargetId, refreshedName ) ) {
+      if (
+        presetOverwriteTargetId == 0 ||
+        !getCachedPresetName( presetOverwriteTargetId, refreshedName )
+      ) {
         preparePresetOverwriteTarget();
       }
       else {
@@ -1063,10 +873,19 @@ class CoreS3DisplayUsermod : public Usermod {
 
       drawPresetOverwriteScreen();
     }
-    else if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_DELETE && presetDeleteOperationState == PRESET_DELETE_OP_IDLE && displayPowerState == DISPLAY_POWER_ACTIVE && touchTarget == TOUCH_TARGET_NONE ) {
+    else if (
+      currentPage == SCREEN_PRESET &&
+      presetSubPage == PRESET_SUBPAGE_DELETE &&
+      presetDeleteOperationState == PRESET_DELETE_OP_IDLE &&
+      displayPowerState == DISPLAY_POWER_ACTIVE &&
+      touchTarget == TOUCH_TARGET_NONE
+    ) {
       String refreshedName;
 
-      if ( presetDeleteTargetId == 0 || !getCachedPresetName( presetDeleteTargetId, refreshedName ) ) {
+      if (
+        presetDeleteTargetId == 0 ||
+        !getCachedPresetName( presetDeleteTargetId, refreshedName )
+      ) {
         preparePresetDeleteTarget();
       }
       else {
@@ -1077,13 +896,12 @@ class CoreS3DisplayUsermod : public Usermod {
     }
   }
 
-  // =========================================================
-  // Phase 10.1.1
-  // Background Preset cache service
-  // =========================================================
-
   void servicePresetCache() {
-    if ( presetCacheReady && !presetCacheBuilding && presetsModifiedTime != presetCacheSourceModifiedTime ) {
+    if (
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      presetsModifiedTime != presetCacheSourceModifiedTime
+    ) {
       startPresetCacheRebuild();
     }
 
@@ -1109,19 +927,21 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if ( presetCacheScanId > 250 ) {
       finishPresetCacheRebuild();
-
       return;
     }
 
     String presetName;
-
     uint8_t scanId = (uint8_t)presetCacheScanId;
 
     if ( getPresetName( scanId, presetName ) ) {
       if ( presetCacheCount < 250 ) {
-        presetCache[ presetCacheCount ].id = scanId;
+        presetCache[presetCacheCount].id = scanId;
 
-        strlcpy( presetCache[ presetCacheCount ].name, presetName.c_str(), sizeof( presetCache[ presetCacheCount ].name ) );
+        strlcpy(
+          presetCache[presetCacheCount].name,
+          presetName.c_str(),
+          sizeof(presetCache[presetCacheCount].name)
+        );
 
         presetCacheCount++;
       }
@@ -1133,10 +953,6 @@ class CoreS3DisplayUsermod : public Usermod {
       finishPresetCacheRebuild();
     }
   }
-
-  // =========================================================
-  // Find Preset in RAM cache
-  // =========================================================
 
   int findPresetCacheIndex( uint8_t presetId ) {
     for ( uint16_t i = 0; i < presetCacheCount; i++ ) {
@@ -1155,8 +971,7 @@ class CoreS3DisplayUsermod : public Usermod {
       return false;
     }
 
-    name = presetCache[ index ].name;
-
+    name = presetCache[index].name;
     return true;
   }
 
@@ -1196,7 +1011,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
   bool preparePresetSaveCandidate() {
     presetSaveCandidateId = findFirstFreePresetId();
-
     presetSaveCandidateName = "";
 
     if ( presetSaveCandidateId == 0 ) {
@@ -1205,16 +1019,19 @@ class CoreS3DisplayUsermod : public Usermod {
 
     char presetName[33];
 
-    snprintf( presetName, sizeof(presetName), "CoreS3 Preset %u", presetSaveCandidateId );
+    snprintf(
+      presetName,
+      sizeof(presetName),
+      "CoreS3 Preset %u",
+      presetSaveCandidateId
+    );
 
     presetSaveCandidateName = presetName;
-
     return true;
   }
 
   bool preparePresetOverwriteTarget() {
     presetOverwriteTargetId = 0;
-
     presetOverwriteTargetName = "";
 
     if ( !presetCacheReady || presetCacheBuilding || presetCacheCount == 0 ) {
@@ -1223,30 +1040,41 @@ class CoreS3DisplayUsermod : public Usermod {
 
     int currentIndex = findPresetCacheIndex( currentPreset );
 
-    uint16_t targetIndex = ( currentIndex >= 0 ) ? (uint16_t)currentIndex : 0;
+    uint16_t targetIndex =
+      ( currentIndex >= 0 )
+        ? (uint16_t)currentIndex
+        : 0;
 
-    presetOverwriteTargetId = presetCache[ targetIndex ].id;
-
-    presetOverwriteTargetName = presetCache[ targetIndex ].name;
+    presetOverwriteTargetId = presetCache[targetIndex].id;
+    presetOverwriteTargetName = presetCache[targetIndex].name;
 
     return true;
   }
 
   bool stepPresetOverwriteTarget( int direction ) {
-    if ( direction == 0 || !presetCacheReady || presetCacheBuilding || presetCacheCount == 0 ) {
+    if (
+      direction == 0 ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount == 0
+    ) {
       return false;
     }
 
     String targetName;
 
-    uint8_t targetId = findAdjacentPreset( presetOverwriteTargetId, direction, &targetName );
+    uint8_t targetId =
+      findAdjacentPreset(
+        presetOverwriteTargetId,
+        direction,
+        &targetName
+      );
 
     if ( targetId == 0 ) {
       return false;
     }
 
     presetOverwriteTargetId = targetId;
-
     presetOverwriteTargetName = targetName;
 
     return true;
@@ -1254,7 +1082,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
   bool preparePresetDeleteTarget() {
     presetDeleteTargetId = 0;
-
     presetDeleteTargetName = "";
 
     if ( !presetCacheReady || presetCacheBuilding || presetCacheCount == 0 ) {
@@ -1263,81 +1090,107 @@ class CoreS3DisplayUsermod : public Usermod {
 
     int currentIndex = findPresetCacheIndex( currentPreset );
 
-    uint16_t targetIndex = ( currentIndex >= 0 ) ? (uint16_t)currentIndex : 0;
+    uint16_t targetIndex =
+      ( currentIndex >= 0 )
+        ? (uint16_t)currentIndex
+        : 0;
 
-    presetDeleteTargetId = presetCache[ targetIndex ].id;
-
-    presetDeleteTargetName = presetCache[ targetIndex ].name;
+    presetDeleteTargetId = presetCache[targetIndex].id;
+    presetDeleteTargetName = presetCache[targetIndex].name;
 
     return true;
   }
 
   bool stepPresetDeleteTarget( int direction ) {
-    if ( direction == 0 || !presetCacheReady || presetCacheBuilding || presetCacheCount == 0 ) {
+    if (
+      direction == 0 ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount == 0
+    ) {
       return false;
     }
 
     String targetName;
 
-    uint8_t targetId = findAdjacentPreset( presetDeleteTargetId, direction, &targetName );
+    uint8_t targetId =
+      findAdjacentPreset(
+        presetDeleteTargetId,
+        direction,
+        &targetName
+      );
 
     if ( targetId == 0 ) {
       return false;
     }
 
     presetDeleteTargetId = targetId;
-
     presetDeleteTargetName = targetName;
 
     return true;
   }
 
   bool isPresetSaveBusy() {
-    return ( presetSaveOperationState != PRESET_SAVE_OP_IDLE );
+    return presetSaveOperationState != PRESET_SAVE_OP_IDLE;
   }
 
   bool isPresetDeleteBusy() {
-    return ( presetDeleteOperationState != PRESET_DELETE_OP_IDLE );
+    return presetDeleteOperationState != PRESET_DELETE_OP_IDLE;
   }
 
   bool requestNewPresetSave() {
     presetSaveOperationIsOverwrite = false;
 
-    if ( presetSaveOperationState != PRESET_SAVE_OP_IDLE || !presetCacheReady || presetCacheBuilding || pendingPresetId > 0 || presetSaveCandidateId == 0 || findPresetCacheIndex( presetSaveCandidateId ) >= 0 || presetNeedsSaving() ) {
+    if (
+      presetSaveOperationState != PRESET_SAVE_OP_IDLE ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      pendingPresetId > 0 ||
+      presetSaveCandidateId == 0 ||
+      findPresetCacheIndex( presetSaveCandidateId ) >= 0 ||
+      presetNeedsSaving()
+    ) {
       presetSaveOperationState = PRESET_SAVE_OP_FAILED;
-
       presetSaveResultStartMs = millis();
 
       drawPresetSaveOperationStatus();
 
-      Serial.println( F( "[CoreS3_Display] " "Preset save request rejected" ) );
+      Serial.println(
+        F("[CoreS3_Display] Preset save request rejected")
+      );
 
       return false;
     }
 
-    savePreset( presetSaveCandidateId, presetSaveCandidateName.c_str() );
+    savePreset(
+      presetSaveCandidateId,
+      presetSaveCandidateName.c_str()
+    );
 
     if ( !presetNeedsSaving() ) {
       presetSaveOperationState = PRESET_SAVE_OP_FAILED;
-
       presetSaveResultStartMs = millis();
 
       drawPresetSaveOperationStatus();
 
-      Serial.println( F( "[CoreS3_Display] " "Preset save could not be queued" ) );
+      Serial.println(
+        F("[CoreS3_Display] Preset save could not be queued")
+      );
 
       return false;
     }
 
     presetSaveOperationState = PRESET_SAVE_OP_WAIT_WLED;
-
     presetSaveResultStartMs = 0;
-
     lastUserActivityMs = millis();
 
     drawPresetSaveOperationStatus();
 
-    Serial.printf( "[CoreS3_Display] " "Preset save request: %u (%s)\n", presetSaveCandidateId, presetSaveCandidateName.c_str() );
+    Serial.printf(
+      "[CoreS3_Display] Preset save request: %u (%s)\n",
+      presetSaveCandidateId,
+      presetSaveCandidateName.c_str()
+    );
 
     return true;
   }
@@ -1346,62 +1199,90 @@ class CoreS3DisplayUsermod : public Usermod {
     presetSaveOperationIsOverwrite = true;
 
     presetSaveCandidateId = presetOverwriteTargetId;
-
     presetSaveCandidateName = presetOverwriteTargetName;
 
-    if ( presetSaveOperationState != PRESET_SAVE_OP_IDLE || !presetCacheReady || presetCacheBuilding || presetCacheCount == 0 || pendingPresetId > 0 || presetSaveCandidateId == 0 || findPresetCacheIndex( presetSaveCandidateId ) < 0 || presetSaveCandidateName.length() == 0 || presetNeedsSaving() ) {
+    if (
+      presetSaveOperationState != PRESET_SAVE_OP_IDLE ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount == 0 ||
+      pendingPresetId > 0 ||
+      presetSaveCandidateId == 0 ||
+      findPresetCacheIndex( presetSaveCandidateId ) < 0 ||
+      presetSaveCandidateName.length() == 0 ||
+      presetNeedsSaving()
+    ) {
       presetSaveOperationState = PRESET_SAVE_OP_FAILED;
-
       presetSaveResultStartMs = millis();
 
       drawPresetSaveOperationStatus();
 
-      Serial.println( F( "[CoreS3_Display] " "Preset overwrite request rejected" ) );
+      Serial.println(
+        F("[CoreS3_Display] Preset overwrite request rejected")
+      );
 
       return false;
     }
 
-    savePreset( presetSaveCandidateId, presetSaveCandidateName.c_str() );
+    savePreset(
+      presetSaveCandidateId,
+      presetSaveCandidateName.c_str()
+    );
 
     if ( !presetNeedsSaving() ) {
       presetSaveOperationState = PRESET_SAVE_OP_FAILED;
-
       presetSaveResultStartMs = millis();
 
       drawPresetSaveOperationStatus();
 
-      Serial.println( F( "[CoreS3_Display] " "Preset overwrite could not be queued" ) );
+      Serial.println(
+        F("[CoreS3_Display] Preset overwrite could not be queued")
+      );
 
       return false;
     }
 
     presetSaveOperationState = PRESET_SAVE_OP_WAIT_WLED;
-
     presetSaveResultStartMs = 0;
-
     lastUserActivityMs = millis();
 
     drawPresetSaveOperationStatus();
 
-    Serial.printf( "[CoreS3_Display] " "Preset overwrite request: %u (%s)\n", presetSaveCandidateId, presetSaveCandidateName.c_str() );
+    Serial.printf(
+      "[CoreS3_Display] Preset overwrite request: %u (%s)\n",
+      presetSaveCandidateId,
+      presetSaveCandidateName.c_str()
+    );
 
     return true;
   }
 
   bool requestPresetDelete() {
-    if ( presetDeleteOperationState != PRESET_DELETE_OP_IDLE || !presetCacheReady || presetCacheBuilding || presetCacheCount == 0 || pendingPresetId > 0 || presetDeleteTargetId == 0 || findPresetCacheIndex( presetDeleteTargetId ) < 0 || presetDeleteTargetName.length() == 0 || presetNeedsSaving() ) {
+    if (
+      presetDeleteOperationState != PRESET_DELETE_OP_IDLE ||
+      !presetCacheReady ||
+      presetCacheBuilding ||
+      presetCacheCount == 0 ||
+      pendingPresetId > 0 ||
+      presetDeleteTargetId == 0 ||
+      findPresetCacheIndex( presetDeleteTargetId ) < 0 ||
+      presetDeleteTargetName.length() == 0 ||
+      presetNeedsSaving()
+    ) {
       presetDeleteOperationState = PRESET_DELETE_OP_FAILED;
-
       presetDeleteResultStartMs = millis();
 
       drawPresetDeleteOperationStatus();
 
-      Serial.println( F( "[CoreS3_Display] " "Preset delete request rejected" ) );
+      Serial.println(
+        F("[CoreS3_Display] Preset delete request rejected")
+      );
 
       return false;
     }
 
-    presetDeleteWasCurrentPreset = ( currentPreset == presetDeleteTargetId );
+    presetDeleteWasCurrentPreset =
+      ( currentPreset == presetDeleteTargetId );
 
     deletePreset( presetDeleteTargetId );
 
@@ -1410,14 +1291,16 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     presetDeleteOperationState = PRESET_DELETE_OP_WAIT_CACHE;
-
     presetDeleteResultStartMs = 0;
-
     lastUserActivityMs = millis();
 
     drawPresetDeleteOperationStatus();
 
-    Serial.printf( "[CoreS3_Display] " "Preset delete request: %u (%s)\n", presetDeleteTargetId, presetDeleteTargetName.c_str() );
+    Serial.printf(
+      "[CoreS3_Display] Preset delete request: %u (%s)\n",
+      presetDeleteTargetId,
+      presetDeleteTargetName.c_str()
+    );
 
     return true;
   }
@@ -1440,7 +1323,14 @@ class CoreS3DisplayUsermod : public Usermod {
 
       presetSaveOperationState = PRESET_SAVE_OP_WAIT_CACHE;
 
-      if ( currentPage == SCREEN_PRESET && ( presetSubPage == PRESET_SUBPAGE_SAVE || presetSubPage == PRESET_SUBPAGE_OVERWRITE ) && displayPowerState == DISPLAY_POWER_ACTIVE ) {
+      if (
+        currentPage == SCREEN_PRESET &&
+        (
+          presetSubPage == PRESET_SUBPAGE_SAVE ||
+          presetSubPage == PRESET_SUBPAGE_OVERWRITE
+        ) &&
+        displayPowerState == DISPLAY_POWER_ACTIVE
+      ) {
         drawPresetSaveOperationStatus();
       }
 
@@ -1452,36 +1342,71 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      bool presetVerified = ( findPresetCacheIndex( presetSaveCandidateId ) >= 0 );
+      bool presetVerified =
+        findPresetCacheIndex( presetSaveCandidateId ) >= 0;
 
-      if ( presetVerified && presetSaveOperationIsOverwrite ) {
+      if (
+        presetVerified &&
+        presetSaveOperationIsOverwrite
+      ) {
         String verifiedName;
 
-        presetVerified = getCachedPresetName( presetSaveCandidateId, verifiedName ) && verifiedName == presetSaveCandidateName;
+        presetVerified =
+          getCachedPresetName(
+            presetSaveCandidateId,
+            verifiedName
+          ) &&
+          verifiedName == presetSaveCandidateName;
       }
 
       if (presetVerified) {
         presetSaveOperationState = PRESET_SAVE_OP_SUCCESS;
 
-        Serial.printf( "[CoreS3_Display] " "%s verified: %u (%s)\n", presetSaveOperationIsOverwrite ? "Preset overwrite" : "Preset save", presetSaveCandidateId, presetSaveCandidateName.c_str() );
+        Serial.printf(
+          "[CoreS3_Display] %s verified: %u (%s)\n",
+          presetSaveOperationIsOverwrite
+            ? "Preset overwrite"
+            : "Preset save",
+          presetSaveCandidateId,
+          presetSaveCandidateName.c_str()
+        );
       }
       else {
         presetSaveOperationState = PRESET_SAVE_OP_FAILED;
 
-        Serial.printf( "[CoreS3_Display] " "%s verification failed: %u\n", presetSaveOperationIsOverwrite ? "Preset overwrite" : "Preset save", presetSaveCandidateId );
+        Serial.printf(
+          "[CoreS3_Display] %s verification failed: %u\n",
+          presetSaveOperationIsOverwrite
+            ? "Preset overwrite"
+            : "Preset save",
+          presetSaveCandidateId
+        );
       }
 
       presetSaveResultStartMs = now;
 
-      if ( currentPage == SCREEN_PRESET && ( presetSubPage == PRESET_SUBPAGE_SAVE || presetSubPage == PRESET_SUBPAGE_OVERWRITE ) && displayPowerState == DISPLAY_POWER_ACTIVE ) {
+      if (
+        currentPage == SCREEN_PRESET &&
+        (
+          presetSubPage == PRESET_SUBPAGE_SAVE ||
+          presetSubPage == PRESET_SUBPAGE_OVERWRITE
+        ) &&
+        displayPowerState == DISPLAY_POWER_ACTIVE
+      ) {
         drawPresetSaveOperationStatus();
       }
 
       return;
     }
 
-    if ( presetSaveOperationState == PRESET_SAVE_OP_SUCCESS || presetSaveOperationState == PRESET_SAVE_OP_FAILED ) {
-      if ( now - presetSaveResultStartMs < PRESET_SAVE_RESULT_HOLD_MS ) {
+    if (
+      presetSaveOperationState == PRESET_SAVE_OP_SUCCESS ||
+      presetSaveOperationState == PRESET_SAVE_OP_FAILED
+    ) {
+      if (
+        now - presetSaveResultStartMs <
+        PRESET_SAVE_RESULT_HOLD_MS
+      ) {
         return;
       }
 
@@ -1492,40 +1417,32 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      bool saveSucceeded = ( presetSaveOperationState == PRESET_SAVE_OP_SUCCESS );
+      bool saveSucceeded =
+        presetSaveOperationState == PRESET_SAVE_OP_SUCCESS;
 
-      bool completedOverwrite = presetSaveOperationIsOverwrite;
+      bool completedOverwrite =
+        presetSaveOperationIsOverwrite;
 
       presetSaveOperationState = PRESET_SAVE_OP_IDLE;
-
       presetSaveOperationIsOverwrite = false;
-
       presetSaveResultStartMs = 0;
-
       presetSaveHoldStartTime = 0;
-
       presetSaveHoldTriggered = false;
 
       resetTouchGesture();
 
       if (completedOverwrite) {
         presetOverwriteTargetId = 0;
-
         presetOverwriteTargetName = "";
       }
 
+      presetSaveCandidateId = 0;
+      presetSaveCandidateName = "";
+
       if (saveSucceeded) {
-        presetSaveCandidateId = 0;
-
-        presetSaveCandidateName = "";
-
         drawPresetScreen();
       }
       else {
-        presetSaveCandidateId = 0;
-
-        presetSaveCandidateName = "";
-
         drawPresetManageScreen();
       }
     }
@@ -1543,36 +1460,56 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      bool deleteVerified = ( findPresetCacheIndex( presetDeleteTargetId ) < 0 );
+      bool deleteVerified =
+        findPresetCacheIndex( presetDeleteTargetId ) < 0;
 
       if (deleteVerified) {
-        if ( presetDeleteWasCurrentPreset && currentPreset == presetDeleteTargetId ) {
+        if (
+          presetDeleteWasCurrentPreset &&
+          currentPreset == presetDeleteTargetId
+        ) {
           currentPreset = 0;
-
           lastPresetValue = -1;
         }
 
         presetDeleteOperationState = PRESET_DELETE_OP_SUCCESS;
 
-        Serial.printf( "[CoreS3_Display] " "Preset delete verified: %u (%s)\n", presetDeleteTargetId, presetDeleteTargetName.c_str() );
+        Serial.printf(
+          "[CoreS3_Display] Preset delete verified: %u (%s)\n",
+          presetDeleteTargetId,
+          presetDeleteTargetName.c_str()
+        );
       }
       else {
         presetDeleteOperationState = PRESET_DELETE_OP_FAILED;
 
-        Serial.printf( "[CoreS3_Display] " "Preset delete verification failed: %u\n", presetDeleteTargetId );
+        Serial.printf(
+          "[CoreS3_Display] Preset delete verification failed: %u\n",
+          presetDeleteTargetId
+        );
       }
 
       presetDeleteResultStartMs = now;
 
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_DELETE && displayPowerState == DISPLAY_POWER_ACTIVE ) {
+      if (
+        currentPage == SCREEN_PRESET &&
+        presetSubPage == PRESET_SUBPAGE_DELETE &&
+        displayPowerState == DISPLAY_POWER_ACTIVE
+      ) {
         drawPresetDeleteOperationStatus();
       }
 
       return;
     }
 
-    if ( presetDeleteOperationState == PRESET_DELETE_OP_SUCCESS || presetDeleteOperationState == PRESET_DELETE_OP_FAILED ) {
-      if ( now - presetDeleteResultStartMs < PRESET_SAVE_RESULT_HOLD_MS ) {
+    if (
+      presetDeleteOperationState == PRESET_DELETE_OP_SUCCESS ||
+      presetDeleteOperationState == PRESET_DELETE_OP_FAILED
+    ) {
+      if (
+        now - presetDeleteResultStartMs <
+        PRESET_SAVE_RESULT_HOLD_MS
+      ) {
         return;
       }
 
@@ -1583,22 +1520,18 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      bool deleteSucceeded = ( presetDeleteOperationState == PRESET_DELETE_OP_SUCCESS );
+      bool deleteSucceeded =
+        presetDeleteOperationState == PRESET_DELETE_OP_SUCCESS;
 
       presetDeleteOperationState = PRESET_DELETE_OP_IDLE;
-
       presetDeleteResultStartMs = 0;
-
       presetDeleteWasCurrentPreset = false;
-
       presetSaveHoldStartTime = 0;
-
       presetSaveHoldTriggered = false;
 
       resetTouchGesture();
 
       presetDeleteTargetId = 0;
-
       presetDeleteTargetName = "";
 
       if (deleteSucceeded) {
@@ -1610,74 +1543,110 @@ class CoreS3DisplayUsermod : public Usermod {
     }
   }
 
-  // =========================================================
-  // Startup logo
-  // =========================================================
-
   void drawStartupBase() {
     display.fillScreen( TFT_BLACK );
 
-    bool logoResult = display.drawPng( CORES3_WLED_LOGO_PNG, CORES3_WLED_LOGO_PNG_LEN, 8, 20 );
+    bool logoResult =
+      display.drawPng(
+        CORES3_WLED_LOGO_PNG,
+        CORES3_WLED_LOGO_PNG_LEN,
+        8,
+        20
+      );
 
     if (!logoResult) {
       display.setTextDatum( textdatum_t::middle_center );
-
       display.setTextColor( TFT_WHITE, TFT_BLACK );
-
       display.setTextSize( 2 );
 
-      display.drawString( "WLED M5Stack CoreS3", screenWidth / 2, 68 );
+      display.drawString(
+        "WLED M5Stack CoreS3",
+        screenWidth / 2,
+        68
+      );
 
-      Serial.println( F( "[CoreS3_Display] " "WARNING: startup PNG draw failed" ) );
+      Serial.println(
+        F("[CoreS3_Display] WARNING: startup PNG draw failed")
+      );
     }
   }
 
   void drawStartupConnectingStatus() {
-    display.fillRect( 0, 125, screenWidth, 100, TFT_BLACK );
+    display.fillRect(
+      0,
+      125,
+      screenWidth,
+      100,
+      TFT_BLACK
+    );
 
     char dots[5];
-
     dots[0] = '\0';
 
-    for ( uint8_t i = 0; i < startupDotCount; i++ ) {
+    for (
+      uint8_t i = 0;
+      i < startupDotCount;
+      i++
+    ) {
       strcat( dots, "." );
     }
 
     char statusText[32];
 
-    snprintf( statusText, sizeof(statusText), "Wi-Fi Connecting%s", dots );
+    snprintf(
+      statusText,
+      sizeof(statusText),
+      "Wi-Fi Connecting%s",
+      dots
+    );
 
     display.setTextDatum( textdatum_t::middle_center );
-
     display.setTextColor( TFT_WHITE, TFT_BLACK );
-
     display.setTextSize( 2 );
 
-    display.drawString( statusText, screenWidth / 2, 153 );
+    display.drawString(
+      statusText,
+      screenWidth / 2,
+      153
+    );
 
     display.setTextSize( 1 );
-
     display.setTextColor( TFT_DARKGREY, TFT_BLACK );
 
-    display.drawString( "Starting WLED...", screenWidth / 2, 185 );
+    display.drawString(
+      "Starting WLED...",
+      screenWidth / 2,
+      185
+    );
   }
 
   void drawStartupConnectedStatus( const String& ipAddress ) {
-    display.fillRect( 0, 125, screenWidth, 100, TFT_BLACK );
+    display.fillRect(
+      0,
+      125,
+      screenWidth,
+      100,
+      TFT_BLACK
+    );
 
     display.setTextDatum( textdatum_t::middle_center );
-
     display.setTextColor( TFT_GREEN, TFT_BLACK );
-
     display.setTextSize( 2 );
 
-    display.drawString( "Wi-Fi Connected", screenWidth / 2, 150 );
+    display.drawString(
+      "Wi-Fi Connected",
+      screenWidth / 2,
+      150
+    );
 
     display.setTextColor( TFT_WHITE, TFT_BLACK );
-
     display.setTextSize( 1 );
 
-    display.drawString( ipAddress, screenWidth / 2, 181 );
+    display.drawString(
+      ipAddress,
+      screenWidth / 2,
+      181
+    );
   }
 
   void handleStartupSequence() {
@@ -1688,11 +1657,15 @@ class CoreS3DisplayUsermod : public Usermod {
     unsigned long now = millis();
 
     if ( startupState == STARTUP_FADE_IN ) {
-      if ( updateFade( getNormalDisplayBrightness(), now, startupLastFadeStep ) ) {
+      if (
+        updateFade(
+          getNormalDisplayBrightness(),
+          now,
+          startupLastFadeStep
+        )
+      ) {
         startupState = STARTUP_WAIT_WIFI;
-
         startupStateStart = now;
-
         startupLastDotsUpdate = now;
       }
 
@@ -1700,7 +1673,10 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     if ( startupState == STARTUP_WAIT_WIFI ) {
-      if ( now - startupLastDotsUpdate >= STARTUP_DOTS_INTERVAL_MS ) {
+      if (
+        now - startupLastDotsUpdate >=
+        STARTUP_DOTS_INTERVAL_MS
+      ) {
         startupLastDotsUpdate = now;
 
         startupDotCount++;
@@ -1713,12 +1689,14 @@ class CoreS3DisplayUsermod : public Usermod {
       }
 
       if ( WiFi.status() == WL_CONNECTED ) {
-        startupIPAddress = WiFi.localIP().toString();
+        startupIPAddress =
+          WiFi.localIP().toString();
 
-        drawStartupConnectedStatus( startupIPAddress );
+        drawStartupConnectedStatus(
+          startupIPAddress
+        );
 
         startupState = STARTUP_CONNECTED_HOLD;
-
         startupStateStart = now;
       }
 
@@ -1726,9 +1704,11 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     if ( startupState == STARTUP_CONNECTED_HOLD ) {
-      if ( now - startupStateStart >= STARTUP_CONNECTED_HOLD_MS ) {
+      if (
+        now - startupStateStart >=
+        STARTUP_CONNECTED_HOLD_MS
+      ) {
         startupState = STARTUP_FADE_OUT;
-
         startupLastFadeStep = now;
       }
 
@@ -1736,13 +1716,18 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     if ( startupState == STARTUP_FADE_OUT ) {
-      if ( updateFade( 0, now, startupLastFadeStep ) ) {
+      if (
+        updateFade(
+          0,
+          now,
+          startupLastFadeStep
+        )
+      ) {
         drawMainScreen( startupIPAddress );
 
         setDisplayBrightness( 0 );
 
         startupState = STARTUP_MAIN_FADE_IN;
-
         startupLastFadeStep = now;
       }
 
@@ -1750,22 +1735,24 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     if ( startupState == STARTUP_MAIN_FADE_IN ) {
-      if ( updateFade( getNormalDisplayBrightness(), now, startupLastFadeStep ) ) {
+      if (
+        updateFade(
+          getNormalDisplayBrightness(),
+          now,
+          startupLastFadeStep
+        )
+      ) {
         startupState = STARTUP_DONE;
-
         lastWiFiConnected = true;
-
         lastIPAddress = startupIPAddress;
-
         readyScreenShown = true;
-
         connectingScreenShown = false;
-
         lastUserActivityMs = now;
-
         displayPowerState = DISPLAY_POWER_ACTIVE;
 
-        Serial.println( F( "[CoreS3_Display] " "Startup animation complete" ) );
+        Serial.println(
+          F("[CoreS3_Display] Startup animation complete")
+        );
       }
 
       return;
@@ -1773,7 +1760,10 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   bool pollWakeTouch( unsigned long now ) {
-    if ( now - wakeTouchLastPoll < TOUCH_POLL_MS ) {
+    if (
+      now - wakeTouchLastPoll <
+      TOUCH_POLL_MS
+    ) {
       return wakeTouchState;
     }
 
@@ -1782,7 +1772,8 @@ class CoreS3DisplayUsermod : public Usermod {
     int16_t x = -1;
     int16_t y = -1;
 
-    wakeTouchState = ( display.getTouch( &x, &y ) > 0 );
+    wakeTouchState =
+      display.getTouch( &x, &y ) > 0;
 
     return wakeTouchState;
   }
@@ -1792,28 +1783,31 @@ class CoreS3DisplayUsermod : public Usermod {
       return false;
     }
 
-    bool completed = ( currentPreset == pendingPresetId );
+    bool completed =
+      currentPreset == pendingPresetId;
 
-    bool timedOut = ( millis() - pendingPresetRequestMs >= PRESET_APPLY_PENDING_MS );
+    bool timedOut =
+      millis() - pendingPresetRequestMs >=
+      PRESET_APPLY_PENDING_MS;
 
     if ( !completed && !timedOut ) {
       return false;
     }
 
     pendingPresetId = 0;
-
     pendingPresetName = "";
-
     pendingPresetRequestMs = 0;
 
     return true;
   }
 
   uint8_t getDisplayedPresetId() {
-    if ( pendingPresetId > 0 ) {
-      if ( millis() - pendingPresetRequestMs < PRESET_APPLY_PENDING_MS ) {
-        return pendingPresetId;
-      }
+    if (
+      pendingPresetId > 0 &&
+      millis() - pendingPresetRequestMs <
+      PRESET_APPLY_PENDING_MS
+    ) {
+      return pendingPresetId;
     }
 
     return currentPreset;
@@ -1824,19 +1818,16 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if ( WiFi.status() != WL_CONNECTED ) {
       drawConnectingScreen();
-
       return;
     }
 
     if ( currentPage == SCREEN_COLOR ) {
       drawColorScreen();
-
       return;
     }
 
     if ( currentPage == SCREEN_EFFECT ) {
       drawEffectDetailScreen();
-
       return;
     }
 
@@ -1860,27 +1851,31 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    drawMainScreen( WiFi.localIP().toString() );
+    drawMainScreen(
+      WiFi.localIP().toString()
+    );
   }
 
   void beginDisplaySleep( unsigned long now ) {
-    Serial.println( F( "[CoreS3_Display] " "Display sleep start" ) );
+    Serial.println(
+      F("[CoreS3_Display] Display sleep start")
+    );
 
     resetTouchGesture();
 
-    displayPowerState = DISPLAY_POWER_SLEEP_FADE_OUT;
+    displayPowerState =
+      DISPLAY_POWER_SLEEP_FADE_OUT;
 
     displayFadeLastStep = now;
-
     wakeTouchLastPoll = 0;
-
     wakeTouchState = false;
-
     wakeReleaseCandidate = 0;
   }
 
   void beginDisplayWake( unsigned long now ) {
-    Serial.println( F( "[CoreS3_Display] " "Display wake start" ) );
+    Serial.println(
+      F("[CoreS3_Display] Display wake start")
+    );
 
     resetTouchGesture();
 
@@ -1890,12 +1885,11 @@ class CoreS3DisplayUsermod : public Usermod {
 
     setDisplayBrightness( 0 );
 
-    displayPowerState = DISPLAY_POWER_WAKE_FADE_IN;
+    displayPowerState =
+      DISPLAY_POWER_WAKE_FADE_IN;
 
     displayFadeLastStep = now;
-
     wakeReleaseCandidate = 0;
-
     lastUserActivityMs = now;
   }
 
@@ -1903,34 +1897,52 @@ class CoreS3DisplayUsermod : public Usermod {
     unsigned long now = millis();
 
     if ( displayPowerState == DISPLAY_POWER_ACTIVE ) {
-      if ( sleepTimeoutSec > 0 && !touchActive && now - lastUserActivityMs >= getSleepTimeoutMs() ) {
+      if (
+        sleepTimeoutSec > 0 &&
+        !touchActive &&
+        now - lastUserActivityMs >=
+        getSleepTimeoutMs()
+      ) {
         beginDisplaySleep( now );
-
         return true;
       }
 
       return false;
     }
 
-    if ( displayPowerState == DISPLAY_POWER_SLEEP_FADE_OUT ) {
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_SLEEP_FADE_OUT
+    ) {
       if ( pollWakeTouch( now ) ) {
         beginDisplayWake( now );
-
         return true;
       }
 
-      if ( updateFade( 0, now, displayFadeLastStep ) ) {
-        displayPowerState = DISPLAY_POWER_SLEEPING;
+      if (
+        updateFade(
+          0,
+          now,
+          displayFadeLastStep
+        )
+      ) {
+        displayPowerState =
+          DISPLAY_POWER_SLEEPING;
 
         setDisplayBrightness( 0 );
 
-        Serial.println( F( "[CoreS3_Display] " "Display sleeping" ) );
+        Serial.println(
+          F("[CoreS3_Display] Display sleeping")
+        );
       }
 
       return true;
     }
 
-    if ( displayPowerState == DISPLAY_POWER_SLEEPING ) {
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_SLEEPING
+    ) {
       if ( pollWakeTouch( now ) ) {
         beginDisplayWake( now );
       }
@@ -1938,47 +1950,62 @@ class CoreS3DisplayUsermod : public Usermod {
       return true;
     }
 
-    if ( displayPowerState == DISPLAY_POWER_WAKE_FADE_IN ) {
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_WAKE_FADE_IN
+    ) {
       pollWakeTouch( now );
 
-      if ( updateFade( getNormalDisplayBrightness(), now, displayFadeLastStep ) ) {
-        displayPowerState = DISPLAY_POWER_WAKE_WAIT_RELEASE;
+      if (
+        updateFade(
+          getNormalDisplayBrightness(),
+          now,
+          displayFadeLastStep
+        )
+      ) {
+        displayPowerState =
+          DISPLAY_POWER_WAKE_WAIT_RELEASE;
 
         wakeReleaseCandidate = 0;
 
-        Serial.println( F( "[CoreS3_Display] " "Display wake fade complete" ) );
+        Serial.println(
+          F("[CoreS3_Display] Display wake fade complete")
+        );
       }
 
       return true;
     }
 
-    if ( displayPowerState == DISPLAY_POWER_WAKE_WAIT_RELEASE ) {
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_WAKE_WAIT_RELEASE
+    ) {
       bool touching = pollWakeTouch( now );
 
       if (touching) {
         wakeReleaseCandidate = 0;
-
         return true;
       }
 
       if ( wakeReleaseCandidate == 0 ) {
         wakeReleaseCandidate = now;
-
         return true;
       }
 
-      if ( now - wakeReleaseCandidate >= TOUCH_RELEASE_CONFIRM_MS ) {
+      if (
+        now - wakeReleaseCandidate >=
+        TOUCH_RELEASE_CONFIRM_MS
+      ) {
         displayPowerState = DISPLAY_POWER_ACTIVE;
-
         lastUserActivityMs = now;
-
         wakeReleaseCandidate = 0;
-
         wakeTouchState = false;
 
         resetTouchGesture();
 
-        Serial.println( F( "[CoreS3_Display] " "Display active" ) );
+        Serial.println(
+          F("[CoreS3_Display] Display active")
+        );
       }
 
       return true;
@@ -1987,8 +2014,16 @@ class CoreS3DisplayUsermod : public Usermod {
     return false;
   }
 
-  uint16_t rgbTo565( uint8_t r, uint8_t g, uint8_t b ) {
-    return ( ((uint16_t)(r & 0xF8) << 8) | ((uint16_t)(g & 0xFC) << 3) | ((uint16_t)b >> 3) );
+  uint16_t rgbTo565(
+    uint8_t r,
+    uint8_t g,
+    uint8_t b
+  ) {
+    return (
+      ((uint16_t)(r & 0xF8) << 8) |
+      ((uint16_t)(g & 0xFC) << 3) |
+      ((uint16_t)b >> 3)
+    );
   }
 
   uint32_t getPrimaryColor() {
@@ -2032,49 +2067,94 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   size_t getSelectablePaletteCount() {
-    return FIXED_PALETTE_COUNT + customPalettes.size() + usermodPalettes.size();
+    return
+      FIXED_PALETTE_COUNT +
+      customPalettes.size() +
+      usermodPalettes.size();
   }
 
-  uint8_t paletteIdFromSequenceIndex( size_t sequenceIndex ) {
-    if ( sequenceIndex < FIXED_PALETTE_COUNT ) {
+  uint8_t paletteIdFromSequenceIndex(
+    size_t sequenceIndex
+  ) {
+    if (
+      sequenceIndex <
+      FIXED_PALETTE_COUNT
+    ) {
       return (uint8_t)sequenceIndex;
     }
 
     sequenceIndex -= FIXED_PALETTE_COUNT;
 
-    if ( sequenceIndex < customPalettes.size() ) {
-      return (uint8_t)( WLED_CUSTOM_PALETTE_ID_BASE - sequenceIndex );
+    if (
+      sequenceIndex <
+      customPalettes.size()
+    ) {
+      return (uint8_t)(
+        WLED_CUSTOM_PALETTE_ID_BASE -
+        sequenceIndex
+      );
     }
 
     sequenceIndex -= customPalettes.size();
 
-    if ( sequenceIndex < usermodPalettes.size() ) {
-      return (uint8_t)( WLED_USERMOD_PALETTE_ID_BASE - sequenceIndex );
+    if (
+      sequenceIndex <
+      usermodPalettes.size()
+    ) {
+      return (uint8_t)(
+        WLED_USERMOD_PALETTE_ID_BASE -
+        sequenceIndex
+      );
     }
 
     return 0;
   }
 
-  int findPaletteSequenceIndex( uint8_t paletteId ) {
+  int findPaletteSequenceIndex(
+    uint8_t paletteId
+  ) {
     if ( paletteId < FIXED_PALETTE_COUNT ) {
       return paletteId;
     }
 
-    if ( paletteId > WLED_CUSTOM_PALETTE_ID_BASE ) {
-      size_t usermodIndex = WLED_USERMOD_PALETTE_ID_BASE - paletteId;
+    if (
+      paletteId >
+      WLED_CUSTOM_PALETTE_ID_BASE
+    ) {
+      size_t usermodIndex =
+        WLED_USERMOD_PALETTE_ID_BASE -
+        paletteId;
 
-      if ( usermodIndex < usermodPalettes.size() ) {
-        return (int)( FIXED_PALETTE_COUNT + customPalettes.size() + usermodIndex );
+      if (
+        usermodIndex <
+        usermodPalettes.size()
+      ) {
+        return (int)(
+          FIXED_PALETTE_COUNT +
+          customPalettes.size() +
+          usermodIndex
+        );
       }
 
       return -1;
     }
 
-    if ( paletteId >= FIXED_PALETTE_COUNT && paletteId <= WLED_CUSTOM_PALETTE_ID_BASE ) {
-      size_t customIndex = WLED_CUSTOM_PALETTE_ID_BASE - paletteId;
+    if (
+      paletteId >= FIXED_PALETTE_COUNT &&
+      paletteId <= WLED_CUSTOM_PALETTE_ID_BASE
+    ) {
+      size_t customIndex =
+        WLED_CUSTOM_PALETTE_ID_BASE -
+        paletteId;
 
-      if ( customIndex < customPalettes.size() ) {
-        return (int)( FIXED_PALETTE_COUNT + customIndex );
+      if (
+        customIndex <
+        customPalettes.size()
+      ) {
+        return (int)(
+          FIXED_PALETTE_COUNT +
+          customIndex
+        );
       }
 
       return -1;
@@ -2083,30 +2163,57 @@ class CoreS3DisplayUsermod : public Usermod {
     return -1;
   }
 
-  void getPaletteName( uint8_t paletteId, char* paletteName, size_t paletteNameSize ) {
-    if ( paletteName == nullptr || paletteNameSize == 0 ) {
+  void getPaletteName(
+    uint8_t paletteId,
+    char* paletteName,
+    size_t paletteNameSize
+  ) {
+    if (
+      paletteName == nullptr ||
+      paletteNameSize == 0
+    ) {
       return;
     }
 
     paletteName[0] = '\0';
 
-    extractModeName( paletteId, JSON_palette_names, paletteName, paletteNameSize - 1 );
+    extractModeName(
+      paletteId,
+      JSON_palette_names,
+      paletteName,
+      paletteNameSize - 1
+    );
 
     if ( strlen(paletteName) == 0 ) {
-      snprintf( paletteName, paletteNameSize, "Palette %u", paletteId );
+      snprintf(
+        paletteName,
+        paletteNameSize,
+        "Palette %u",
+        paletteId
+      );
     }
   }
 
-  uint8_t findAdjacentPreset( uint8_t startPreset, int direction, String* foundName = nullptr ) {
+  uint8_t findAdjacentPreset(
+    uint8_t startPreset,
+    int direction,
+    String* foundName = nullptr
+  ) {
     if ( direction == 0 ) {
       return 0;
     }
 
-    if ( !presetCacheReady || presetCacheCount == 0 ) {
+    if (
+      !presetCacheReady ||
+      presetCacheCount == 0
+    ) {
       return 0;
     }
 
-    int currentIndex = findPresetCacheIndex( startPreset );
+    int currentIndex =
+      findPresetCacheIndex(
+        startPreset
+      );
 
     int newIndex;
 
@@ -2115,39 +2222,52 @@ class CoreS3DisplayUsermod : public Usermod {
         newIndex = 0;
       }
       else {
-        newIndex = presetCacheCount - 1;
+        newIndex =
+          presetCacheCount - 1;
       }
     }
     else {
-      newIndex = currentIndex + ( direction > 0 ? 1 : -1 );
+      newIndex =
+        currentIndex +
+        ( direction > 0 ? 1 : -1 );
 
-      if ( newIndex >= presetCacheCount ) {
+      if (
+        newIndex >=
+        presetCacheCount
+      ) {
         newIndex = 0;
       }
 
       if ( newIndex < 0 ) {
-        newIndex = presetCacheCount - 1;
+        newIndex =
+          presetCacheCount - 1;
       }
     }
 
     if ( foundName != nullptr ) {
-      *foundName = presetCache[ newIndex ].name;
+      *foundName =
+        presetCache[newIndex].name;
     }
 
-    return presetCache[ newIndex ].id;
+    return presetCache[newIndex].id;
   }
 
   uint8_t getPresetNavigationBaseId() {
-    if ( pendingPresetId > 0 && millis() - pendingPresetRequestMs < PRESET_APPLY_PENDING_MS ) {
+    if (
+      pendingPresetId > 0 &&
+      millis() - pendingPresetRequestMs <
+      PRESET_APPLY_PENDING_MS
+    ) {
       return pendingPresetId;
     }
 
     return currentPreset;
   }
 
-  uint8_t getHueFromColor( uint32_t color ) {
+  uint8_t getHueFromColor(
+    uint32_t color
+  ) {
     CRGBW rgb( color );
-
     CHSV32 hsv;
 
     rgb2hsv( rgb, hsv );
@@ -2155,9 +2275,10 @@ class CoreS3DisplayUsermod : public Usermod {
     return (uint8_t)( hsv.h >> 8 );
   }
 
-  uint8_t getSaturationFromColor( uint32_t color ) {
+  uint8_t getSaturationFromColor(
+    uint32_t color
+  ) {
     CRGBW rgb( color );
-
     CHSV32 hsv;
 
     rgb2hsv( rgb, hsv );
@@ -2165,181 +2286,461 @@ class CoreS3DisplayUsermod : public Usermod {
     return hsv.s;
   }
 
-  void syncLogicalColorFromRgb( uint32_t color ) {
+  void syncLogicalColorFromRgb(
+    uint32_t color
+  ) {
     CRGBW rgb( color );
 
-    rgb2hsv( rgb, logicalColorHsv );
+    rgb2hsv(
+      rgb,
+      logicalColorHsv
+    );
 
-    logicalHueValue = (uint8_t)( logicalColorHsv.h >> 8 );
+    logicalHueValue =
+      (uint8_t)( logicalColorHsv.h >> 8 );
 
-    logicalSaturationValue = logicalColorHsv.s;
+    logicalSaturationValue =
+      logicalColorHsv.s;
 
     logicalWhiteValue = rgb.w;
-
     logicalColorHsvValid = true;
-
     lastHueValue = logicalHueValue;
-
     lastSaturationValue = logicalSaturationValue;
   }
 
   uint8_t getDisplayedHue() {
-    uint32_t currentColor = getPrimaryColor();
+    uint32_t currentColor =
+      getPrimaryColor();
 
-    if ( logicalColorHsvValid && lastPrimaryColorValid && currentColor == lastPrimaryColor ) {
+    if (
+      logicalColorHsvValid &&
+      lastPrimaryColorValid &&
+      currentColor == lastPrimaryColor
+    ) {
       return logicalHueValue;
     }
 
-    return getHueFromColor( currentColor );
+    return getHueFromColor(
+      currentColor
+    );
   }
 
   uint8_t getDisplayedSaturation() {
-    uint32_t currentColor = getPrimaryColor();
+    uint32_t currentColor =
+      getPrimaryColor();
 
-    if ( logicalColorHsvValid && lastPrimaryColorValid && currentColor == lastPrimaryColor ) {
+    if (
+      logicalColorHsvValid &&
+      lastPrimaryColorValid &&
+      currentColor == lastPrimaryColor
+    ) {
       return logicalSaturationValue;
     }
 
-    return getSaturationFromColor( currentColor );
+    return getSaturationFromColor(
+      currentColor
+    );
+  }
+
+  // =========================================================
+  // Phase 10.3.1
+  // Common centered text / standard page header helpers
+  // =========================================================
+
+  void setCenteredTextStyle(
+    uint16_t color,
+    uint8_t size,
+    uint16_t background = TFT_BLACK
+  ) {
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
+
+    display.setTextColor(
+      color,
+      background
+    );
+
+    display.setTextSize(
+      size
+    );
+  }
+
+  void drawStandardPageHeader(
+    const char* title,
+    const char* subtitle,
+    uint16_t titleColor = TFT_WHITE
+  ) {
+    setCenteredTextStyle(
+      titleColor,
+      2
+    );
+
+    display.drawString(
+      title,
+      screenWidth / 2,
+      18
+    );
+
+    setCenteredTextStyle(
+      TFT_WHITE,
+      1
+    );
+
+    display.drawString(
+      subtitle,
+      screenWidth / 2,
+      41
+    );
+
+    display.drawFastHLine(
+      8,
+      58,
+      screenWidth - 16,
+      TFT_DARKGREY
+    );
   }
 
   void drawConnectingScreen() {
     drawStartupBase();
 
-    display.fillRect( 0, 125, screenWidth, 100, TFT_BLACK );
+    display.fillRect(
+      0,
+      125,
+      screenWidth,
+      100,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( "Wi-Fi Reconnecting...", screenWidth / 2, 153 );
+    display.drawString(
+      "Wi-Fi Reconnecting...",
+      screenWidth / 2,
+      153
+    );
 
     display.setTextSize( 1 );
 
-    display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
 
-    display.drawString( "WLED is running", screenWidth / 2, 185 );
+    display.drawString(
+      "WLED is running",
+      screenWidth / 2,
+      185
+    );
 
     connectingScreenShown = true;
-
     readyScreenShown = false;
 
     resetTouchGesture();
   }
 
-  void drawPowerIcon( int16_t centerX, int16_t centerY, uint16_t iconColor, uint16_t backgroundColor ) {
-    display.drawCircle( centerX, centerY + 2, 11, iconColor );
+  void drawPowerIcon(
+    int16_t centerX,
+    int16_t centerY,
+    uint16_t iconColor,
+    uint16_t backgroundColor
+  ) {
+    display.drawCircle(
+      centerX,
+      centerY + 2,
+      11,
+      iconColor
+    );
 
-    display.drawCircle( centerX, centerY + 2, 10, iconColor );
+    display.drawCircle(
+      centerX,
+      centerY + 2,
+      10,
+      iconColor
+    );
 
-    display.fillRect( centerX - 4, centerY - 11, 9, 8, backgroundColor );
+    display.fillRect(
+      centerX - 4,
+      centerY - 11,
+      9,
+      8,
+      backgroundColor
+    );
 
-    display.drawFastVLine( centerX - 1, centerY - 14, 12, iconColor );
+    display.drawFastVLine(
+      centerX - 1,
+      centerY - 14,
+      12,
+      iconColor
+    );
 
-    display.drawFastVLine( centerX, centerY - 14, 12, iconColor );
+    display.drawFastVLine(
+      centerX,
+      centerY - 14,
+      12,
+      iconColor
+    );
 
-    display.drawFastVLine( centerX + 1, centerY - 14, 12, iconColor );
+    display.drawFastVLine(
+      centerX + 1,
+      centerY - 14,
+      12,
+      iconColor
+    );
   }
 
-  void drawPowerButton( bool ledOn, bool pressed ) {
-    uint16_t stateColor = ledOn ? TFT_GREEN : TFT_RED;
+  void drawPowerButton(
+    bool ledOn,
+    bool pressed
+  ) {
+    uint16_t stateColor =
+      ledOn ? TFT_GREEN : TFT_RED;
 
-    uint16_t backgroundColor = pressed ? stateColor : TFT_BLACK;
+    uint16_t backgroundColor =
+      pressed ? stateColor : TFT_BLACK;
 
-    uint16_t iconColor = pressed ? TFT_BLACK : stateColor;
+    uint16_t iconColor =
+      pressed ? TFT_BLACK : stateColor;
 
-    display.fillRect( POWER_BUTTON_X - 2, POWER_BUTTON_Y - 2, POWER_BUTTON_W + 4, POWER_BUTTON_H + 4, TFT_BLACK );
+    display.fillRect(
+      POWER_BUTTON_X - 2,
+      POWER_BUTTON_Y - 2,
+      POWER_BUTTON_W + 4,
+      POWER_BUTTON_H + 4,
+      TFT_BLACK
+    );
 
-    display.fillRect( POWER_BUTTON_X, POWER_BUTTON_Y, POWER_BUTTON_W, POWER_BUTTON_H, backgroundColor );
+    display.fillRect(
+      POWER_BUTTON_X,
+      POWER_BUTTON_Y,
+      POWER_BUTTON_W,
+      POWER_BUTTON_H,
+      backgroundColor
+    );
 
-    display.drawRect( POWER_BUTTON_X, POWER_BUTTON_Y, POWER_BUTTON_W, POWER_BUTTON_H, stateColor );
+    display.drawRect(
+      POWER_BUTTON_X,
+      POWER_BUTTON_Y,
+      POWER_BUTTON_W,
+      POWER_BUTTON_H,
+      stateColor
+    );
 
-    display.drawRect( POWER_BUTTON_X + 1, POWER_BUTTON_Y + 1, POWER_BUTTON_W - 2, POWER_BUTTON_H - 2, stateColor );
+    display.drawRect(
+      POWER_BUTTON_X + 1,
+      POWER_BUTTON_Y + 1,
+      POWER_BUTTON_W - 2,
+      POWER_BUTTON_H - 2,
+      stateColor
+    );
 
-    int16_t centerX = POWER_BUTTON_X + (POWER_BUTTON_W / 2);
+    int16_t centerX =
+      POWER_BUTTON_X +
+      (POWER_BUTTON_W / 2);
 
-    int16_t centerY = POWER_BUTTON_Y + (POWER_BUTTON_H / 2);
+    int16_t centerY =
+      POWER_BUTTON_Y +
+      (POWER_BUTTON_H / 2);
 
-    drawPowerIcon( centerX, centerY, iconColor, backgroundColor );
+    drawPowerIcon(
+      centerX,
+      centerY,
+      iconColor,
+      backgroundColor
+    );
 
     powerButtonVisualPressed = pressed;
   }
 
-  void drawTriangleButton( int16_t x, int16_t y, bool pointRight, bool pressed ) {
+  void drawTriangleButton(
+    int16_t x,
+    int16_t y,
+    bool pointRight,
+    bool pressed
+  ) {
     const uint16_t buttonColor = TFT_CYAN;
-
     const int16_t w = CONTROL_BUTTON_W;
-
     const int16_t h = CONTROL_BUTTON_H;
 
-    display.fillRect( x - 2, y - 2, w + 4, h + 4, TFT_BLACK );
+    display.fillRect(
+      x - 2,
+      y - 2,
+      w + 4,
+      h + 4,
+      TFT_BLACK
+    );
 
     if (pressed) {
-      display.fillRect( x, y, w, h, buttonColor );
+      display.fillRect(
+        x,
+        y,
+        w,
+        h,
+        buttonColor
+      );
     }
     else {
-      display.fillRect( x, y, w, h, TFT_BLACK );
+      display.fillRect(
+        x,
+        y,
+        w,
+        h,
+        TFT_BLACK
+      );
 
-      display.drawRect( x, y, w, h, buttonColor );
+      display.drawRect(
+        x,
+        y,
+        w,
+        h,
+        buttonColor
+      );
 
-      display.drawRect( x + 1, y + 1, w - 2, h - 2, buttonColor );
+      display.drawRect(
+        x + 1,
+        y + 1,
+        w - 2,
+        h - 2,
+        buttonColor
+      );
     }
 
     int16_t centerX = x + (w / 2);
-
     int16_t centerY = y + (h / 2);
 
-    uint16_t triangleColor = pressed ? TFT_BLACK : buttonColor;
+    uint16_t triangleColor =
+      pressed ? TFT_BLACK : buttonColor;
 
     if (pointRight) {
-      display.fillTriangle( centerX + 10, centerY, centerX - 7, centerY - 9, centerX - 7, centerY + 9, triangleColor );
+      display.fillTriangle(
+        centerX + 10,
+        centerY,
+        centerX - 7,
+        centerY - 9,
+        centerX - 7,
+        centerY + 9,
+        triangleColor
+      );
     }
     else {
-      display.fillTriangle( centerX - 10, centerY, centerX + 7, centerY - 9, centerX + 7, centerY + 9, triangleColor );
+      display.fillTriangle(
+        centerX - 10,
+        centerY,
+        centerX + 7,
+        centerY - 9,
+        centerX + 7,
+        centerY + 9,
+        triangleColor
+      );
     }
   }
 
-  void drawBrightness( int brightnessValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 62, screenWidth, 58, TFT_BLACK );
+  void drawBrightness(
+    int brightnessValue,
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      62,
+      screenWidth,
+      58,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Brightness", screenWidth / 2, 70 );
+    display.drawString(
+      "Brightness",
+      screenWidth / 2,
+      70
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, BRI_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_BRIGHTNESS_DOWN );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      BRI_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_BRIGHTNESS_DOWN
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, BRI_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_BRIGHTNESS_UP );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      BRI_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_BRIGHTNESS_UP
+    );
 
     char valueText[8];
 
-    snprintf( valueText, sizeof(valueText), "%d", brightnessValue );
+    snprintf(
+      valueText,
+      sizeof(valueText),
+      "%d",
+      brightnessValue
+    );
 
     display.setTextSize( 2 );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
-    display.drawString( valueText, screenWidth / 2, 99 );
+    display.drawString(
+      valueText,
+      screenWidth / 2,
+      99
+    );
   }
 
-  void getEffectName( uint8_t effectMode, char* effectName, size_t effectNameSize ) {
-    if ( effectName == nullptr || effectNameSize == 0 ) {
+  void getEffectName(
+    uint8_t effectMode,
+    char* effectName,
+    size_t effectNameSize
+  ) {
+    if (
+      effectName == nullptr ||
+      effectNameSize == 0
+    ) {
       return;
     }
 
     effectName[0] = '\0';
 
-    extractModeName( effectMode, nullptr, effectName, effectNameSize - 1 );
+    extractModeName(
+      effectMode,
+      nullptr,
+      effectName,
+      effectNameSize - 1
+    );
 
     if ( strlen(effectName) == 0 ) {
-      strncpy( effectName, "Unknown", effectNameSize - 1 );
+      strncpy(
+        effectName,
+        "Unknown",
+        effectNameSize - 1
+      );
 
-      effectName[ effectNameSize - 1 ] = '\0';
+      effectName[effectNameSize - 1] = '\0';
     }
 
     if ( strlen(effectName) > 22 ) {
@@ -2347,1739 +2748,3088 @@ class CoreS3DisplayUsermod : public Usermod {
     }
   }
 
-  void drawEffectDetailButton( uint8_t effectMode, bool pressed ) {
+  void drawEffectDetailButton(
+    uint8_t effectMode,
+    bool pressed
+  ) {
     const uint16_t buttonColor = TFT_CYAN;
 
-    uint16_t backgroundColor = pressed ? buttonColor : TFT_BLACK;
+    uint16_t backgroundColor =
+      pressed ? buttonColor : TFT_BLACK;
 
-    uint16_t textColor = pressed ? TFT_BLACK : TFT_WHITE;
+    uint16_t textColor =
+      pressed ? TFT_BLACK : TFT_WHITE;
 
-    display.fillRect( EFFECT_DETAIL_X - 2, EFFECT_DETAIL_Y - 2, EFFECT_DETAIL_W + 4, EFFECT_DETAIL_H + 4, TFT_BLACK );
+    display.fillRect(
+      EFFECT_DETAIL_X - 2,
+      EFFECT_DETAIL_Y - 2,
+      EFFECT_DETAIL_W + 4,
+      EFFECT_DETAIL_H + 4,
+      TFT_BLACK
+    );
 
-    display.fillRect( EFFECT_DETAIL_X, EFFECT_DETAIL_Y, EFFECT_DETAIL_W, EFFECT_DETAIL_H, backgroundColor );
+    display.fillRect(
+      EFFECT_DETAIL_X,
+      EFFECT_DETAIL_Y,
+      EFFECT_DETAIL_W,
+      EFFECT_DETAIL_H,
+      backgroundColor
+    );
 
-    display.drawRect( EFFECT_DETAIL_X, EFFECT_DETAIL_Y, EFFECT_DETAIL_W, EFFECT_DETAIL_H, buttonColor );
+    display.drawRect(
+      EFFECT_DETAIL_X,
+      EFFECT_DETAIL_Y,
+      EFFECT_DETAIL_W,
+      EFFECT_DETAIL_H,
+      buttonColor
+    );
 
-    display.drawRect( EFFECT_DETAIL_X + 1, EFFECT_DETAIL_Y + 1, EFFECT_DETAIL_W - 2, EFFECT_DETAIL_H - 2, buttonColor );
+    display.drawRect(
+      EFFECT_DETAIL_X + 1,
+      EFFECT_DETAIL_Y + 1,
+      EFFECT_DETAIL_W - 2,
+      EFFECT_DETAIL_H - 2,
+      buttonColor
+    );
 
     char effectName[64];
 
-    getEffectName( effectMode, effectName, sizeof(effectName) );
+    getEffectName(
+      effectMode,
+      effectName,
+      sizeof(effectName)
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( textColor, backgroundColor );
+    display.setTextColor(
+      textColor,
+      backgroundColor
+    );
 
-    if ( strlen(effectName) <= 10 ) {
-      display.setTextSize( 2 );
-    }
-    else {
-      display.setTextSize( 1 );
-    }
+    display.setTextSize(
+      strlen(effectName) <= 10
+        ? 2
+        : 1
+    );
 
-    display.drawString( effectName, EFFECT_DETAIL_X + (EFFECT_DETAIL_W / 2), EFFECT_DETAIL_Y + (EFFECT_DETAIL_H / 2) );
+    display.drawString(
+      effectName,
+      EFFECT_DETAIL_X +
+        (EFFECT_DETAIL_W / 2),
+      EFFECT_DETAIL_Y +
+        (EFFECT_DETAIL_H / 2)
+    );
 
     effectDetailVisualPressed = pressed;
   }
 
-  void drawEffect( uint8_t effectMode, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 120, screenWidth, 58, TFT_BLACK );
+  void drawEffect(
+    uint8_t effectMode,
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      120,
+      screenWidth,
+      58,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Effect", screenWidth / 2, 128 );
+    display.drawString(
+      "Effect",
+      screenWidth / 2,
+      128
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, FX_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_EFFECT_PREV );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      FX_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_EFFECT_PREV
+    );
 
-    drawEffectDetailButton( effectMode, pressedTarget == TOUCH_TARGET_EFFECT_DETAIL );
+    drawEffectDetailButton(
+      effectMode,
+      pressedTarget ==
+        TOUCH_TARGET_EFFECT_DETAIL
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, FX_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_EFFECT_NEXT );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      FX_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_EFFECT_NEXT
+    );
   }
 
-  void drawColorButton( uint32_t color, bool pressed ) {
+  void drawColorButton(
+    uint32_t color,
+    bool pressed
+  ) {
     const uint16_t buttonColor = TFT_CYAN;
 
-    uint16_t backgroundColor = pressed ? buttonColor : TFT_BLACK;
+    uint16_t backgroundColor =
+      pressed ? buttonColor : TFT_BLACK;
 
-    uint16_t textColor = pressed ? TFT_BLACK : TFT_WHITE;
+    uint16_t textColor =
+      pressed ? TFT_BLACK : TFT_WHITE;
 
-    uint16_t previewColor = rgbTo565( R(color), G(color), B(color) );
+    uint16_t previewColor =
+      rgbTo565(
+        R(color),
+        G(color),
+        B(color)
+      );
 
-    display.fillRect( COLOR_BUTTON_X - 2, MAIN_BOTTOM_BUTTON_Y - 2, COLOR_BUTTON_W + 4, MAIN_BOTTOM_BUTTON_H + 4, TFT_BLACK );
+    display.fillRect(
+      COLOR_BUTTON_X - 2,
+      MAIN_BOTTOM_BUTTON_Y - 2,
+      COLOR_BUTTON_W + 4,
+      MAIN_BOTTOM_BUTTON_H + 4,
+      TFT_BLACK
+    );
 
-    display.fillRect( COLOR_BUTTON_X, MAIN_BOTTOM_BUTTON_Y, COLOR_BUTTON_W, MAIN_BOTTOM_BUTTON_H, backgroundColor );
+    display.fillRect(
+      COLOR_BUTTON_X,
+      MAIN_BOTTOM_BUTTON_Y,
+      COLOR_BUTTON_W,
+      MAIN_BOTTOM_BUTTON_H,
+      backgroundColor
+    );
 
-    display.drawRect( COLOR_BUTTON_X, MAIN_BOTTOM_BUTTON_Y, COLOR_BUTTON_W, MAIN_BOTTOM_BUTTON_H, buttonColor );
+    display.drawRect(
+      COLOR_BUTTON_X,
+      MAIN_BOTTOM_BUTTON_Y,
+      COLOR_BUTTON_W,
+      MAIN_BOTTOM_BUTTON_H,
+      buttonColor
+    );
 
-    display.drawRect( COLOR_BUTTON_X + 1, MAIN_BOTTOM_BUTTON_Y + 1, COLOR_BUTTON_W - 2, MAIN_BOTTOM_BUTTON_H - 2, buttonColor );
+    display.drawRect(
+      COLOR_BUTTON_X + 1,
+      MAIN_BOTTOM_BUTTON_Y + 1,
+      COLOR_BUTTON_W - 2,
+      MAIN_BOTTOM_BUTTON_H - 2,
+      buttonColor
+    );
 
     static constexpr int16_t SWATCH_X = 28;
     static constexpr int16_t SWATCH_W = 24;
     static constexpr int16_t SWATCH_H = 24;
 
-    int16_t swatchY = MAIN_BOTTOM_BUTTON_Y + ( ( MAIN_BOTTOM_BUTTON_H - SWATCH_H ) / 2 );
+    int16_t swatchY =
+      MAIN_BOTTOM_BUTTON_Y +
+      (
+        (
+          MAIN_BOTTOM_BUTTON_H -
+          SWATCH_H
+        ) / 2
+      );
 
-    display.fillRect( SWATCH_X, swatchY, SWATCH_W, SWATCH_H, previewColor );
+    display.fillRect(
+      SWATCH_X,
+      swatchY,
+      SWATCH_W,
+      SWATCH_H,
+      previewColor
+    );
 
-    display.drawRect( SWATCH_X, swatchY, SWATCH_W, SWATCH_H, TFT_WHITE );
+    display.drawRect(
+      SWATCH_X,
+      swatchY,
+      SWATCH_W,
+      SWATCH_H,
+      TFT_WHITE
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( textColor, backgroundColor );
+    display.setTextColor(
+      textColor,
+      backgroundColor
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( "COLOR", 105, MAIN_BOTTOM_BUTTON_Y + (MAIN_BOTTOM_BUTTON_H / 2) );
+    display.drawString(
+      "COLOR",
+      105,
+      MAIN_BOTTOM_BUTTON_Y +
+        (MAIN_BOTTOM_BUTTON_H / 2)
+    );
 
     colorButtonVisualPressed = pressed;
   }
 
-  void drawPresetOpenButton( bool pressed ) {
+  void drawPresetOpenButton(
+    bool pressed
+  ) {
     const uint16_t buttonColor = TFT_CYAN;
 
-    uint16_t backgroundColor = pressed ? buttonColor : TFT_BLACK;
+    uint16_t backgroundColor =
+      pressed ? buttonColor : TFT_BLACK;
 
-    uint16_t textColor = pressed ? TFT_BLACK : TFT_WHITE;
+    uint16_t textColor =
+      pressed ? TFT_BLACK : TFT_WHITE;
 
-    display.fillRect( PRESET_OPEN_BUTTON_X - 2, MAIN_BOTTOM_BUTTON_Y - 2, PRESET_OPEN_BUTTON_W + 4, MAIN_BOTTOM_BUTTON_H + 4, TFT_BLACK );
+    display.fillRect(
+      PRESET_OPEN_BUTTON_X - 2,
+      MAIN_BOTTOM_BUTTON_Y - 2,
+      PRESET_OPEN_BUTTON_W + 4,
+      MAIN_BOTTOM_BUTTON_H + 4,
+      TFT_BLACK
+    );
 
-    display.fillRect( PRESET_OPEN_BUTTON_X, MAIN_BOTTOM_BUTTON_Y, PRESET_OPEN_BUTTON_W, MAIN_BOTTOM_BUTTON_H, backgroundColor );
+    display.fillRect(
+      PRESET_OPEN_BUTTON_X,
+      MAIN_BOTTOM_BUTTON_Y,
+      PRESET_OPEN_BUTTON_W,
+      MAIN_BOTTOM_BUTTON_H,
+      backgroundColor
+    );
 
-    display.drawRect( PRESET_OPEN_BUTTON_X, MAIN_BOTTOM_BUTTON_Y, PRESET_OPEN_BUTTON_W, MAIN_BOTTOM_BUTTON_H, buttonColor );
+    display.drawRect(
+      PRESET_OPEN_BUTTON_X,
+      MAIN_BOTTOM_BUTTON_Y,
+      PRESET_OPEN_BUTTON_W,
+      MAIN_BOTTOM_BUTTON_H,
+      buttonColor
+    );
 
-    display.drawRect( PRESET_OPEN_BUTTON_X + 1, MAIN_BOTTOM_BUTTON_Y + 1, PRESET_OPEN_BUTTON_W - 2, MAIN_BOTTOM_BUTTON_H - 2, buttonColor );
+    display.drawRect(
+      PRESET_OPEN_BUTTON_X + 1,
+      MAIN_BOTTOM_BUTTON_Y + 1,
+      PRESET_OPEN_BUTTON_W - 2,
+      MAIN_BOTTOM_BUTTON_H - 2,
+      buttonColor
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( textColor, backgroundColor );
+    display.setTextColor(
+      textColor,
+      backgroundColor
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( "PRESET", PRESET_OPEN_BUTTON_X + (PRESET_OPEN_BUTTON_W / 2), MAIN_BOTTOM_BUTTON_Y + (MAIN_BOTTOM_BUTTON_H / 2) );
+    display.drawString(
+      "PRESET",
+      PRESET_OPEN_BUTTON_X +
+        (PRESET_OPEN_BUTTON_W / 2),
+      MAIN_BOTTOM_BUTTON_Y +
+        (MAIN_BOTTOM_BUTTON_H / 2)
+    );
 
     presetOpenButtonVisualPressed = pressed;
   }
 
-  void drawBackButton( bool pressed ) {
+  void drawBackButton(
+    bool pressed
+  ) {
     const uint16_t buttonColor = TFT_CYAN;
 
-    uint16_t backgroundColor = pressed ? buttonColor : TFT_BLACK;
+    uint16_t backgroundColor =
+      pressed ? buttonColor : TFT_BLACK;
 
-    uint16_t iconColor = pressed ? TFT_BLACK : buttonColor;
+    uint16_t iconColor =
+      pressed ? TFT_BLACK : buttonColor;
 
-    display.fillRect( BACK_BUTTON_X - 2, BACK_BUTTON_Y - 2, BACK_BUTTON_W + 4, BACK_BUTTON_H + 4, TFT_BLACK );
+    display.fillRect(
+      BACK_BUTTON_X - 2,
+      BACK_BUTTON_Y - 2,
+      BACK_BUTTON_W + 4,
+      BACK_BUTTON_H + 4,
+      TFT_BLACK
+    );
 
-    display.fillRect( BACK_BUTTON_X, BACK_BUTTON_Y, BACK_BUTTON_W, BACK_BUTTON_H, backgroundColor );
+    display.fillRect(
+      BACK_BUTTON_X,
+      BACK_BUTTON_Y,
+      BACK_BUTTON_W,
+      BACK_BUTTON_H,
+      backgroundColor
+    );
 
-    display.drawRect( BACK_BUTTON_X, BACK_BUTTON_Y, BACK_BUTTON_W, BACK_BUTTON_H, buttonColor );
+    display.drawRect(
+      BACK_BUTTON_X,
+      BACK_BUTTON_Y,
+      BACK_BUTTON_W,
+      BACK_BUTTON_H,
+      buttonColor
+    );
 
-    display.drawRect( BACK_BUTTON_X + 1, BACK_BUTTON_Y + 1, BACK_BUTTON_W - 2, BACK_BUTTON_H - 2, buttonColor );
+    display.drawRect(
+      BACK_BUTTON_X + 1,
+      BACK_BUTTON_Y + 1,
+      BACK_BUTTON_W - 2,
+      BACK_BUTTON_H - 2,
+      buttonColor
+    );
 
-    int16_t centerX = BACK_BUTTON_X + (BACK_BUTTON_W / 2);
+    int16_t centerX =
+      BACK_BUTTON_X +
+      (BACK_BUTTON_W / 2);
 
-    int16_t centerY = BACK_BUTTON_Y + (BACK_BUTTON_H / 2);
+    int16_t centerY =
+      BACK_BUTTON_Y +
+      (BACK_BUTTON_H / 2);
 
-    display.fillTriangle( centerX - 11, centerY, centerX - 1, centerY - 9, centerX - 1, centerY + 9, iconColor );
+    display.fillTriangle(
+      centerX - 11,
+      centerY,
+      centerX - 1,
+      centerY - 9,
+      centerX - 1,
+      centerY + 9,
+      iconColor
+    );
 
-    display.fillRect( centerX - 1, centerY - 2, 13, 5, iconColor );
+    display.fillRect(
+      centerX - 1,
+      centerY - 2,
+      13,
+      5,
+      iconColor
+    );
 
     backButtonVisualPressed = pressed;
   }
 
-  void drawColorDetails( uint32_t color ) {
-    display.fillRect( 0, 60, screenWidth, 78, TFT_BLACK );
+  void drawColorDetails(
+    uint32_t color
+  ) {
+    display.fillRect(
+      0,
+      60,
+      screenWidth,
+      78,
+      TFT_BLACK
+    );
 
-    uint16_t previewColor = rgbTo565( R(color), G(color), B(color) );
+    uint16_t previewColor =
+      rgbTo565(
+        R(color),
+        G(color),
+        B(color)
+      );
 
-    display.fillRect( COLOR_PREVIEW_X, COLOR_PREVIEW_Y, COLOR_PREVIEW_W, COLOR_PREVIEW_H, previewColor );
+    display.fillRect(
+      COLOR_PREVIEW_X,
+      COLOR_PREVIEW_Y,
+      COLOR_PREVIEW_W,
+      COLOR_PREVIEW_H,
+      previewColor
+    );
 
-    display.drawRect( COLOR_PREVIEW_X, COLOR_PREVIEW_Y, COLOR_PREVIEW_W, COLOR_PREVIEW_H, TFT_WHITE );
+    display.drawRect(
+      COLOR_PREVIEW_X,
+      COLOR_PREVIEW_Y,
+      COLOR_PREVIEW_W,
+      COLOR_PREVIEW_H,
+      TFT_WHITE
+    );
 
-    display.drawRect( COLOR_PREVIEW_X + 1, COLOR_PREVIEW_Y + 1, COLOR_PREVIEW_W - 2, COLOR_PREVIEW_H - 2, TFT_DARKGREY );
+    display.drawRect(
+      COLOR_PREVIEW_X + 1,
+      COLOR_PREVIEW_Y + 1,
+      COLOR_PREVIEW_W - 2,
+      COLOR_PREVIEW_H - 2,
+      TFT_DARKGREY
+    );
 
     char hexText[16];
 
-    snprintf( hexText, sizeof(hexText), "#%02X%02X%02X", R(color), G(color), B(color) );
+    snprintf(
+      hexText,
+      sizeof(hexText),
+      "#%02X%02X%02X",
+      R(color),
+      G(color),
+      B(color)
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( hexText, screenWidth / 2, 121 );
+    display.drawString(
+      hexText,
+      screenWidth / 2,
+      121
+    );
 
-    display.drawFastHLine( 32, 136, screenWidth - 64, TFT_DARKGREY );
+    display.drawFastHLine(
+      32,
+      136,
+      screenWidth - 64,
+      TFT_DARKGREY
+    );
   }
 
-  void drawHue( uint8_t hueValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 138, screenWidth, 56, TFT_BLACK );
+  void drawHue(
+    uint8_t hueValue,
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      138,
+      screenWidth,
+      56,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Hue", screenWidth / 2, 144 );
+    display.drawString(
+      "Hue",
+      screenWidth / 2,
+      144
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, HUE_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_HUE_DOWN );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      HUE_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_HUE_DOWN
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, HUE_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_HUE_UP );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      HUE_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_HUE_UP
+    );
 
     char valueText[8];
 
-    snprintf( valueText, sizeof(valueText), "%u", hueValue );
+    snprintf(
+      valueText,
+      sizeof(valueText),
+      "%u",
+      hueValue
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( valueText, screenWidth / 2, HUE_BUTTON_Y + (CONTROL_BUTTON_H / 2) );
+    display.drawString(
+      valueText,
+      screenWidth / 2,
+      HUE_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
+    );
   }
 
-  void drawSaturation( uint8_t saturationValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 194, screenWidth, 46, TFT_BLACK );
+  void drawSaturation(
+    uint8_t saturationValue,
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      194,
+      screenWidth,
+      46,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Saturation", screenWidth / 2, SATURATION_LABEL_Y );
+    display.drawString(
+      "Saturation",
+      screenWidth / 2,
+      SATURATION_LABEL_Y
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, SATURATION_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_SATURATION_DOWN );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      SATURATION_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_SATURATION_DOWN
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, SATURATION_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_SATURATION_UP );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      SATURATION_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_SATURATION_UP
+    );
 
     char valueText[8];
 
-    snprintf( valueText, sizeof(valueText), "%u", saturationValue );
+    snprintf(
+      valueText,
+      sizeof(valueText),
+      "%u",
+      saturationValue
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( valueText, screenWidth / 2, SATURATION_BUTTON_Y + (CONTROL_BUTTON_H / 2) );
+    display.drawString(
+      valueText,
+      screenWidth / 2,
+      SATURATION_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
+    );
   }
 
-  void drawSpeed( uint8_t speedValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 62, screenWidth, 58, TFT_BLACK );
+  void drawSpeed(
+    uint8_t speedValue,
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      62,
+      screenWidth,
+      58,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Speed", screenWidth / 2, 70 );
+    display.drawString(
+      "Speed",
+      screenWidth / 2,
+      70
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, SPEED_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_SPEED_DOWN );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      SPEED_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_SPEED_DOWN
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, SPEED_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_SPEED_UP );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      SPEED_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_SPEED_UP
+    );
 
     char valueText[8];
 
-    snprintf( valueText, sizeof(valueText), "%u", speedValue );
+    snprintf(
+      valueText,
+      sizeof(valueText),
+      "%u",
+      speedValue
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( valueText, screenWidth / 2, 99 );
+    display.drawString(
+      valueText,
+      screenWidth / 2,
+      99
+    );
   }
 
-  void drawIntensity( uint8_t intensityValue, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 120, screenWidth, 60, TFT_BLACK );
+  void drawIntensity(
+    uint8_t intensityValue,
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      120,
+      screenWidth,
+      60,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Intensity", screenWidth / 2, 128 );
+    display.drawString(
+      "Intensity",
+      screenWidth / 2,
+      128
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, INTENSITY_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_INTENSITY_DOWN );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      INTENSITY_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_INTENSITY_DOWN
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, INTENSITY_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_INTENSITY_UP );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      INTENSITY_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_INTENSITY_UP
+    );
 
     char valueText[8];
 
-    snprintf( valueText, sizeof(valueText), "%u", intensityValue );
+    snprintf(
+      valueText,
+      sizeof(valueText),
+      "%u",
+      intensityValue
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( valueText, screenWidth / 2, 157 );
+    display.drawString(
+      valueText,
+      screenWidth / 2,
+      157
+    );
   }
 
-  void drawPalette( uint8_t paletteId, TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 180, screenWidth, 60, TFT_BLACK );
+  void drawPalette(
+    uint8_t paletteId,
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      180,
+      screenWidth,
+      60,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Palette", screenWidth / 2, PALETTE_LABEL_Y );
+    display.drawString(
+      "Palette",
+      screenWidth / 2,
+      PALETTE_LABEL_Y
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, PALETTE_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_PALETTE_PREV );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      PALETTE_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_PALETTE_PREV
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, PALETTE_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_PALETTE_NEXT );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      PALETTE_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_PALETTE_NEXT
+    );
 
     char paletteName[64];
 
-    getPaletteName( paletteId, paletteName, sizeof(paletteName) );
+    getPaletteName(
+      paletteId,
+      paletteName,
+      sizeof(paletteName)
+    );
 
     if ( strlen(paletteName) > 22 ) {
       paletteName[22] = '\0';
     }
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
-    if ( strlen(paletteName) <= 10 ) {
-      display.setTextSize( 2 );
-    }
-    else {
-      display.setTextSize( 1 );
-    }
+    display.setTextSize(
+      strlen(paletteName) <= 10
+        ? 2
+        : 1
+    );
 
-    display.drawString( paletteName, screenWidth / 2, PALETTE_BUTTON_Y + (CONTROL_BUTTON_H / 2) );
+    display.drawString(
+      paletteName,
+      screenWidth / 2,
+      PALETTE_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
+    );
   }
 
-  void drawEffectPageName( uint8_t effectMode ) {
-    display.fillRect( 56, 32, 208, 22, TFT_BLACK );
+  void drawEffectPageName(
+    uint8_t effectMode
+  ) {
+    display.fillRect(
+      56,
+      32,
+      208,
+      22,
+      TFT_BLACK
+    );
 
     char effectName[64];
 
-    getEffectName( effectMode, effectName, sizeof(effectName) );
+    getEffectName(
+      effectMode,
+      effectName,
+      sizeof(effectName)
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( effectName, screenWidth / 2, 42 );
+    display.drawString(
+      effectName,
+      screenWidth / 2,
+      42
+    );
   }
 
-  String getPresetDisplayName( uint8_t presetId ) {
+  String getPresetDisplayName(
+    uint8_t presetId
+  ) {
     if ( presetId == 0 ) {
       return "Custom State";
     }
 
-    if ( pendingPresetId == presetId && pendingPresetName.length() > 0 ) {
+    if (
+      pendingPresetId == presetId &&
+      pendingPresetName.length() > 0
+    ) {
       return pendingPresetName;
     }
 
     String name;
 
-    if ( getCachedPresetName( presetId, name ) ) {
+    if (
+      getCachedPresetName(
+        presetId,
+        name
+      )
+    ) {
       return name;
     }
 
     char fallback[24];
 
-    snprintf( fallback, sizeof(fallback), "Preset %u", presetId );
+    snprintf(
+      fallback,
+      sizeof(fallback),
+      "Preset %u",
+      presetId
+    );
 
     return String(fallback);
   }
 
-  void drawPresetDetails( uint8_t presetId, bool applying = false ) {
-    display.fillRect( 0, 60, screenWidth, 118, TFT_BLACK );
+  void drawPresetDetails(
+    uint8_t presetId,
+    bool applying = false
+  ) {
+    display.fillRect(
+      0,
+      60,
+      screenWidth,
+      118,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
-
-    // -------------------------------------------------------
-    // Phase 10.2.4
-    // Internal Preset ID scan number is intentionally hidden.
-    // -------------------------------------------------------
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
     if ( !presetCacheReady ) {
-      display.setTextColor( TFT_YELLOW, TFT_BLACK );
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "Loading Presets", screenWidth / 2, PRESET_NAME_Y );
+      display.drawString(
+        "Loading Presets",
+        screenWidth / 2,
+        PRESET_NAME_Y
+      );
 
-      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( "Updating Preset List", screenWidth / 2, PRESET_ID_Y );
+      display.drawString(
+        "Updating Preset List",
+        screenWidth / 2,
+        PRESET_ID_Y
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
-      display.drawString( "WLED remains active", screenWidth / 2, PRESET_STATUS_Y );
+      display.drawString(
+        "WLED remains active",
+        screenWidth / 2,
+        PRESET_STATUS_Y
+      );
 
       return;
     }
 
     if ( presetNoEntries ) {
-      display.setTextColor( TFT_RED, TFT_BLACK );
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "No Presets", screenWidth / 2, PRESET_NAME_Y );
+      display.drawString(
+        "No Presets",
+        screenWidth / 2,
+        PRESET_NAME_Y
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( "No saved preset found", screenWidth / 2, PRESET_ID_Y );
+      display.drawString(
+        "No saved preset found",
+        screenWidth / 2,
+        PRESET_ID_Y
+      );
 
-      display.drawString( "Use MANAGE to create", screenWidth / 2, PRESET_STATUS_Y );
+      display.drawString(
+        "Use MANAGE to create",
+        screenWidth / 2,
+        PRESET_STATUS_Y
+      );
 
       return;
     }
 
     if ( presetId == 0 ) {
-      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "Custom State", screenWidth / 2, PRESET_NAME_Y );
+      display.drawString(
+        "Custom State",
+        screenWidth / 2,
+        PRESET_NAME_Y
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( "No active preset", screenWidth / 2, PRESET_ID_Y );
+      display.drawString(
+        "No active preset",
+        screenWidth / 2,
+        PRESET_ID_Y
+      );
 
-      display.drawString( "Use arrows to apply", screenWidth / 2, PRESET_STATUS_Y );
+      display.drawString(
+        "Use arrows to apply",
+        screenWidth / 2,
+        PRESET_STATUS_Y
+      );
 
       return;
     }
 
-    String presetName = getPresetDisplayName( presetId );
+    String presetName =
+      getPresetDisplayName(
+        presetId
+      );
 
     if ( presetName.length() > 28 ) {
-      presetName = presetName.substring( 0, 25 ) + "...";
+      presetName =
+        presetName.substring( 0, 25 ) +
+        "...";
     }
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
-    if ( presetName.length() <= 12 ) {
-      display.setTextSize( 2 );
-    }
-    else {
-      display.setTextSize( 1 );
-    }
+    display.setTextSize(
+      presetName.length() <= 12
+        ? 2
+        : 1
+    );
 
-    display.drawString( presetName, screenWidth / 2, PRESET_NAME_Y );
+    display.drawString(
+      presetName,
+      screenWidth / 2,
+      PRESET_NAME_Y
+    );
 
     char idText[24];
 
-    snprintf( idText, sizeof(idText), "Preset ID: %u", presetId );
+    snprintf(
+      idText,
+      sizeof(idText),
+      "Preset ID: %u",
+      presetId
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( idText, screenWidth / 2, PRESET_ID_Y );
+    display.drawString(
+      idText,
+      screenWidth / 2,
+      PRESET_ID_Y
+    );
 
     if (applying) {
-      display.setTextColor( TFT_YELLOW, TFT_BLACK );
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
 
-      display.drawString( "Applying...", screenWidth / 2, PRESET_STATUS_Y );
+      display.drawString(
+        "Applying...",
+        screenWidth / 2,
+        PRESET_STATUS_Y
+      );
     }
     else if ( currentPreset == presetId ) {
-      display.setTextColor( TFT_GREEN, TFT_BLACK );
+      display.setTextColor(
+        TFT_GREEN,
+        TFT_BLACK
+      );
 
-      display.drawString( "Active Preset", screenWidth / 2, PRESET_STATUS_Y );
+      display.drawString(
+        "Active Preset",
+        screenWidth / 2,
+        PRESET_STATUS_Y
+      );
     }
     else {
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
-      display.drawString( "Saved WLED Preset", screenWidth / 2, PRESET_STATUS_Y );
+      display.drawString(
+        "Saved WLED Preset",
+        screenWidth / 2,
+        PRESET_STATUS_Y
+      );
     }
   }
 
-  void drawPresetTextButton( int16_t x, int16_t y, int16_t w, int16_t h, const char* label, bool enabled, bool pressed, uint8_t textSize ) {
-    uint16_t buttonColor = enabled ? TFT_CYAN : TFT_DARKGREY;
+  void drawPresetTextButton(
+    int16_t x,
+    int16_t y,
+    int16_t w,
+    int16_t h,
+    const char* label,
+    bool enabled,
+    bool pressed,
+    uint8_t textSize
+  ) {
+    uint16_t buttonColor =
+      enabled ? TFT_CYAN : TFT_DARKGREY;
 
-    uint16_t backgroundColor = ( enabled && pressed ) ? buttonColor : TFT_BLACK;
+    uint16_t backgroundColor =
+      ( enabled && pressed )
+        ? buttonColor
+        : TFT_BLACK;
 
-    uint16_t textColor = ( enabled && pressed ) ? TFT_BLACK : ( enabled ? TFT_WHITE : TFT_DARKGREY );
+    uint16_t textColor =
+      ( enabled && pressed )
+        ? TFT_BLACK
+        : (
+            enabled
+              ? TFT_WHITE
+              : TFT_DARKGREY
+          );
 
-    display.fillRect( x - 2, y - 2, w + 4, h + 4, TFT_BLACK );
+    display.fillRect(
+      x - 2,
+      y - 2,
+      w + 4,
+      h + 4,
+      TFT_BLACK
+    );
 
-    display.fillRect( x, y, w, h, backgroundColor );
+    display.fillRect(
+      x,
+      y,
+      w,
+      h,
+      backgroundColor
+    );
 
-    display.drawRect( x, y, w, h, buttonColor );
+    display.drawRect(
+      x,
+      y,
+      w,
+      h,
+      buttonColor
+    );
 
-    display.drawRect( x + 1, y + 1, w - 2, h - 2, buttonColor );
+    display.drawRect(
+      x + 1,
+      y + 1,
+      w - 2,
+      h - 2,
+      buttonColor
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( textColor, backgroundColor );
+    display.setTextColor(
+      textColor,
+      backgroundColor
+    );
 
-    display.setTextSize( textSize );
+    display.setTextSize(
+      textSize
+    );
 
-    display.drawString( label, x + (w / 2), y + (h / 2) );
+    display.drawString(
+      label,
+      x + (w / 2),
+      y + (h / 2)
+    );
   }
 
-  void drawPresetDangerTextButton( int16_t x, int16_t y, int16_t w, int16_t h, const char* label, bool enabled, bool pressed, uint8_t textSize ) {
-    uint16_t buttonColor = enabled ? TFT_RED : TFT_DARKGREY;
+  void drawPresetDangerTextButton(
+    int16_t x,
+    int16_t y,
+    int16_t w,
+    int16_t h,
+    const char* label,
+    bool enabled,
+    bool pressed,
+    uint8_t textSize
+  ) {
+    uint16_t buttonColor =
+      enabled ? TFT_RED : TFT_DARKGREY;
 
-    uint16_t backgroundColor = ( enabled && pressed ) ? buttonColor : TFT_BLACK;
+    uint16_t backgroundColor =
+      ( enabled && pressed )
+        ? buttonColor
+        : TFT_BLACK;
 
-    uint16_t textColor = ( enabled && pressed ) ? TFT_BLACK : ( enabled ? TFT_RED : TFT_DARKGREY );
+    uint16_t textColor =
+      ( enabled && pressed )
+        ? TFT_BLACK
+        : (
+            enabled
+              ? TFT_RED
+              : TFT_DARKGREY
+          );
 
-    display.fillRect( x - 2, y - 2, w + 4, h + 4, TFT_BLACK );
+    display.fillRect(
+      x - 2,
+      y - 2,
+      w + 4,
+      h + 4,
+      TFT_BLACK
+    );
 
-    display.fillRect( x, y, w, h, backgroundColor );
+    display.fillRect(
+      x,
+      y,
+      w,
+      h,
+      backgroundColor
+    );
 
-    display.drawRect( x, y, w, h, buttonColor );
+    display.drawRect(
+      x,
+      y,
+      w,
+      h,
+      buttonColor
+    );
 
-    display.drawRect( x + 1, y + 1, w - 2, h - 2, buttonColor );
+    display.drawRect(
+      x + 1,
+      y + 1,
+      w - 2,
+      h - 2,
+      buttonColor
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( textColor, backgroundColor );
+    display.setTextColor(
+      textColor,
+      backgroundColor
+    );
 
-    display.setTextSize( textSize );
+    display.setTextSize(
+      textSize
+    );
 
-    display.drawString( label, x + (w / 2), y + (h / 2) );
+    display.drawString(
+      label,
+      x + (w / 2),
+      y + (h / 2)
+    );
   }
 
-  void drawPresetManageButton( bool pressed ) {
-    bool enabled = ( presetCacheReady && !presetCacheBuilding && pendingPresetId == 0 );
+  void drawPresetManageButton(
+    bool pressed
+  ) {
+    bool enabled =
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      pendingPresetId == 0;
 
-    const char* label = presetCacheReady ? "MANAGE" : "LOADING";
+    const char* label =
+      presetCacheReady
+        ? "MANAGE"
+        : "LOADING";
 
-    drawPresetTextButton( PRESET_MANAGE_BUTTON_X, PRESET_MANAGE_BUTTON_Y, PRESET_MANAGE_BUTTON_W, PRESET_MANAGE_BUTTON_H, label, enabled, pressed && enabled, 1 );
+    drawPresetTextButton(
+      PRESET_MANAGE_BUTTON_X,
+      PRESET_MANAGE_BUTTON_Y,
+      PRESET_MANAGE_BUTTON_W,
+      PRESET_MANAGE_BUTTON_H,
+      label,
+      enabled,
+      pressed && enabled,
+      1
+    );
 
-    presetManageButtonVisualPressed = ( pressed && enabled );
+    presetManageButtonVisualPressed =
+      pressed && enabled;
   }
 
-  void drawPresetNavigation( TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 178, screenWidth, 62, TFT_BLACK );
+  void drawPresetNavigation(
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      178,
+      screenWidth,
+      62,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Preset", screenWidth / 2, PRESET_NAV_LABEL_Y );
+    display.drawString(
+      "Preset",
+      screenWidth / 2,
+      PRESET_NAV_LABEL_Y
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, PRESET_NAV_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_PRESET_PREV );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      PRESET_NAV_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_PREV
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, PRESET_NAV_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_PRESET_NEXT );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      PRESET_NAV_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_NEXT
+    );
 
-    drawPresetManageButton( pressedTarget == TOUCH_TARGET_PRESET_MANAGE );
+    drawPresetManageButton(
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_MANAGE
+    );
   }
 
-  void drawMainScreen( const String& ipAddress ) {
-    display.fillScreen( TFT_BLACK );
+  void drawMainScreen(
+    const String& ipAddress
+  ) {
+    display.fillScreen(
+      TFT_BLACK
+    );
 
     currentPage = SCREEN_MAIN;
-
     readyScreenShown = true;
-
     connectingScreenShown = false;
 
     resetTouchGesture();
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( "WLED M5Stack CoreS3", HEADER_CENTER_X, HEADER_TITLE_Y );
+    display.drawString(
+      "WLED M5Stack CoreS3",
+      HEADER_CENTER_X,
+      HEADER_TITLE_Y
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( ipAddress, HEADER_CENTER_X, HEADER_IP_Y );
+    display.drawString(
+      ipAddress,
+      HEADER_CENTER_X,
+      HEADER_IP_Y
+    );
 
-    display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
+    display.drawFastHLine(
+      8,
+      58,
+      screenWidth - 16,
+      TFT_DARKGREY
+    );
 
-    drawPowerButton( bri > 0, false );
+    drawPowerButton(
+      bri > 0,
+      false
+    );
 
-    drawBrightness( bri, TOUCH_TARGET_NONE );
+    drawBrightness(
+      bri,
+      TOUCH_TARGET_NONE
+    );
 
-    uint8_t effectMode = getCurrentEffectMode();
+    uint8_t effectMode =
+      getCurrentEffectMode();
 
-    drawEffect( effectMode, TOUCH_TARGET_NONE );
+    drawEffect(
+      effectMode,
+      TOUCH_TARGET_NONE
+    );
 
-    uint32_t primaryColor = getPrimaryColor();
+    uint32_t primaryColor =
+      getPrimaryColor();
 
-    drawColorButton( primaryColor, false );
+    drawColorButton(
+      primaryColor,
+      false
+    );
 
-    drawPresetOpenButton( false );
+    drawPresetOpenButton(
+      false
+    );
 
-    syncLogicalColorFromRgb( primaryColor );
+    syncLogicalColorFromRgb(
+      primaryColor
+    );
 
     lastLedState = bri > 0 ? 1 : 0;
-
     lastBrightnessValue = bri;
-
     lastEffectMode = effectMode;
-
     lastSpeedValue = getCurrentSpeed();
-
     lastIntensityValue = getCurrentIntensity();
-
     lastPaletteValue = getCurrentPalette();
-
     lastPresetValue = currentPreset;
-
     lastPrimaryColor = primaryColor;
-
     lastPrimaryColorValid = true;
   }
 
   void drawColorScreen() {
-    display.fillScreen( TFT_BLACK );
+    display.fillScreen(
+      TFT_BLACK
+    );
 
     currentPage = SCREEN_COLOR;
-
     readyScreenShown = true;
-
     connectingScreenShown = false;
 
     resetTouchGesture();
 
-    display.setTextDatum( textdatum_t::middle_center );
+    drawStandardPageHeader(
+      "COLOR",
+      "Primary Color"
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    drawPowerButton(
+      bri > 0,
+      false
+    );
 
-    display.setTextSize( 2 );
+    drawBackButton(
+      false
+    );
 
-    display.drawString( "COLOR", screenWidth / 2, 18 );
+    uint32_t primaryColor =
+      getPrimaryColor();
 
-    display.setTextSize( 1 );
+    syncLogicalColorFromRgb(
+      primaryColor
+    );
 
-    display.drawString( "Primary Color", screenWidth / 2, 41 );
+    drawColorDetails(
+      primaryColor
+    );
 
-    display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
+    drawHue(
+      logicalHueValue,
+      TOUCH_TARGET_NONE
+    );
 
-    drawPowerButton( bri > 0, false );
-
-    drawBackButton( false );
-
-    uint32_t primaryColor = getPrimaryColor();
-
-    syncLogicalColorFromRgb( primaryColor );
-
-    drawColorDetails( primaryColor );
-
-    drawHue( logicalHueValue, TOUCH_TARGET_NONE );
-
-    drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+    drawSaturation(
+      logicalSaturationValue,
+      TOUCH_TARGET_NONE
+    );
 
     lastLedState = bri > 0 ? 1 : 0;
-
     lastPrimaryColor = primaryColor;
-
     lastPrimaryColorValid = true;
-
     lastHueValue = logicalHueValue;
-
     lastSaturationValue = logicalSaturationValue;
   }
 
   void drawEffectDetailScreen() {
-    display.fillScreen( TFT_BLACK );
+    display.fillScreen(
+      TFT_BLACK
+    );
 
     currentPage = SCREEN_EFFECT;
-
     readyScreenShown = true;
-
     connectingScreenShown = false;
 
     resetTouchGesture();
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 2 );
 
-    display.drawString( "EFFECT", screenWidth / 2, 18 );
+    display.drawString(
+      "EFFECT",
+      screenWidth / 2,
+      18
+    );
 
-    uint8_t effectMode = getCurrentEffectMode();
+    uint8_t effectMode =
+      getCurrentEffectMode();
 
-    drawEffectPageName( effectMode );
+    drawEffectPageName(
+      effectMode
+    );
 
-    display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
+    display.drawFastHLine(
+      8,
+      58,
+      screenWidth - 16,
+      TFT_DARKGREY
+    );
 
-    drawPowerButton( bri > 0, false );
+    drawPowerButton(
+      bri > 0,
+      false
+    );
 
-    drawBackButton( false );
+    drawBackButton(
+      false
+    );
 
-    uint8_t speedValue = getCurrentSpeed();
+    uint8_t speedValue =
+      getCurrentSpeed();
 
-    uint8_t intensityValue = getCurrentIntensity();
+    uint8_t intensityValue =
+      getCurrentIntensity();
 
-    uint8_t paletteValue = getCurrentPalette();
+    uint8_t paletteValue =
+      getCurrentPalette();
 
-    drawSpeed( speedValue, TOUCH_TARGET_NONE );
+    drawSpeed(
+      speedValue,
+      TOUCH_TARGET_NONE
+    );
 
-    drawIntensity( intensityValue, TOUCH_TARGET_NONE );
+    drawIntensity(
+      intensityValue,
+      TOUCH_TARGET_NONE
+    );
 
-    drawPalette( paletteValue, TOUCH_TARGET_NONE );
+    drawPalette(
+      paletteValue,
+      TOUCH_TARGET_NONE
+    );
 
     lastLedState = bri > 0 ? 1 : 0;
-
     lastEffectMode = effectMode;
-
     lastSpeedValue = speedValue;
-
     lastIntensityValue = intensityValue;
-
     lastPaletteValue = paletteValue;
   }
 
   void drawPresetScreen() {
-    display.fillScreen( TFT_BLACK );
+    display.fillScreen(
+      TFT_BLACK
+    );
 
     currentPage = SCREEN_PRESET;
-
     presetSubPage = PRESET_SUBPAGE_NAV;
 
-    presetSaveOperationState = PRESET_SAVE_OP_IDLE;
+    presetSaveOperationState =
+      PRESET_SAVE_OP_IDLE;
 
     presetSaveOperationIsOverwrite = false;
-
     presetSaveCandidateId = 0;
-
     presetSaveCandidateName = "";
-
     presetOverwriteTargetId = 0;
-
     presetOverwriteTargetName = "";
 
-    presetDeleteOperationState = PRESET_DELETE_OP_IDLE;
+    presetDeleteOperationState =
+      PRESET_DELETE_OP_IDLE;
 
     presetDeleteTargetId = 0;
-
     presetDeleteTargetName = "";
-
     presetDeleteWasCurrentPreset = false;
-
     presetDeleteResultStartMs = 0;
-
     presetSaveHoldStartTime = 0;
-
     presetSaveHoldTriggered = false;
-
     presetSaveResultStartMs = 0;
 
     readyScreenShown = true;
-
     connectingScreenShown = false;
 
     resetTouchGesture();
 
-    display.setTextDatum( textdatum_t::middle_center );
+    drawStandardPageHeader(
+      "PRESET",
+      "Saved WLED Preset"
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    drawPowerButton(
+      bri > 0,
+      false
+    );
 
-    display.setTextSize( 2 );
+    drawBackButton(
+      false
+    );
 
-    display.drawString( "PRESET", screenWidth / 2, 18 );
+    uint8_t presetId =
+      getDisplayedPresetId();
 
-    display.setTextSize( 1 );
+    bool applying =
+      pendingPresetId > 0;
 
-    display.drawString( "Saved WLED Preset", screenWidth / 2, 41 );
+    drawPresetDetails(
+      presetId,
+      applying
+    );
 
-    display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
-
-    drawPowerButton( bri > 0, false );
-
-    drawBackButton( false );
-
-    uint8_t presetId = getDisplayedPresetId();
-
-    bool applying = ( pendingPresetId > 0 );
-
-    drawPresetDetails( presetId, applying );
-
-    drawPresetNavigation( TOUCH_TARGET_NONE );
+    drawPresetNavigation(
+      TOUCH_TARGET_NONE
+    );
 
     lastLedState = bri > 0 ? 1 : 0;
-
     lastPresetValue = presetId;
-
-    lastPresetsModifiedTime = presetsModifiedTime;
+    lastPresetsModifiedTime =
+      presetsModifiedTime;
   }
 
-  void drawPresetSaveNewButton( bool pressed ) {
-    uint8_t freePresetId = findFirstFreePresetId();
+  void drawPresetSaveNewButton(
+    bool pressed
+  ) {
+    uint8_t freePresetId =
+      findFirstFreePresetId();
 
-    bool enabled = ( presetCacheReady && !presetCacheBuilding && freePresetId > 0 && pendingPresetId == 0 && !presetNeedsSaving() );
+    bool enabled =
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      freePresetId > 0 &&
+      pendingPresetId == 0 &&
+      !presetNeedsSaving();
 
-    drawPresetTextButton( PRESET_SAVE_NEW_BUTTON_X, PRESET_SAVE_NEW_BUTTON_Y, PRESET_SAVE_NEW_BUTTON_W, PRESET_SAVE_NEW_BUTTON_H, "SAVE NEW", enabled, pressed && enabled, 2 );
+    drawPresetTextButton(
+      PRESET_SAVE_NEW_BUTTON_X,
+      PRESET_SAVE_NEW_BUTTON_Y,
+      PRESET_SAVE_NEW_BUTTON_W,
+      PRESET_SAVE_NEW_BUTTON_H,
+      "SAVE NEW",
+      enabled,
+      pressed && enabled,
+      2
+    );
 
-    presetSaveNewButtonVisualPressed = ( pressed && enabled );
+    presetSaveNewButtonVisualPressed =
+      pressed && enabled;
   }
 
-  void drawPresetOverwriteOpenButton( bool pressed ) {
-    bool enabled = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && pendingPresetId == 0 && !presetNeedsSaving() );
+  void drawPresetOverwriteOpenButton(
+    bool pressed
+  ) {
+    bool enabled =
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      presetCacheCount > 0 &&
+      pendingPresetId == 0 &&
+      !presetNeedsSaving();
 
-    drawPresetTextButton( PRESET_OVERWRITE_BUTTON_X, PRESET_OVERWRITE_BUTTON_Y, PRESET_OVERWRITE_BUTTON_W, PRESET_OVERWRITE_BUTTON_H, "OVERWRITE", enabled, pressed && enabled, 2 );
+    drawPresetTextButton(
+      PRESET_OVERWRITE_BUTTON_X,
+      PRESET_OVERWRITE_BUTTON_Y,
+      PRESET_OVERWRITE_BUTTON_W,
+      PRESET_OVERWRITE_BUTTON_H,
+      "OVERWRITE",
+      enabled,
+      pressed && enabled,
+      2
+    );
 
-    presetOverwriteOpenButtonVisualPressed = ( pressed && enabled );
+    presetOverwriteOpenButtonVisualPressed =
+      pressed && enabled;
   }
 
-  void drawPresetDeleteOpenButton( bool pressed ) {
-    bool enabled = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && pendingPresetId == 0 && !presetNeedsSaving() );
+  void drawPresetDeleteOpenButton(
+    bool pressed
+  ) {
+    bool enabled =
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      presetCacheCount > 0 &&
+      pendingPresetId == 0 &&
+      !presetNeedsSaving();
 
-    drawPresetDangerTextButton( PRESET_DELETE_BUTTON_X, PRESET_DELETE_BUTTON_Y, PRESET_DELETE_BUTTON_W, PRESET_DELETE_BUTTON_H, "DELETE", enabled, pressed && enabled, 2 );
+    drawPresetDangerTextButton(
+      PRESET_DELETE_BUTTON_X,
+      PRESET_DELETE_BUTTON_Y,
+      PRESET_DELETE_BUTTON_W,
+      PRESET_DELETE_BUTTON_H,
+      "DELETE",
+      enabled,
+      pressed && enabled,
+      2
+    );
 
-    presetDeleteOpenButtonVisualPressed = ( pressed && enabled );
+    presetDeleteOpenButtonVisualPressed =
+      pressed && enabled;
   }
 
-  void drawPresetSaveHoldButton( bool pressed ) {
-    bool enabled = ( presetSaveOperationState == PRESET_SAVE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetSaveCandidateId > 0 && findPresetCacheIndex( presetSaveCandidateId ) < 0 && pendingPresetId == 0 && !presetNeedsSaving() );
+  void drawPresetSaveHoldButton(
+    bool pressed
+  ) {
+    bool enabled =
+      presetSaveOperationState ==
+        PRESET_SAVE_OP_IDLE &&
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      presetSaveCandidateId > 0 &&
+      findPresetCacheIndex(
+        presetSaveCandidateId
+      ) < 0 &&
+      pendingPresetId == 0 &&
+      !presetNeedsSaving();
 
-    drawPresetTextButton( PRESET_SAVE_HOLD_BUTTON_X, PRESET_SAVE_HOLD_BUTTON_Y, PRESET_SAVE_HOLD_BUTTON_W, PRESET_SAVE_HOLD_BUTTON_H, "HOLD TO SAVE", enabled, pressed && enabled, 2 );
+    drawPresetTextButton(
+      PRESET_SAVE_HOLD_BUTTON_X,
+      PRESET_SAVE_HOLD_BUTTON_Y,
+      PRESET_SAVE_HOLD_BUTTON_W,
+      PRESET_SAVE_HOLD_BUTTON_H,
+      "HOLD TO SAVE",
+      enabled,
+      pressed && enabled,
+      2
+    );
 
-    presetSaveHoldButtonVisualPressed = ( pressed && enabled );
+    presetSaveHoldButtonVisualPressed =
+      pressed && enabled;
   }
 
   void drawPresetManageScreen() {
-    display.fillScreen( TFT_BLACK );
+    display.fillScreen(
+      TFT_BLACK
+    );
 
     currentPage = SCREEN_PRESET;
-
     presetSubPage = PRESET_SUBPAGE_MANAGE;
 
-    presetSaveOperationState = PRESET_SAVE_OP_IDLE;
+    presetSaveOperationState =
+      PRESET_SAVE_OP_IDLE;
 
     presetSaveOperationIsOverwrite = false;
-
     presetSaveCandidateId = 0;
-
     presetSaveCandidateName = "";
-
     presetOverwriteTargetId = 0;
-
     presetOverwriteTargetName = "";
 
-    presetDeleteOperationState = PRESET_DELETE_OP_IDLE;
+    presetDeleteOperationState =
+      PRESET_DELETE_OP_IDLE;
 
     presetDeleteTargetId = 0;
-
     presetDeleteTargetName = "";
-
     presetDeleteWasCurrentPreset = false;
-
     presetDeleteResultStartMs = 0;
-
     presetSaveHoldStartTime = 0;
-
     presetSaveHoldTriggered = false;
-
     presetSaveResultStartMs = 0;
 
     readyScreenShown = true;
-
     connectingScreenShown = false;
 
     resetTouchGesture();
 
-    display.setTextDatum( textdatum_t::middle_center );
+    drawStandardPageHeader(
+      "PRESET MANAGE",
+      "Preset Management"
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    drawPowerButton(
+      bri > 0,
+      false
+    );
 
-    display.setTextSize( 2 );
+    drawBackButton(
+      false
+    );
 
-    display.drawString( "PRESET MANAGE", screenWidth / 2, 18 );
+    drawPresetSaveNewButton(
+      false
+    );
+
+    uint8_t freePresetId =
+      findFirstFreePresetId();
 
     display.setTextSize( 1 );
 
-    display.drawString( "Preset Management", screenWidth / 2, 41 );
+    if (
+      !presetCacheReady ||
+      presetCacheBuilding
+    ) {
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
 
-    display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
-
-    drawPowerButton( bri > 0, false );
-
-    drawBackButton( false );
-
-    drawPresetSaveNewButton( false );
-
-    uint8_t freePresetId = findFirstFreePresetId();
-
-    display.setTextSize( 1 );
-
-    if ( !presetCacheReady || presetCacheBuilding ) {
-      display.setTextColor( TFT_YELLOW, TFT_BLACK );
-
-      display.drawString( "Preset cache loading...", screenWidth / 2, 116 );
+      display.drawString(
+        "Preset cache loading...",
+        screenWidth / 2,
+        116
+      );
     }
     else if ( freePresetId == 0 ) {
-      display.setTextColor( TFT_RED, TFT_BLACK );
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
 
-      display.drawString( "No free Preset ID", screenWidth / 2, 116 );
+      display.drawString(
+        "No free Preset ID",
+        screenWidth / 2,
+        116
+      );
     }
     else {
       char idText[32];
 
-      snprintf( idText, sizeof(idText), "Next new Preset ID: %u", freePresetId );
+      snprintf(
+        idText,
+        sizeof(idText),
+        "Next new Preset ID: %u",
+        freePresetId
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
-      display.drawString( idText, screenWidth / 2, 116 );
+      display.drawString(
+        idText,
+        screenWidth / 2,
+        116
+      );
     }
 
-    drawPresetOverwriteOpenButton( false );
+    drawPresetOverwriteOpenButton(
+      false
+    );
 
-    drawPresetDeleteOpenButton( false );
+    drawPresetDeleteOpenButton(
+      false
+    );
 
     lastLedState = bri > 0 ? 1 : 0;
   }
 
-  // =========================================================
-  // Phase 10.2.4
-  // SAVE NEW / OVERWRITE operation status
-  //
-  // Internal 1..250 cache scan position is intentionally
-  // hidden from the user.
-  // =========================================================
-
   void drawPresetSaveOperationStatus() {
-    if ( currentPage != SCREEN_PRESET || ( presetSubPage != PRESET_SUBPAGE_SAVE && presetSubPage != PRESET_SUBPAGE_OVERWRITE ) ) {
+    if (
+      currentPage != SCREEN_PRESET ||
+      (
+        presetSubPage != PRESET_SUBPAGE_SAVE &&
+        presetSubPage != PRESET_SUBPAGE_OVERWRITE
+      )
+    ) {
       return;
     }
 
-    display.fillRect( 0, 60, screenWidth, 180, TFT_BLACK );
+    display.fillRect(
+      0,
+      60,
+      screenWidth,
+      180,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    if ( presetSaveOperationState == PRESET_SAVE_OP_WAIT_WLED ) {
-      display.setTextColor( TFT_YELLOW, TFT_BLACK );
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_WAIT_WLED
+    ) {
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( presetSaveOperationIsOverwrite ? "Overwriting..." : "Saving...", screenWidth / 2, 110 );
+      display.drawString(
+        presetSaveOperationIsOverwrite
+          ? "Overwriting..."
+          : "Saving...",
+        screenWidth / 2,
+        110
+      );
 
-      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( presetSaveCandidateName, screenWidth / 2, 142 );
+      display.drawString(
+        presetSaveCandidateName,
+        screenWidth / 2,
+        142
+      );
 
       char idText[24];
 
-      snprintf( idText, sizeof(idText), "Preset ID: %u", presetSaveCandidateId );
+      snprintf(
+        idText,
+        sizeof(idText),
+        "Preset ID: %u",
+        presetSaveCandidateId
+      );
 
-      display.drawString( idText, screenWidth / 2, 163 );
+      display.drawString(
+        idText,
+        screenWidth / 2,
+        163
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
-      display.drawString( "Writing WLED Preset", screenWidth / 2, 188 );
+      display.drawString(
+        "Writing WLED Preset",
+        screenWidth / 2,
+        188
+      );
 
       return;
     }
 
-    if ( presetSaveOperationState == PRESET_SAVE_OP_WAIT_CACHE ) {
-      display.setTextColor( TFT_YELLOW, TFT_BLACK );
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_WAIT_CACHE
+    ) {
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "Updating Preset List", screenWidth / 2, 110 );
+      display.drawString(
+        "Updating Preset List",
+        screenWidth / 2,
+        110
+      );
 
-      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( presetSaveOperationIsOverwrite ? "Verifying Overwrite..." : "Verifying New Preset...", screenWidth / 2, 158 );
+      display.drawString(
+        presetSaveOperationIsOverwrite
+          ? "Verifying Overwrite..."
+          : "Verifying New Preset...",
+        screenWidth / 2,
+        158
+      );
 
       return;
     }
 
-    if ( presetSaveOperationState == PRESET_SAVE_OP_SUCCESS ) {
-      display.setTextColor( TFT_GREEN, TFT_BLACK );
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_SUCCESS
+    ) {
+      display.setTextColor(
+        TFT_GREEN,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( presetSaveOperationIsOverwrite ? "OVERWRITTEN" : "SAVED", screenWidth / 2, 104 );
+      display.drawString(
+        presetSaveOperationIsOverwrite
+          ? "OVERWRITTEN"
+          : "SAVED",
+        screenWidth / 2,
+        104
+      );
 
-      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( presetSaveCandidateName, screenWidth / 2, 140 );
+      display.drawString(
+        presetSaveCandidateName,
+        screenWidth / 2,
+        140
+      );
 
       char idText[24];
 
-      snprintf( idText, sizeof(idText), "Preset ID: %u", presetSaveCandidateId );
+      snprintf(
+        idText,
+        sizeof(idText),
+        "Preset ID: %u",
+        presetSaveCandidateId
+      );
 
-      display.drawString( idText, screenWidth / 2, 165 );
+      display.drawString(
+        idText,
+        screenWidth / 2,
+        165
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
-      display.drawString( "Preset cache verified", screenWidth / 2, 192 );
+      display.drawString(
+        "Preset cache verified",
+        screenWidth / 2,
+        192
+      );
 
       return;
     }
 
-    if ( presetSaveOperationState == PRESET_SAVE_OP_FAILED ) {
-      display.setTextColor( TFT_RED, TFT_BLACK );
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_FAILED
+    ) {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( presetSaveOperationIsOverwrite ? "OVERWRITE FAILED" : "SAVE FAILED", screenWidth / 2, 108 );
+      display.drawString(
+        presetSaveOperationIsOverwrite
+          ? "OVERWRITE FAILED"
+          : "SAVE FAILED",
+        screenWidth / 2,
+        108
+      );
 
-      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( "Preset was not verified", screenWidth / 2, 150 );
+      display.drawString(
+        "Preset was not verified",
+        screenWidth / 2,
+        150
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
-      display.drawString( "Returning to PRESET MANAGE", screenWidth / 2, 180 );
+      display.drawString(
+        "Returning to PRESET MANAGE",
+        screenWidth / 2,
+        180
+      );
     }
   }
 
   void drawPresetSaveScreen() {
-    display.fillScreen( TFT_BLACK );
+    display.fillScreen(
+      TFT_BLACK
+    );
 
     currentPage = SCREEN_PRESET;
-
     presetSubPage = PRESET_SUBPAGE_SAVE;
 
-    if ( presetSaveOperationState == PRESET_SAVE_OP_IDLE ) {
+    if (
+      presetSaveOperationState ==
+      PRESET_SAVE_OP_IDLE
+    ) {
       presetSaveOperationIsOverwrite = false;
     }
 
     readyScreenShown = true;
-
     connectingScreenShown = false;
 
     resetTouchGesture();
 
-    display.setTextDatum( textdatum_t::middle_center );
+    drawStandardPageHeader(
+      "SAVE PRESET",
+      "Current WLED State"
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    drawPowerButton(
+      bri > 0,
+      false
+    );
 
-    display.setTextSize( 2 );
+    drawBackButton(
+      false
+    );
 
-    display.drawString( "SAVE PRESET", screenWidth / 2, 18 );
-
-    display.setTextSize( 1 );
-
-    display.drawString( "Current WLED State", screenWidth / 2, 41 );
-
-    display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
-
-    drawPowerButton( bri > 0, false );
-
-    drawBackButton( false );
-
-    if ( presetSaveOperationState != PRESET_SAVE_OP_IDLE ) {
+    if (
+      presetSaveOperationState !=
+      PRESET_SAVE_OP_IDLE
+    ) {
       drawPresetSaveOperationStatus();
       return;
     }
 
     if ( presetSaveCandidateId == 0 ) {
-      display.setTextColor( TFT_RED, TFT_BLACK );
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "No Free ID", screenWidth / 2, 110 );
+      display.drawString(
+        "No Free ID",
+        screenWidth / 2,
+        110
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( "Preset IDs 1-250 are unavailable", screenWidth / 2, 150 );
+      display.drawString(
+        "Preset IDs 1-250 are unavailable",
+        screenWidth / 2,
+        150
+      );
 
       return;
     }
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
-    if ( presetSaveCandidateName.length() <= 18 ) {
-      display.setTextSize( 2 );
-    }
-    else {
-      display.setTextSize( 1 );
-    }
+    display.setTextSize(
+      presetSaveCandidateName.length() <= 18
+        ? 2
+        : 1
+    );
 
-    display.drawString( presetSaveCandidateName, screenWidth / 2, 88 );
+    display.drawString(
+      presetSaveCandidateName,
+      screenWidth / 2,
+      88
+    );
 
     char idText[24];
 
-    snprintf( idText, sizeof(idText), "Preset ID: %u", presetSaveCandidateId );
+    snprintf(
+      idText,
+      sizeof(idText),
+      "Preset ID: %u",
+      presetSaveCandidateId
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( idText, screenWidth / 2, 120 );
+    display.drawString(
+      idText,
+      screenWidth / 2,
+      120
+    );
 
-    display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
 
-    display.drawString( "Hold 1 second to save", screenWidth / 2, 151 );
+    display.drawString(
+      "Hold 1 second to save",
+      screenWidth / 2,
+      151
+    );
 
-    drawPresetSaveHoldButton( false );
+    drawPresetSaveHoldButton(
+      false
+    );
 
     lastLedState = bri > 0 ? 1 : 0;
   }
 
-  void drawPresetOverwriteNavigation( TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 112, screenWidth, 58, TFT_BLACK );
+  void drawPresetOverwriteNavigation(
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      112,
+      screenWidth,
+      58,
+      TFT_BLACK
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, PRESET_OVERWRITE_NAV_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      PRESET_OVERWRITE_NAV_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_PREV
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, PRESET_OVERWRITE_NAV_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_PRESET_OVERWRITE_NEXT );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      PRESET_OVERWRITE_NAV_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_NEXT
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "TARGET", screenWidth / 2, PRESET_OVERWRITE_NAV_BUTTON_Y + (CONTROL_BUTTON_H / 2) );
+    display.drawString(
+      "TARGET",
+      screenWidth / 2,
+      PRESET_OVERWRITE_NAV_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
+    );
   }
 
-  void drawPresetOverwriteHoldButton( bool pressed ) {
-    bool enabled = ( presetSaveOperationState == PRESET_SAVE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetOverwriteTargetId > 0 && findPresetCacheIndex( presetOverwriteTargetId ) >= 0 && pendingPresetId == 0 && !presetNeedsSaving() );
+  void drawPresetOverwriteHoldButton(
+    bool pressed
+  ) {
+    bool enabled =
+      presetSaveOperationState ==
+        PRESET_SAVE_OP_IDLE &&
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      presetOverwriteTargetId > 0 &&
+      findPresetCacheIndex(
+        presetOverwriteTargetId
+      ) >= 0 &&
+      pendingPresetId == 0 &&
+      !presetNeedsSaving();
 
-    drawPresetTextButton( PRESET_OVERWRITE_HOLD_BUTTON_X, PRESET_OVERWRITE_HOLD_BUTTON_Y, PRESET_OVERWRITE_HOLD_BUTTON_W, PRESET_OVERWRITE_HOLD_BUTTON_H, "HOLD TO OVERWRITE", enabled, pressed && enabled, 1 );
+    drawPresetTextButton(
+      PRESET_OVERWRITE_HOLD_BUTTON_X,
+      PRESET_OVERWRITE_HOLD_BUTTON_Y,
+      PRESET_OVERWRITE_HOLD_BUTTON_W,
+      PRESET_OVERWRITE_HOLD_BUTTON_H,
+      "HOLD TO OVERWRITE",
+      enabled,
+      pressed && enabled,
+      1
+    );
 
-    presetOverwriteHoldButtonVisualPressed = ( pressed && enabled );
+    presetOverwriteHoldButtonVisualPressed =
+      pressed && enabled;
   }
 
   void drawPresetOverwriteScreen() {
-    display.fillScreen( TFT_BLACK );
+    display.fillScreen(
+      TFT_BLACK
+    );
 
     currentPage = SCREEN_PRESET;
-
     presetSubPage = PRESET_SUBPAGE_OVERWRITE;
-
     readyScreenShown = true;
-
     connectingScreenShown = false;
 
     resetTouchGesture();
 
-    display.setTextDatum( textdatum_t::middle_center );
+    drawStandardPageHeader(
+      "OVERWRITE PRESET",
+      "Select destination only"
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    drawPowerButton(
+      bri > 0,
+      false
+    );
 
-    display.setTextSize( 2 );
+    drawBackButton(
+      false
+    );
 
-    display.drawString( "OVERWRITE PRESET", screenWidth / 2, 18 );
-
-    display.setTextSize( 1 );
-
-    display.drawString( "Select destination only", screenWidth / 2, 41 );
-
-    display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
-
-    drawPowerButton( bri > 0, false );
-
-    drawBackButton( false );
-
-    if ( presetSaveOperationState != PRESET_SAVE_OP_IDLE ) {
+    if (
+      presetSaveOperationState !=
+      PRESET_SAVE_OP_IDLE
+    ) {
       drawPresetSaveOperationStatus();
       return;
     }
 
-    if ( presetOverwriteTargetId == 0 || findPresetCacheIndex( presetOverwriteTargetId ) < 0 ) {
-      display.setTextColor( TFT_RED, TFT_BLACK );
+    if (
+      presetOverwriteTargetId == 0 ||
+      findPresetCacheIndex(
+        presetOverwriteTargetId
+      ) < 0
+    ) {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "No Preset", screenWidth / 2, 104 );
+      display.drawString(
+        "No Preset",
+        screenWidth / 2,
+        104
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( "Nothing can be overwritten", screenWidth / 2, 145 );
+      display.drawString(
+        "Nothing can be overwritten",
+        screenWidth / 2,
+        145
+      );
 
       return;
     }
 
-    String displayName = presetOverwriteTargetName;
+    String displayName =
+      presetOverwriteTargetName;
 
     if ( displayName.length() > 28 ) {
-      displayName = displayName.substring( 0, 25 ) + "...";
+      displayName =
+        displayName.substring( 0, 25 ) +
+        "...";
     }
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
-    if ( displayName.length() <= 12 ) {
-      display.setTextSize( 2 );
-    }
-    else {
-      display.setTextSize( 1 );
-    }
+    display.setTextSize(
+      displayName.length() <= 12
+        ? 2
+        : 1
+    );
 
-    display.drawString( displayName, screenWidth / 2, 82 );
+    display.drawString(
+      displayName,
+      screenWidth / 2,
+      82
+    );
 
     char idText[24];
 
-    snprintf( idText, sizeof(idText), "Preset ID: %u", presetOverwriteTargetId );
+    snprintf(
+      idText,
+      sizeof(idText),
+      "Preset ID: %u",
+      presetOverwriteTargetId
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( idText, screenWidth / 2, 105 );
+    display.drawString(
+      idText,
+      screenWidth / 2,
+      105
+    );
 
-    drawPresetOverwriteNavigation( TOUCH_TARGET_NONE );
+    drawPresetOverwriteNavigation(
+      TOUCH_TARGET_NONE
+    );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Current WLED State", screenWidth / 2, 174 );
+    display.drawString(
+      "Current WLED State",
+      screenWidth / 2,
+      174
+    );
 
-    display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
 
-    display.drawString( "will replace this Preset", screenWidth / 2, 187 );
+    display.drawString(
+      "will replace this Preset",
+      screenWidth / 2,
+      187
+    );
 
-    drawPresetOverwriteHoldButton( false );
+    drawPresetOverwriteHoldButton(
+      false
+    );
 
     lastLedState = bri > 0 ? 1 : 0;
   }
 
-  void drawPresetDeleteNavigation( TouchTarget pressedTarget = TOUCH_TARGET_NONE ) {
-    display.fillRect( 0, 112, screenWidth, 58, TFT_BLACK );
+  void drawPresetDeleteNavigation(
+    TouchTarget pressedTarget = TOUCH_TARGET_NONE
+  ) {
+    display.fillRect(
+      0,
+      112,
+      screenWidth,
+      58,
+      TFT_BLACK
+    );
 
-    drawTriangleButton( CONTROL_LEFT_X, PRESET_DELETE_NAV_BUTTON_Y, false, pressedTarget == TOUCH_TARGET_PRESET_DELETE_PREV );
+    drawTriangleButton(
+      CONTROL_LEFT_X,
+      PRESET_DELETE_NAV_BUTTON_Y,
+      false,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_PREV
+    );
 
-    drawTriangleButton( CONTROL_RIGHT_X, PRESET_DELETE_NAV_BUTTON_Y, true, pressedTarget == TOUCH_TARGET_PRESET_DELETE_NEXT );
+    drawTriangleButton(
+      CONTROL_RIGHT_X,
+      PRESET_DELETE_NAV_BUTTON_Y,
+      true,
+      pressedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_NEXT
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    display.setTextColor( TFT_RED, TFT_BLACK );
+    display.setTextColor(
+      TFT_RED,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "TARGET", screenWidth / 2, PRESET_DELETE_NAV_BUTTON_Y + (CONTROL_BUTTON_H / 2) );
+    display.drawString(
+      "TARGET",
+      screenWidth / 2,
+      PRESET_DELETE_NAV_BUTTON_Y +
+        (CONTROL_BUTTON_H / 2)
+    );
   }
 
-  void drawPresetDeleteHoldButton( bool pressed ) {
-    bool enabled = ( presetDeleteOperationState == PRESET_DELETE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetDeleteTargetId > 0 && findPresetCacheIndex( presetDeleteTargetId ) >= 0 && pendingPresetId == 0 && !presetNeedsSaving() );
+  void drawPresetDeleteHoldButton(
+    bool pressed
+  ) {
+    bool enabled =
+      presetDeleteOperationState ==
+        PRESET_DELETE_OP_IDLE &&
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      presetDeleteTargetId > 0 &&
+      findPresetCacheIndex(
+        presetDeleteTargetId
+      ) >= 0 &&
+      pendingPresetId == 0 &&
+      !presetNeedsSaving();
 
-    drawPresetDangerTextButton( PRESET_DELETE_HOLD_BUTTON_X, PRESET_DELETE_HOLD_BUTTON_Y, PRESET_DELETE_HOLD_BUTTON_W, PRESET_DELETE_HOLD_BUTTON_H, "HOLD TO DELETE", enabled, pressed && enabled, 1 );
+    drawPresetDangerTextButton(
+      PRESET_DELETE_HOLD_BUTTON_X,
+      PRESET_DELETE_HOLD_BUTTON_Y,
+      PRESET_DELETE_HOLD_BUTTON_W,
+      PRESET_DELETE_HOLD_BUTTON_H,
+      "HOLD TO DELETE",
+      enabled,
+      pressed && enabled,
+      1
+    );
 
-    presetDeleteHoldButtonVisualPressed = ( pressed && enabled );
+    presetDeleteHoldButtonVisualPressed =
+      pressed && enabled;
   }
-
-  // =========================================================
-  // Phase 10.2.4
-  // DELETE operation status
-  //
-  // Internal cache scan position is not displayed.
-  // =========================================================
 
   void drawPresetDeleteOperationStatus() {
-    if ( currentPage != SCREEN_PRESET || presetSubPage != PRESET_SUBPAGE_DELETE ) {
+    if (
+      currentPage != SCREEN_PRESET ||
+      presetSubPage != PRESET_SUBPAGE_DELETE
+    ) {
       return;
     }
 
-    display.fillRect( 0, 60, screenWidth, 180, TFT_BLACK );
+    display.fillRect(
+      0,
+      60,
+      screenWidth,
+      180,
+      TFT_BLACK
+    );
 
-    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextDatum(
+      textdatum_t::middle_center
+    );
 
-    if ( presetDeleteOperationState == PRESET_DELETE_OP_WAIT_CACHE ) {
-      display.setTextColor( TFT_YELLOW, TFT_BLACK );
+    if (
+      presetDeleteOperationState ==
+      PRESET_DELETE_OP_WAIT_CACHE
+    ) {
+      display.setTextColor(
+        TFT_YELLOW,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "Updating Preset List", screenWidth / 2, 105 );
+      display.drawString(
+        "Updating Preset List",
+        screenWidth / 2,
+        105
+      );
 
-      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( presetDeleteTargetName, screenWidth / 2, 145 );
+      display.drawString(
+        presetDeleteTargetName,
+        screenWidth / 2,
+        145
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
-      display.drawString( "Verifying Deletion...", screenWidth / 2, 175 );
+      display.drawString(
+        "Verifying Deletion...",
+        screenWidth / 2,
+        175
+      );
 
       return;
     }
 
-    if ( presetDeleteOperationState == PRESET_DELETE_OP_SUCCESS ) {
-      display.setTextColor( TFT_GREEN, TFT_BLACK );
+    if (
+      presetDeleteOperationState ==
+      PRESET_DELETE_OP_SUCCESS
+    ) {
+      display.setTextColor(
+        TFT_GREEN,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "DELETED", screenWidth / 2, 104 );
+      display.drawString(
+        "DELETED",
+        screenWidth / 2,
+        104
+      );
 
-      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( presetDeleteTargetName, screenWidth / 2, 140 );
+      display.drawString(
+        presetDeleteTargetName,
+        screenWidth / 2,
+        140
+      );
 
       char idText[24];
 
-      snprintf( idText, sizeof(idText), "Preset ID: %u", presetDeleteTargetId );
+      snprintf(
+        idText,
+        sizeof(idText),
+        "Preset ID: %u",
+        presetDeleteTargetId
+      );
 
-      display.drawString( idText, screenWidth / 2, 165 );
+      display.drawString(
+        idText,
+        screenWidth / 2,
+        165
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
-      display.drawString( "Preset cache verified", screenWidth / 2, 192 );
+      display.drawString(
+        "Preset cache verified",
+        screenWidth / 2,
+        192
+      );
 
       return;
     }
 
-    if ( presetDeleteOperationState == PRESET_DELETE_OP_FAILED ) {
-      display.setTextColor( TFT_RED, TFT_BLACK );
+    if (
+      presetDeleteOperationState ==
+      PRESET_DELETE_OP_FAILED
+    ) {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "DELETE FAILED", screenWidth / 2, 108 );
+      display.drawString(
+        "DELETE FAILED",
+        screenWidth / 2,
+        108
+      );
 
-      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextColor(
+        TFT_WHITE,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( "Preset still exists", screenWidth / 2, 150 );
+      display.drawString(
+        "Preset still exists",
+        screenWidth / 2,
+        150
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
-      display.drawString( "Returning to PRESET MANAGE", screenWidth / 2, 180 );
+      display.drawString(
+        "Returning to PRESET MANAGE",
+        screenWidth / 2,
+        180
+      );
     }
   }
 
   void drawPresetDeleteScreen() {
-    display.fillScreen( TFT_BLACK );
+    display.fillScreen(
+      TFT_BLACK
+    );
 
     currentPage = SCREEN_PRESET;
-
     presetSubPage = PRESET_SUBPAGE_DELETE;
-
     readyScreenShown = true;
-
     connectingScreenShown = false;
 
     resetTouchGesture();
 
-    display.setTextDatum( textdatum_t::middle_center );
+    drawStandardPageHeader(
+      "DELETE PRESET",
+      "Select target only",
+      TFT_RED
+    );
 
-    display.setTextColor( TFT_RED, TFT_BLACK );
+    drawPowerButton(
+      bri > 0,
+      false
+    );
 
-    display.setTextSize( 2 );
+    drawBackButton(
+      false
+    );
 
-    display.drawString( "DELETE PRESET", screenWidth / 2, 18 );
-
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
-
-    display.setTextSize( 1 );
-
-    display.drawString( "Select target only", screenWidth / 2, 41 );
-
-    display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
-
-    drawPowerButton( bri > 0, false );
-
-    drawBackButton( false );
-
-    if ( presetDeleteOperationState != PRESET_DELETE_OP_IDLE ) {
+    if (
+      presetDeleteOperationState !=
+      PRESET_DELETE_OP_IDLE
+    ) {
       drawPresetDeleteOperationStatus();
       return;
     }
 
-    if ( presetDeleteTargetId == 0 || findPresetCacheIndex( presetDeleteTargetId ) < 0 ) {
-      display.setTextColor( TFT_RED, TFT_BLACK );
+    if (
+      presetDeleteTargetId == 0 ||
+      findPresetCacheIndex(
+        presetDeleteTargetId
+      ) < 0
+    ) {
+      display.setTextColor(
+        TFT_RED,
+        TFT_BLACK
+      );
 
       display.setTextSize( 2 );
 
-      display.drawString( "No Preset", screenWidth / 2, 104 );
+      display.drawString(
+        "No Preset",
+        screenWidth / 2,
+        104
+      );
 
-      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.setTextColor(
+        TFT_DARKGREY,
+        TFT_BLACK
+      );
 
       display.setTextSize( 1 );
 
-      display.drawString( "Nothing can be deleted", screenWidth / 2, 145 );
+      display.drawString(
+        "Nothing can be deleted",
+        screenWidth / 2,
+        145
+      );
 
       return;
     }
 
-    String displayName = presetDeleteTargetName;
+    String displayName =
+      presetDeleteTargetName;
 
     if ( displayName.length() > 28 ) {
-      displayName = displayName.substring( 0, 25 ) + "...";
+      displayName =
+        displayName.substring( 0, 25 ) +
+        "...";
     }
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      TFT_WHITE,
+      TFT_BLACK
+    );
 
-    if ( displayName.length() <= 12 ) {
-      display.setTextSize( 2 );
-    }
-    else {
-      display.setTextSize( 1 );
-    }
+    display.setTextSize(
+      displayName.length() <= 12
+        ? 2
+        : 1
+    );
 
-    display.drawString( displayName, screenWidth / 2, 82 );
+    display.drawString(
+      displayName,
+      screenWidth / 2,
+      82
+    );
 
     char idText[24];
 
-    snprintf( idText, sizeof(idText), "Preset ID: %u", presetDeleteTargetId );
+    snprintf(
+      idText,
+      sizeof(idText),
+      "Preset ID: %u",
+      presetDeleteTargetId
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( idText, screenWidth / 2, 105 );
+    display.drawString(
+      idText,
+      screenWidth / 2,
+      105
+    );
 
-    drawPresetDeleteNavigation( TOUCH_TARGET_NONE );
+    drawPresetDeleteNavigation(
+      TOUCH_TARGET_NONE
+    );
 
-    display.setTextColor( TFT_RED, TFT_BLACK );
+    display.setTextColor(
+      TFT_RED,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Delete this Preset", screenWidth / 2, 174 );
+    display.drawString(
+      "Delete this Preset",
+      screenWidth / 2,
+      174
+    );
 
-    display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+    display.setTextColor(
+      TFT_DARKGREY,
+      TFT_BLACK
+    );
 
-    display.drawString( "Current LED state is kept", screenWidth / 2, 187 );
+    display.drawString(
+      "Current LED state is kept",
+      screenWidth / 2,
+      187
+    );
 
-    drawPresetDeleteHoldButton( false );
+    drawPresetDeleteHoldButton(
+      false
+    );
 
     lastLedState = bri > 0 ? 1 : 0;
   }
 
-  bool pointInsideRect( int16_t px, int16_t py, int16_t x, int16_t y, int16_t w, int16_t h ) {
-    return ( px >= x && px < x + w && py >= y && py < y + h );
+  // =========================================================
+  // Phase 10.3.1
+  // Shared hit-test implementation
+  // =========================================================
+
+  bool pointInsideRect(
+    int16_t px,
+    int16_t py,
+    const CoreS3TouchRect& rect
+  ) {
+    return (
+      px >= rect.x &&
+      px < rect.x + rect.w &&
+      py >= rect.y &&
+      py < rect.y + rect.h
+    );
   }
 
   bool isPowerButtonTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, POWER_BUTTON_X, POWER_BUTTON_Y, POWER_BUTTON_W, POWER_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_POWER );
   }
 
   bool isBrightnessDownTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_LEFT_X, BRI_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_BRIGHTNESS_DOWN );
   }
 
   bool isBrightnessUpTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_RIGHT_X, BRI_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_BRIGHTNESS_UP );
   }
 
   bool isEffectPrevTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_LEFT_X, FX_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_EFFECT_PREV );
   }
 
   bool isEffectDetailTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, EFFECT_DETAIL_X, EFFECT_DETAIL_Y, EFFECT_DETAIL_W, EFFECT_DETAIL_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_EFFECT_DETAIL );
   }
 
   bool isEffectNextTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_RIGHT_X, FX_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_EFFECT_NEXT );
   }
 
   bool isColorButtonTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, COLOR_TOUCH_X, MAIN_BOTTOM_TOUCH_Y, COLOR_TOUCH_W, MAIN_BOTTOM_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_COLOR_OPEN );
   }
 
   bool isPresetOpenButtonTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_OPEN_TOUCH_X, MAIN_BOTTOM_TOUCH_Y, PRESET_OPEN_TOUCH_W, MAIN_BOTTOM_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_PRESET_OPEN );
   }
 
   bool isBackButtonTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, BACK_BUTTON_X, BACK_BUTTON_Y, BACK_BUTTON_W, BACK_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_BACK );
   }
 
   bool isHueDownTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_LEFT_X, HUE_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_HUE_DOWN );
   }
 
   bool isHueUpTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_RIGHT_X, HUE_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_HUE_UP );
   }
 
   bool isSaturationDownTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_LEFT_X, SATURATION_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_SATURATION_DOWN );
   }
 
   bool isSaturationUpTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_RIGHT_X, SATURATION_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_SATURATION_UP );
   }
 
   bool isSpeedDownTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_LEFT_X, SPEED_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_SPEED_DOWN );
   }
 
   bool isSpeedUpTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_RIGHT_X, SPEED_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_SPEED_UP );
   }
 
   bool isIntensityDownTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_LEFT_X, INTENSITY_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_INTENSITY_DOWN );
   }
 
   bool isIntensityUpTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, CONTROL_RIGHT_X, INTENSITY_BUTTON_Y, CONTROL_BUTTON_W, CONTROL_BUTTON_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_INTENSITY_UP );
   }
 
   bool isPalettePrevTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PALETTE_TOUCH_LEFT_X, PALETTE_TOUCH_Y, PALETTE_TOUCH_W, PALETTE_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_PALETTE_PREV );
   }
 
   bool isPaletteNextTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PALETTE_TOUCH_RIGHT_X, PALETTE_TOUCH_Y, PALETTE_TOUCH_W, PALETTE_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_PALETTE_NEXT );
   }
 
   bool isPresetPrevTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_NAV_TOUCH_LEFT_X, PRESET_NAV_TOUCH_Y, PRESET_NAV_TOUCH_W, PRESET_NAV_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_PRESET_PREV );
   }
 
   bool isPresetNextTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_NAV_TOUCH_RIGHT_X, PRESET_NAV_TOUCH_Y, PRESET_NAV_TOUCH_W, PRESET_NAV_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_PRESET_NEXT );
   }
 
   bool isPresetManageTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_MANAGE_TOUCH_X, PRESET_MANAGE_TOUCH_Y, PRESET_MANAGE_TOUCH_W, PRESET_MANAGE_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_PRESET_MANAGE );
   }
 
   bool isPresetSaveNewTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_SAVE_NEW_TOUCH_X, PRESET_SAVE_NEW_TOUCH_Y, PRESET_SAVE_NEW_TOUCH_W, PRESET_SAVE_NEW_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_PRESET_SAVE_NEW );
   }
 
   bool isPresetSaveHoldTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_SAVE_HOLD_TOUCH_X, PRESET_SAVE_HOLD_TOUCH_Y, PRESET_SAVE_HOLD_TOUCH_W, PRESET_SAVE_HOLD_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_PRESET_SAVE_HOLD );
   }
 
   bool isPresetOverwriteOpenTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_OVERWRITE_TOUCH_X, PRESET_OVERWRITE_TOUCH_Y, PRESET_OVERWRITE_TOUCH_W, PRESET_OVERWRITE_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_OVERWRITE_OPEN );
   }
 
   bool isPresetOverwritePrevTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_OVERWRITE_NAV_TOUCH_LEFT_X, PRESET_OVERWRITE_NAV_TOUCH_Y, PRESET_OVERWRITE_NAV_TOUCH_W, PRESET_OVERWRITE_NAV_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_OVERWRITE_PREV );
   }
 
   bool isPresetOverwriteNextTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_OVERWRITE_NAV_TOUCH_RIGHT_X, PRESET_OVERWRITE_NAV_TOUCH_Y, PRESET_OVERWRITE_NAV_TOUCH_W, PRESET_OVERWRITE_NAV_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_OVERWRITE_NEXT );
   }
 
   bool isPresetOverwriteHoldTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_OVERWRITE_HOLD_TOUCH_X, PRESET_OVERWRITE_HOLD_TOUCH_Y, PRESET_OVERWRITE_HOLD_TOUCH_W, PRESET_OVERWRITE_HOLD_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_OVERWRITE_HOLD );
   }
 
   bool isPresetDeleteOpenTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_DELETE_TOUCH_X, PRESET_DELETE_TOUCH_Y, PRESET_DELETE_TOUCH_W, PRESET_DELETE_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_DELETE_OPEN );
   }
 
   bool isPresetDeletePrevTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_DELETE_NAV_TOUCH_LEFT_X, PRESET_DELETE_NAV_TOUCH_Y, PRESET_DELETE_NAV_TOUCH_W, PRESET_DELETE_NAV_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_DELETE_PREV );
   }
 
   bool isPresetDeleteNextTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_DELETE_NAV_TOUCH_RIGHT_X, PRESET_DELETE_NAV_TOUCH_Y, PRESET_DELETE_NAV_TOUCH_W, PRESET_DELETE_NAV_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_DELETE_NEXT );
   }
 
   bool isPresetDeleteHoldTouched( int16_t x, int16_t y ) {
-    return pointInsideRect( x, y, PRESET_DELETE_HOLD_TOUCH_X, PRESET_DELETE_HOLD_TOUCH_Y, PRESET_DELETE_HOLD_TOUCH_W, PRESET_DELETE_HOLD_TOUCH_H );
+    return pointInsideRect( x, y, CORES3_TOUCH_DELETE_HOLD );
   }
 
   void beginHueEdit() {
-    uint32_t currentColor = getPrimaryColor();
+    uint32_t currentColor =
+      getPrimaryColor();
 
-    if ( !logicalColorHsvValid || !lastPrimaryColorValid || currentColor != lastPrimaryColor ) {
-      syncLogicalColorFromRgb( currentColor );
+    if (
+      !logicalColorHsvValid ||
+      !lastPrimaryColorValid ||
+      currentColor != lastPrimaryColor
+    ) {
+      syncLogicalColorFromRgb(
+        currentColor
+      );
 
       lastPrimaryColor = currentColor;
-
       lastPrimaryColorValid = true;
     }
 
     hueEditHsv = logicalColorHsv;
-
     hueEditValue = logicalHueValue;
-
     hueEditWhite = logicalWhiteValue;
-
     hueEditValid = true;
   }
 
   void beginSaturationEdit() {
-    uint32_t currentColor = getPrimaryColor();
+    uint32_t currentColor =
+      getPrimaryColor();
 
-    if ( !logicalColorHsvValid || !lastPrimaryColorValid || currentColor != lastPrimaryColor ) {
-      syncLogicalColorFromRgb( currentColor );
+    if (
+      !logicalColorHsvValid ||
+      !lastPrimaryColorValid ||
+      currentColor != lastPrimaryColor
+    ) {
+      syncLogicalColorFromRgb(
+        currentColor
+      );
 
       lastPrimaryColor = currentColor;
-
       lastPrimaryColorValid = true;
     }
 
     saturationEditHsv = logicalColorHsv;
-
     saturationEditValue = logicalSaturationValue;
-
     saturationEditWhite = logicalWhiteValue;
-
     saturationEditValid = true;
   }
 
   void resetTouchGesture() {
     touchActive = false;
-
     touchTarget = TOUCH_TARGET_NONE;
 
     lastTouchInsidePower = false;
-
     lastTouchInsideBrightness = false;
-
     lastTouchInsideEffect = false;
-
     lastTouchInsideEffectDetail = false;
-
     lastTouchInsideColor = false;
-
     lastTouchInsidePresetOpen = false;
-
     lastTouchInsideBack = false;
-
     lastTouchInsideHue = false;
-
     lastTouchInsideSaturation = false;
-
     lastTouchInsideSpeed = false;
-
     lastTouchInsideIntensity = false;
-
     lastTouchInsidePalette = false;
-
     lastTouchInsidePresetNav = false;
-
     lastTouchInsidePresetManage = false;
-
     lastTouchInsidePresetSaveNew = false;
-
     lastTouchInsidePresetSaveHold = false;
-
     lastTouchInsidePresetOverwriteOpen = false;
-
     lastTouchInsidePresetOverwriteNav = false;
-
     lastTouchInsidePresetOverwriteHold = false;
-
     lastTouchInsidePresetDeleteOpen = false;
-
     lastTouchInsidePresetDeleteNav = false;
-
     lastTouchInsidePresetDeleteHold = false;
 
     powerButtonVisualPressed = false;
-
     brightnessButtonVisualPressed = false;
-
     effectButtonVisualPressed = false;
-
     effectDetailVisualPressed = false;
-
     colorButtonVisualPressed = false;
-
     presetOpenButtonVisualPressed = false;
-
     backButtonVisualPressed = false;
-
     hueButtonVisualPressed = false;
-
     saturationButtonVisualPressed = false;
-
     speedButtonVisualPressed = false;
-
     intensityButtonVisualPressed = false;
-
     paletteButtonVisualPressed = false;
-
     presetNavButtonVisualPressed = false;
-
     presetManageButtonVisualPressed = false;
-
     presetSaveNewButtonVisualPressed = false;
-
     presetSaveHoldButtonVisualPressed = false;
-
     presetOverwriteOpenButtonVisualPressed = false;
-
     presetOverwriteNavButtonVisualPressed = false;
-
     presetOverwriteHoldButtonVisualPressed = false;
-
     presetDeleteOpenButtonVisualPressed = false;
-
     presetDeleteNavButtonVisualPressed = false;
-
     presetDeleteHoldButtonVisualPressed = false;
 
     brightnessLongPressActive = false;
-
     effectLongPressActive = false;
-
     hueLongPressActive = false;
-
     saturationLongPressActive = false;
-
     speedLongPressActive = false;
-
     intensityLongPressActive = false;
-
     paletteLongPressActive = false;
-
     presetLongPressActive = false;
 
     hueEditValid = false;
-
     saturationEditValid = false;
 
     touchReleaseCandidate = 0;
 
     controlPressStartTime = 0;
-
     lastBrightnessRepeat = 0;
-
     effectPressStartTime = 0;
-
     lastEffectRepeat = 0;
-
     huePressStartTime = 0;
-
     lastHueRepeat = 0;
-
     saturationPressStartTime = 0;
-
     lastSaturationRepeat = 0;
-
     speedPressStartTime = 0;
-
     lastSpeedRepeat = 0;
-
     intensityPressStartTime = 0;
-
     lastIntensityRepeat = 0;
-
     palettePressStartTime = 0;
-
     lastPaletteRepeat = 0;
-
     presetPressStartTime = 0;
-
     lastPresetRepeat = 0;
 
     presetSaveHoldStartTime = 0;
-
     presetSaveHoldTriggered = false;
 
     lastTouchX = -1;
-
     lastTouchY = -1;
   }
 
   void toggleLedPowerFromTouch() {
     toggleOnOff();
 
-    stateUpdated( CALL_MODE_BUTTON );
+    stateUpdated(
+      CALL_MODE_BUTTON
+    );
 
     lastLedState = -1;
-
     lastBrightnessValue = -1;
   }
 
-  bool applyBrightnessValue( int newValue ) {
-    newValue = constrain( newValue, 0, 255 );
+  bool applyBrightnessValue(
+    int newValue
+  ) {
+    newValue =
+      constrain(
+        newValue,
+        0,
+        255
+      );
 
     if ( newValue == bri ) {
       return false;
@@ -4088,7 +5838,6 @@ class CoreS3DisplayUsermod : public Usermod {
     if ( newValue == 0 ) {
       if ( bri > 0 ) {
         briLast = bri;
-
         bri = 0;
       }
     }
@@ -4100,53 +5849,98 @@ class CoreS3DisplayUsermod : public Usermod {
       bri = (uint8_t)newValue;
     }
 
-    stateUpdated( CALL_MODE_BUTTON );
+    stateUpdated(
+      CALL_MODE_BUTTON
+    );
 
     lastLedState = -1;
 
     return true;
   }
 
-  void applyBrightnessStep( int step ) {
-    int newValue = constrain( (int)bri + step, 0, 255 );
+  void applyBrightnessStep(
+    int step
+  ) {
+    int newValue =
+      constrain(
+        (int)bri + step,
+        0,
+        255
+      );
 
-    if ( applyBrightnessValue( newValue ) ) {
+    if (
+      applyBrightnessValue(
+        newValue
+      )
+    ) {
       if ( currentPage == SCREEN_MAIN ) {
-        drawBrightness( bri, touchTarget );
+        drawBrightness(
+          bri,
+          touchTarget
+        );
       }
 
       lastBrightnessValue = bri;
     }
   }
 
-  void brightnessShortPress( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_BRIGHTNESS_DOWN ) {
-      applyBrightnessStep( -BRI_SHORT_STEP );
+  void brightnessShortPress(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_BRIGHTNESS_DOWN
+    ) {
+      applyBrightnessStep(
+        -BRI_SHORT_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_BRIGHTNESS_UP ) {
-      applyBrightnessStep( BRI_SHORT_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_BRIGHTNESS_UP
+    ) {
+      applyBrightnessStep(
+        BRI_SHORT_STEP
+      );
     }
   }
 
-  void brightnessLongPressStep( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_BRIGHTNESS_DOWN ) {
-      applyBrightnessStep( -BRI_LONG_STEP );
+  void brightnessLongPressStep(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_BRIGHTNESS_DOWN
+    ) {
+      applyBrightnessStep(
+        -BRI_LONG_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_BRIGHTNESS_UP ) {
-      applyBrightnessStep( BRI_LONG_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_BRIGHTNESS_UP
+    ) {
+      applyBrightnessStep(
+        BRI_LONG_STEP
+      );
     }
   }
 
-  void applyEffectStep( int step ) {
-    uint8_t modeCount = strip.getModeCount();
+  void applyEffectStep(
+    int step
+  ) {
+    uint8_t modeCount =
+      strip.getModeCount();
 
     if ( modeCount == 0 ) {
       return;
     }
 
-    Segment& mainSegment = strip.getMainSegment();
+    Segment& mainSegment =
+      strip.getMainSegment();
 
-    int newMode = mainSegment.mode + step;
+    int newMode =
+      mainSegment.mode + step;
 
     if ( newMode < 0 ) {
       newMode = modeCount - 1;
@@ -4160,51 +5954,77 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    mainSegment.setMode( (uint8_t)newMode );
+    mainSegment.setMode(
+      (uint8_t)newMode
+    );
 
-    stateUpdated( CALL_MODE_BUTTON );
+    stateUpdated(
+      CALL_MODE_BUTTON
+    );
 
     if ( currentPage == SCREEN_MAIN ) {
-      drawEffect( mainSegment.mode, touchTarget );
+      drawEffect(
+        mainSegment.mode,
+        touchTarget
+      );
     }
 
     lastEffectMode = mainSegment.mode;
-
     lastSpeedValue = mainSegment.speed;
-
     lastIntensityValue = mainSegment.intensity;
-
     lastPaletteValue = mainSegment.palette;
   }
 
-  void effectLongPressStep( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_EFFECT_PREV ) {
+  void effectLongPressStep(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_EFFECT_PREV
+    ) {
       applyEffectStep( -1 );
     }
-    else if ( target == TOUCH_TARGET_EFFECT_NEXT ) {
+    else if (
+      target ==
+      TOUCH_TARGET_EFFECT_NEXT
+    ) {
       applyEffectStep( 1 );
     }
   }
 
-  bool applySpeedValue( int newValue ) {
+  bool applySpeedValue(
+    int newValue
+  ) {
     if ( strip.getSegmentsNum() == 0 ) {
       return false;
     }
 
-    newValue = constrain( newValue, 0, 255 );
+    newValue =
+      constrain(
+        newValue,
+        0,
+        255
+      );
 
-    Segment& mainSegment = strip.getMainSegment();
+    Segment& mainSegment =
+      strip.getMainSegment();
 
     if ( newValue == mainSegment.speed ) {
       return false;
     }
 
-    mainSegment.speed = (uint8_t)newValue;
+    mainSegment.speed =
+      (uint8_t)newValue;
 
-    stateUpdated( CALL_MODE_BUTTON );
+    stateUpdated(
+      CALL_MODE_BUTTON
+    );
 
     if ( currentPage == SCREEN_EFFECT ) {
-      drawSpeed( mainSegment.speed, touchTarget );
+      drawSpeed(
+        mainSegment.speed,
+        touchTarget
+      );
     }
 
     lastSpeedValue = mainSegment.speed;
@@ -4212,188 +6032,337 @@ class CoreS3DisplayUsermod : public Usermod {
     return true;
   }
 
-  void applySpeedStep( int step ) {
-    int newValue = constrain( (int)getCurrentSpeed() + step, 0, 255 );
+  void applySpeedStep(
+    int step
+  ) {
+    int newValue =
+      constrain(
+        (int)getCurrentSpeed() + step,
+        0,
+        255
+      );
 
-    applySpeedValue( newValue );
+    applySpeedValue(
+      newValue
+    );
   }
 
-  void speedShortPress( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_SPEED_DOWN ) {
-      applySpeedStep( -SPEED_SHORT_STEP );
+  void speedShortPress(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_SPEED_DOWN
+    ) {
+      applySpeedStep(
+        -SPEED_SHORT_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_SPEED_UP ) {
-      applySpeedStep( SPEED_SHORT_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_SPEED_UP
+    ) {
+      applySpeedStep(
+        SPEED_SHORT_STEP
+      );
     }
   }
 
-  void speedLongPressStep( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_SPEED_DOWN ) {
-      applySpeedStep( -SPEED_LONG_STEP );
+  void speedLongPressStep(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_SPEED_DOWN
+    ) {
+      applySpeedStep(
+        -SPEED_LONG_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_SPEED_UP ) {
-      applySpeedStep( SPEED_LONG_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_SPEED_UP
+    ) {
+      applySpeedStep(
+        SPEED_LONG_STEP
+      );
     }
   }
 
-  bool applyIntensityValue( int newValue ) {
+  bool applyIntensityValue(
+    int newValue
+  ) {
     if ( strip.getSegmentsNum() == 0 ) {
       return false;
     }
 
-    newValue = constrain( newValue, 0, 255 );
+    newValue =
+      constrain(
+        newValue,
+        0,
+        255
+      );
 
-    Segment& mainSegment = strip.getMainSegment();
+    Segment& mainSegment =
+      strip.getMainSegment();
 
-    if ( newValue == mainSegment.intensity ) {
+    if (
+      newValue ==
+      mainSegment.intensity
+    ) {
       return false;
     }
 
-    mainSegment.intensity = (uint8_t)newValue;
+    mainSegment.intensity =
+      (uint8_t)newValue;
 
-    stateUpdated( CALL_MODE_BUTTON );
+    stateUpdated(
+      CALL_MODE_BUTTON
+    );
 
     if ( currentPage == SCREEN_EFFECT ) {
-      drawIntensity( mainSegment.intensity, touchTarget );
+      drawIntensity(
+        mainSegment.intensity,
+        touchTarget
+      );
     }
 
-    lastIntensityValue = mainSegment.intensity;
+    lastIntensityValue =
+      mainSegment.intensity;
 
     return true;
   }
 
-  void applyIntensityStep( int step ) {
-    int newValue = constrain( (int)getCurrentIntensity() + step, 0, 255 );
+  void applyIntensityStep(
+    int step
+  ) {
+    int newValue =
+      constrain(
+        (int)getCurrentIntensity() + step,
+        0,
+        255
+      );
 
-    applyIntensityValue( newValue );
+    applyIntensityValue(
+      newValue
+    );
   }
 
-  void intensityShortPress( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_INTENSITY_DOWN ) {
-      applyIntensityStep( -INTENSITY_SHORT_STEP );
+  void intensityShortPress(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_INTENSITY_DOWN
+    ) {
+      applyIntensityStep(
+        -INTENSITY_SHORT_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_INTENSITY_UP ) {
-      applyIntensityStep( INTENSITY_SHORT_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_INTENSITY_UP
+    ) {
+      applyIntensityStep(
+        INTENSITY_SHORT_STEP
+      );
     }
   }
 
-  void intensityLongPressStep( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_INTENSITY_DOWN ) {
-      applyIntensityStep( -INTENSITY_LONG_STEP );
+  void intensityLongPressStep(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_INTENSITY_DOWN
+    ) {
+      applyIntensityStep(
+        -INTENSITY_LONG_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_INTENSITY_UP ) {
-      applyIntensityStep( INTENSITY_LONG_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_INTENSITY_UP
+    ) {
+      applyIntensityStep(
+        INTENSITY_LONG_STEP
+      );
     }
   }
 
-  bool applyPaletteValue( uint8_t newPalette ) {
+  bool applyPaletteValue(
+    uint8_t newPalette
+  ) {
     if ( strip.getSegmentsNum() == 0 ) {
       return false;
     }
 
-    Segment& mainSegment = strip.getMainSegment();
+    Segment& mainSegment =
+      strip.getMainSegment();
 
-    if ( newPalette == mainSegment.palette ) {
+    if (
+      newPalette ==
+      mainSegment.palette
+    ) {
       return false;
     }
 
-    mainSegment.setPalette( newPalette );
+    mainSegment.setPalette(
+      newPalette
+    );
 
-    stateUpdated( CALL_MODE_BUTTON );
+    stateUpdated(
+      CALL_MODE_BUTTON
+    );
 
     if ( currentPage == SCREEN_EFFECT ) {
-      drawPalette( mainSegment.palette, touchTarget );
+      drawPalette(
+        mainSegment.palette,
+        touchTarget
+      );
     }
 
-    lastPaletteValue = mainSegment.palette;
+    lastPaletteValue =
+      mainSegment.palette;
 
     return true;
   }
 
-  void applyPaletteStep( int step ) {
-    size_t paletteCount = getSelectablePaletteCount();
+  void applyPaletteStep(
+    int step
+  ) {
+    size_t paletteCount =
+      getSelectablePaletteCount();
 
     if ( paletteCount == 0 ) {
       return;
     }
 
-    uint8_t currentPalette = getCurrentPalette();
+    uint8_t currentPalette =
+      getCurrentPalette();
 
-    int currentIndex = findPaletteSequenceIndex( currentPalette );
+    int currentIndex =
+      findPaletteSequenceIndex(
+        currentPalette
+      );
 
     if ( currentIndex < 0 ) {
       currentIndex = 0;
     }
 
-    int newIndex = currentIndex + step;
+    int newIndex =
+      currentIndex + step;
 
     while ( newIndex < 0 ) {
-      newIndex += (int)paletteCount;
+      newIndex +=
+        (int)paletteCount;
     }
 
-    while ( newIndex >= (int)paletteCount ) {
-      newIndex -= (int)paletteCount;
+    while (
+      newIndex >=
+      (int)paletteCount
+    ) {
+      newIndex -=
+        (int)paletteCount;
     }
 
-    uint8_t newPalette = paletteIdFromSequenceIndex( (size_t)newIndex );
+    uint8_t newPalette =
+      paletteIdFromSequenceIndex(
+        (size_t)newIndex
+      );
 
-    applyPaletteValue( newPalette );
+    applyPaletteValue(
+      newPalette
+    );
   }
 
-  void paletteShortPress( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_PALETTE_PREV ) {
+  void paletteShortPress(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_PALETTE_PREV
+    ) {
       applyPaletteStep( -1 );
     }
-    else if ( target == TOUCH_TARGET_PALETTE_NEXT ) {
+    else if (
+      target ==
+      TOUCH_TARGET_PALETTE_NEXT
+    ) {
       applyPaletteStep( 1 );
     }
   }
 
-  void paletteLongPressStep( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_PALETTE_PREV ) {
+  void paletteLongPressStep(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_PALETTE_PREV
+    ) {
       applyPaletteStep( -1 );
     }
-    else if ( target == TOUCH_TARGET_PALETTE_NEXT ) {
+    else if (
+      target ==
+      TOUCH_TARGET_PALETTE_NEXT
+    ) {
       applyPaletteStep( 1 );
     }
   }
 
-  bool applyPresetStep( int direction ) {
+  bool applyPresetStep(
+    int direction
+  ) {
     if ( direction == 0 ) {
       return false;
     }
 
     if ( !presetCacheReady ) {
       if ( currentPage == SCREEN_PRESET ) {
-        drawPresetDetails( getDisplayedPresetId(), false );
+        drawPresetDetails(
+          getDisplayedPresetId(),
+          false
+        );
 
-        drawPresetNavigation( TOUCH_TARGET_NONE );
+        drawPresetNavigation(
+          TOUCH_TARGET_NONE
+        );
       }
 
-      Serial.println( F( "[CoreS3_Display] " "Preset cache not ready" ) );
+      Serial.println(
+        F("[CoreS3_Display] Preset cache not ready")
+      );
 
       return false;
     }
 
-    uint8_t basePreset = getPresetNavigationBaseId();
+    uint8_t basePreset =
+      getPresetNavigationBaseId();
 
     String presetName;
 
-    uint8_t newPreset = findAdjacentPreset( basePreset, direction, &presetName );
+    uint8_t newPreset =
+      findAdjacentPreset(
+        basePreset,
+        direction,
+        &presetName
+      );
 
     if ( newPreset == 0 ) {
       presetNoEntries = true;
-
       pendingPresetId = 0;
-
       pendingPresetName = "";
-
       pendingPresetRequestMs = 0;
 
       if ( currentPage == SCREEN_PRESET ) {
-        drawPresetDetails( 0, false );
+        drawPresetDetails(
+          0,
+          false
+        );
 
-        drawPresetNavigation( touchTarget );
+        drawPresetNavigation(
+          touchTarget
+        );
       }
 
       lastPresetValue = 0;
@@ -4402,47 +6371,74 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     presetNoEntries = false;
-
     pendingPresetId = newPreset;
-
     pendingPresetName = presetName;
-
     pendingPresetRequestMs = millis();
 
-    applyPreset( newPreset, CALL_MODE_BUTTON_PRESET );
+    applyPreset(
+      newPreset,
+      CALL_MODE_BUTTON_PRESET
+    );
 
     if ( currentPage == SCREEN_PRESET ) {
-      drawPresetDetails( newPreset, true );
+      drawPresetDetails(
+        newPreset,
+        true
+      );
 
-      drawPresetNavigation( touchTarget );
+      drawPresetNavigation(
+        touchTarget
+      );
     }
 
     lastPresetValue = newPreset;
 
-    Serial.printf( "[CoreS3_Display] " "Preset cache request: %u (%s)\n", newPreset, presetName.c_str() );
+    Serial.printf(
+      "[CoreS3_Display] Preset cache request: %u (%s)\n",
+      newPreset,
+      presetName.c_str()
+    );
 
     return true;
   }
 
-  void presetShortPress( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_PRESET_PREV ) {
+  void presetShortPress(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_PRESET_PREV
+    ) {
       applyPresetStep( -1 );
     }
-    else if ( target == TOUCH_TARGET_PRESET_NEXT ) {
+    else if (
+      target ==
+      TOUCH_TARGET_PRESET_NEXT
+    ) {
       applyPresetStep( 1 );
     }
   }
 
-  void presetLongPressStep( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_PRESET_PREV ) {
+  void presetLongPressStep(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_PRESET_PREV
+    ) {
       applyPresetStep( -1 );
     }
-    else if ( target == TOUCH_TARGET_PRESET_NEXT ) {
+    else if (
+      target ==
+      TOUCH_TARGET_PRESET_NEXT
+    ) {
       applyPresetStep( 1 );
     }
   }
 
-  bool applyHueValue( uint8_t newHue ) {
+  bool applyHueValue(
+    uint8_t newHue
+  ) {
     if ( strip.getSegmentsNum() == 0 ) {
       return false;
     }
@@ -4457,54 +6453,71 @@ class CoreS3DisplayUsermod : public Usermod {
 
     hueEditValue = newHue;
 
-    hueEditHsv.h = ((uint16_t)newHue) << 8;
+    hueEditHsv.h =
+      ((uint16_t)newHue) << 8;
 
     logicalHueValue = newHue;
-
     logicalColorHsv = hueEditHsv;
-
     logicalSaturationValue = logicalColorHsv.s;
-
     logicalWhiteValue = hueEditWhite;
-
     logicalColorHsvValid = true;
 
     CRGBW newRgb;
 
-    hsv2rgb_spectrum( logicalColorHsv, newRgb );
+    hsv2rgb_spectrum(
+      logicalColorHsv,
+      newRgb
+    );
 
     newRgb.w = logicalWhiteValue;
 
-    uint32_t newColor = newRgb.color32;
+    uint32_t newColor =
+      newRgb.color32;
 
-    Segment& mainSegment = strip.getMainSegment();
+    Segment& mainSegment =
+      strip.getMainSegment();
 
-    if ( newColor != mainSegment.colors[0] ) {
-      mainSegment.setColor( 0, newColor );
+    if (
+      newColor !=
+      mainSegment.colors[0]
+    ) {
+      mainSegment.setColor(
+        0,
+        newColor
+      );
 
-      stateUpdated( CALL_MODE_BUTTON );
+      stateUpdated(
+        CALL_MODE_BUTTON
+      );
     }
 
     if ( currentPage == SCREEN_COLOR ) {
-      drawColorDetails( newColor );
+      drawColorDetails(
+        newColor
+      );
 
-      drawHue( logicalHueValue, touchTarget );
+      drawHue(
+        logicalHueValue,
+        touchTarget
+      );
 
-      drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+      drawSaturation(
+        logicalSaturationValue,
+        TOUCH_TARGET_NONE
+      );
     }
 
     lastPrimaryColor = newColor;
-
     lastPrimaryColorValid = true;
-
     lastHueValue = logicalHueValue;
-
     lastSaturationValue = logicalSaturationValue;
 
     return true;
   }
 
-  void applyHueStep( int step ) {
+  void applyHueStep(
+    int step
+  ) {
     if (!hueEditValid) {
       beginHueEdit();
     }
@@ -4513,7 +6526,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    int newValue = (int)logicalHueValue + step;
+    int newValue =
+      (int)logicalHueValue + step;
 
     while ( newValue < 0 ) {
       newValue += 256;
@@ -4523,28 +6537,56 @@ class CoreS3DisplayUsermod : public Usermod {
       newValue -= 256;
     }
 
-    applyHueValue( (uint8_t)newValue );
+    applyHueValue(
+      (uint8_t)newValue
+    );
   }
 
-  void hueShortPress( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_HUE_DOWN ) {
-      applyHueStep( -HUE_SHORT_STEP );
+  void hueShortPress(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_HUE_DOWN
+    ) {
+      applyHueStep(
+        -HUE_SHORT_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_HUE_UP ) {
-      applyHueStep( HUE_SHORT_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_HUE_UP
+    ) {
+      applyHueStep(
+        HUE_SHORT_STEP
+      );
     }
   }
 
-  void hueLongPressStep( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_HUE_DOWN ) {
-      applyHueStep( -HUE_LONG_STEP );
+  void hueLongPressStep(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_HUE_DOWN
+    ) {
+      applyHueStep(
+        -HUE_LONG_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_HUE_UP ) {
-      applyHueStep( HUE_LONG_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_HUE_UP
+    ) {
+      applyHueStep(
+        HUE_LONG_STEP
+      );
     }
   }
 
-  bool applySaturationValue( uint8_t newSaturation ) {
+  bool applySaturationValue(
+    uint8_t newSaturation
+  ) {
     if ( strip.getSegmentsNum() == 0 ) {
       return false;
     }
@@ -4557,56 +6599,84 @@ class CoreS3DisplayUsermod : public Usermod {
       return false;
     }
 
-    saturationEditValue = newSaturation;
+    saturationEditValue =
+      newSaturation;
 
-    saturationEditHsv.s = newSaturation;
+    saturationEditHsv.s =
+      newSaturation;
 
-    logicalSaturationValue = newSaturation;
+    logicalSaturationValue =
+      newSaturation;
 
-    logicalColorHsv = saturationEditHsv;
+    logicalColorHsv =
+      saturationEditHsv;
 
-    logicalHueValue = (uint8_t)( logicalColorHsv.h >> 8 );
+    logicalHueValue =
+      (uint8_t)(
+        logicalColorHsv.h >> 8
+      );
 
-    logicalWhiteValue = saturationEditWhite;
+    logicalWhiteValue =
+      saturationEditWhite;
 
     logicalColorHsvValid = true;
 
     CRGBW newRgb;
 
-    hsv2rgb_spectrum( logicalColorHsv, newRgb );
+    hsv2rgb_spectrum(
+      logicalColorHsv,
+      newRgb
+    );
 
     newRgb.w = logicalWhiteValue;
 
-    uint32_t newColor = newRgb.color32;
+    uint32_t newColor =
+      newRgb.color32;
 
-    Segment& mainSegment = strip.getMainSegment();
+    Segment& mainSegment =
+      strip.getMainSegment();
 
-    if ( newColor != mainSegment.colors[0] ) {
-      mainSegment.setColor( 0, newColor );
+    if (
+      newColor !=
+      mainSegment.colors[0]
+    ) {
+      mainSegment.setColor(
+        0,
+        newColor
+      );
 
-      stateUpdated( CALL_MODE_BUTTON );
+      stateUpdated(
+        CALL_MODE_BUTTON
+      );
     }
 
     if ( currentPage == SCREEN_COLOR ) {
-      drawColorDetails( newColor );
+      drawColorDetails(
+        newColor
+      );
 
-      drawHue( logicalHueValue, TOUCH_TARGET_NONE );
+      drawHue(
+        logicalHueValue,
+        TOUCH_TARGET_NONE
+      );
 
-      drawSaturation( logicalSaturationValue, touchTarget );
+      drawSaturation(
+        logicalSaturationValue,
+        touchTarget
+      );
     }
 
     lastPrimaryColor = newColor;
-
     lastPrimaryColorValid = true;
-
     lastHueValue = logicalHueValue;
-
     lastSaturationValue = logicalSaturationValue;
 
     return true;
   }
 
-  void applySaturationStep( int step ) {
+  void applySaturationStep(
+    int step
+  ) {
     if (!saturationEditValid) {
       beginSaturationEdit();
     }
@@ -4615,123 +6685,229 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    int newValue = constrain( (int)logicalSaturationValue + step, 0, 255 );
+    int newValue =
+      constrain(
+        (int)logicalSaturationValue + step,
+        0,
+        255
+      );
 
-    if ( newValue == logicalSaturationValue ) {
+    if (
+      newValue ==
+      logicalSaturationValue
+    ) {
       return;
     }
 
-    applySaturationValue( (uint8_t)newValue );
+    applySaturationValue(
+      (uint8_t)newValue
+    );
   }
 
-  void saturationShortPress( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_SATURATION_DOWN ) {
-      applySaturationStep( -SATURATION_SHORT_STEP );
+  void saturationShortPress(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_SATURATION_DOWN
+    ) {
+      applySaturationStep(
+        -SATURATION_SHORT_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_SATURATION_UP ) {
-      applySaturationStep( SATURATION_SHORT_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_SATURATION_UP
+    ) {
+      applySaturationStep(
+        SATURATION_SHORT_STEP
+      );
     }
   }
 
-  void saturationLongPressStep( TouchTarget target ) {
-    if ( target == TOUCH_TARGET_SATURATION_DOWN ) {
-      applySaturationStep( -SATURATION_LONG_STEP );
+  void saturationLongPressStep(
+    TouchTarget target
+  ) {
+    if (
+      target ==
+      TOUCH_TARGET_SATURATION_DOWN
+    ) {
+      applySaturationStep(
+        -SATURATION_LONG_STEP
+      );
     }
-    else if ( target == TOUCH_TARGET_SATURATION_UP ) {
-      applySaturationStep( SATURATION_LONG_STEP );
+    else if (
+      target ==
+      TOUCH_TARGET_SATURATION_UP
+    ) {
+      applySaturationStep(
+        SATURATION_LONG_STEP
+      );
     }
   }
 
-  bool isInsideSelectedBrightnessButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_BRIGHTNESS_DOWN ) {
+  bool isInsideSelectedBrightnessButton(
+    int16_t x,
+    int16_t y
+  ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_BRIGHTNESS_DOWN
+    ) {
       return isBrightnessDownTouched( x, y );
     }
 
-    if ( touchTarget == TOUCH_TARGET_BRIGHTNESS_UP ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_BRIGHTNESS_UP
+    ) {
       return isBrightnessUpTouched( x, y );
     }
 
     return false;
   }
 
-  bool isInsideSelectedEffectButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_EFFECT_PREV ) {
+  bool isInsideSelectedEffectButton(
+    int16_t x,
+    int16_t y
+  ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_EFFECT_PREV
+    ) {
       return isEffectPrevTouched( x, y );
     }
 
-    if ( touchTarget == TOUCH_TARGET_EFFECT_NEXT ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_EFFECT_NEXT
+    ) {
       return isEffectNextTouched( x, y );
     }
 
     return false;
   }
 
-  bool isInsideSelectedHueButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_HUE_DOWN ) {
+  bool isInsideSelectedHueButton(
+    int16_t x,
+    int16_t y
+  ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_HUE_DOWN
+    ) {
       return isHueDownTouched( x, y );
     }
 
-    if ( touchTarget == TOUCH_TARGET_HUE_UP ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_HUE_UP
+    ) {
       return isHueUpTouched( x, y );
     }
 
     return false;
   }
 
-  bool isInsideSelectedSaturationButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_SATURATION_DOWN ) {
+  bool isInsideSelectedSaturationButton(
+    int16_t x,
+    int16_t y
+  ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_SATURATION_DOWN
+    ) {
       return isSaturationDownTouched( x, y );
     }
 
-    if ( touchTarget == TOUCH_TARGET_SATURATION_UP ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_SATURATION_UP
+    ) {
       return isSaturationUpTouched( x, y );
     }
 
     return false;
   }
 
-  bool isInsideSelectedSpeedButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_SPEED_DOWN ) {
+  bool isInsideSelectedSpeedButton(
+    int16_t x,
+    int16_t y
+  ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_SPEED_DOWN
+    ) {
       return isSpeedDownTouched( x, y );
     }
 
-    if ( touchTarget == TOUCH_TARGET_SPEED_UP ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_SPEED_UP
+    ) {
       return isSpeedUpTouched( x, y );
     }
 
     return false;
   }
 
-  bool isInsideSelectedIntensityButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_INTENSITY_DOWN ) {
+  bool isInsideSelectedIntensityButton(
+    int16_t x,
+    int16_t y
+  ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_INTENSITY_DOWN
+    ) {
       return isIntensityDownTouched( x, y );
     }
 
-    if ( touchTarget == TOUCH_TARGET_INTENSITY_UP ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_INTENSITY_UP
+    ) {
       return isIntensityUpTouched( x, y );
     }
 
     return false;
   }
 
-  bool isInsideSelectedPaletteButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_PALETTE_PREV ) {
+  bool isInsideSelectedPaletteButton(
+    int16_t x,
+    int16_t y
+  ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_PALETTE_PREV
+    ) {
       return isPalettePrevTouched( x, y );
     }
 
-    if ( touchTarget == TOUCH_TARGET_PALETTE_NEXT ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_PALETTE_NEXT
+    ) {
       return isPaletteNextTouched( x, y );
     }
 
     return false;
   }
 
-  bool isInsideSelectedPresetButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_PRESET_PREV ) {
+  bool isInsideSelectedPresetButton(
+    int16_t x,
+    int16_t y
+  ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_PRESET_PREV
+    ) {
       return isPresetPrevTouched( x, y );
     }
 
-    if ( touchTarget == TOUCH_TARGET_PRESET_NEXT ) {
+    if (
+      touchTarget ==
+      TOUCH_TARGET_PRESET_NEXT
+    ) {
       return isPresetNextTouched( x, y );
     }
 
@@ -4740,6 +6916,9 @@ class CoreS3DisplayUsermod : public Usermod {
 
   // =========================================================
   // Touch processing
+  //
+  // IMPORTANT:
+  // This function is intentionally unchanged from Phase 10.3.0.
   // =========================================================
 
   void handleTouch() {
@@ -4751,34 +6930,44 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( isPresetSaveBusy() || isPresetDeleteBusy() ) {
+    if (
+      isPresetSaveBusy() ||
+      isPresetDeleteBusy()
+    ) {
       return;
     }
 
     unsigned long now = millis();
 
-    if ( now - lastTouchPoll < TOUCH_POLL_MS ) {
+    if (
+      now - lastTouchPoll <
+      TOUCH_POLL_MS
+    ) {
       return;
     }
 
     lastTouchPoll = now;
 
     int16_t touchX = -1;
-
     int16_t touchY = -1;
 
-    bool touching = display.getTouch( &touchX, &touchY ) > 0;
+    bool touching =
+      display.getTouch(
+        &touchX,
+        &touchY
+      ) > 0;
 
     if (touching) {
       lastUserActivityMs = now;
-
       touchReleaseCandidate = 0;
-
       lastTouchX = touchX;
-
       lastTouchY = touchY;
 
-      bool insidePower = isPowerButtonTouched( touchX, touchY );
+      bool insidePower =
+        isPowerButtonTouched(
+          touchX,
+          touchY
+        );
 
       bool insideBrightnessDown = false;
       bool insideBrightnessUp = false;
@@ -4791,19 +6980,47 @@ class CoreS3DisplayUsermod : public Usermod {
       bool insidePresetOpen = false;
 
       if ( currentPage == SCREEN_MAIN ) {
-        insideBrightnessDown = isBrightnessDownTouched( touchX, touchY );
+        insideBrightnessDown =
+          isBrightnessDownTouched(
+            touchX,
+            touchY
+          );
 
-        insideBrightnessUp = isBrightnessUpTouched( touchX, touchY );
+        insideBrightnessUp =
+          isBrightnessUpTouched(
+            touchX,
+            touchY
+          );
 
-        insideEffectPrev = isEffectPrevTouched( touchX, touchY );
+        insideEffectPrev =
+          isEffectPrevTouched(
+            touchX,
+            touchY
+          );
 
-        insideEffectDetail = isEffectDetailTouched( touchX, touchY );
+        insideEffectDetail =
+          isEffectDetailTouched(
+            touchX,
+            touchY
+          );
 
-        insideEffectNext = isEffectNextTouched( touchX, touchY );
+        insideEffectNext =
+          isEffectNextTouched(
+            touchX,
+            touchY
+          );
 
-        insideColor = isColorButtonTouched( touchX, touchY );
+        insideColor =
+          isColorButtonTouched(
+            touchX,
+            touchY
+          );
 
-        insidePresetOpen = isPresetOpenButtonTouched( touchX, touchY );
+        insidePresetOpen =
+          isPresetOpenButtonTouched(
+            touchX,
+            touchY
+          );
       }
 
       bool insideBack = false;
@@ -4815,15 +7032,35 @@ class CoreS3DisplayUsermod : public Usermod {
       bool insideSaturationUp = false;
 
       if ( currentPage == SCREEN_COLOR ) {
-        insideBack = isBackButtonTouched( touchX, touchY );
+        insideBack =
+          isBackButtonTouched(
+            touchX,
+            touchY
+          );
 
-        insideHueDown = isHueDownTouched( touchX, touchY );
+        insideHueDown =
+          isHueDownTouched(
+            touchX,
+            touchY
+          );
 
-        insideHueUp = isHueUpTouched( touchX, touchY );
+        insideHueUp =
+          isHueUpTouched(
+            touchX,
+            touchY
+          );
 
-        insideSaturationDown = isSaturationDownTouched( touchX, touchY );
+        insideSaturationDown =
+          isSaturationDownTouched(
+            touchX,
+            touchY
+          );
 
-        insideSaturationUp = isSaturationUpTouched( touchX, touchY );
+        insideSaturationUp =
+          isSaturationUpTouched(
+            touchX,
+            touchY
+          );
       }
 
       bool insideSpeedDown = false;
@@ -4836,19 +7073,47 @@ class CoreS3DisplayUsermod : public Usermod {
       bool insidePaletteNext = false;
 
       if ( currentPage == SCREEN_EFFECT ) {
-        insideBack = isBackButtonTouched( touchX, touchY );
+        insideBack =
+          isBackButtonTouched(
+            touchX,
+            touchY
+          );
 
-        insideSpeedDown = isSpeedDownTouched( touchX, touchY );
+        insideSpeedDown =
+          isSpeedDownTouched(
+            touchX,
+            touchY
+          );
 
-        insideSpeedUp = isSpeedUpTouched( touchX, touchY );
+        insideSpeedUp =
+          isSpeedUpTouched(
+            touchX,
+            touchY
+          );
 
-        insideIntensityDown = isIntensityDownTouched( touchX, touchY );
+        insideIntensityDown =
+          isIntensityDownTouched(
+            touchX,
+            touchY
+          );
 
-        insideIntensityUp = isIntensityUpTouched( touchX, touchY );
+        insideIntensityUp =
+          isIntensityUpTouched(
+            touchX,
+            touchY
+          );
 
-        insidePalettePrev = isPalettePrevTouched( touchX, touchY );
+        insidePalettePrev =
+          isPalettePrevTouched(
+            touchX,
+            touchY
+          );
 
-        insidePaletteNext = isPaletteNextTouched( touchX, touchY );
+        insidePaletteNext =
+          isPaletteNextTouched(
+            touchX,
+            touchY
+          );
       }
 
       bool insidePresetPrev = false;
@@ -4869,710 +7134,1208 @@ class CoreS3DisplayUsermod : public Usermod {
       bool insidePresetDeleteHold = false;
 
       if ( currentPage == SCREEN_PRESET ) {
-        insideBack = isBackButtonTouched( touchX, touchY );
+        insideBack =
+          isBackButtonTouched(
+            touchX,
+            touchY
+          );
 
-        if ( presetSubPage == PRESET_SUBPAGE_NAV ) {
-          insidePresetPrev = isPresetPrevTouched( touchX, touchY );
+        if (
+          presetSubPage ==
+          PRESET_SUBPAGE_NAV
+        ) {
+          insidePresetPrev =
+            isPresetPrevTouched(
+              touchX,
+              touchY
+            );
 
-          insidePresetNext = isPresetNextTouched( touchX, touchY );
+          insidePresetNext =
+            isPresetNextTouched(
+              touchX,
+              touchY
+            );
 
-          insidePresetManage = ( presetCacheReady && !presetCacheBuilding && pendingPresetId == 0 && isPresetManageTouched( touchX, touchY ) );
+          insidePresetManage =
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            pendingPresetId == 0 &&
+            isPresetManageTouched(
+              touchX,
+              touchY
+            );
         }
-        else if ( presetSubPage == PRESET_SUBPAGE_MANAGE ) {
-          insidePresetSaveNew = ( findFirstFreePresetId() > 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetSaveNewTouched( touchX, touchY ) );
+        else if (
+          presetSubPage ==
+          PRESET_SUBPAGE_MANAGE
+        ) {
+          insidePresetSaveNew =
+            findFirstFreePresetId() > 0 &&
+            pendingPresetId == 0 &&
+            !presetNeedsSaving() &&
+            isPresetSaveNewTouched(
+              touchX,
+              touchY
+            );
 
-          insidePresetOverwriteOpen = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetOverwriteOpenTouched( touchX, touchY ) );
+          insidePresetOverwriteOpen =
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            presetCacheCount > 0 &&
+            pendingPresetId == 0 &&
+            !presetNeedsSaving() &&
+            isPresetOverwriteOpenTouched(
+              touchX,
+              touchY
+            );
 
-          insidePresetDeleteOpen = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetDeleteOpenTouched( touchX, touchY ) );
+          insidePresetDeleteOpen =
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            presetCacheCount > 0 &&
+            pendingPresetId == 0 &&
+            !presetNeedsSaving() &&
+            isPresetDeleteOpenTouched(
+              touchX,
+              touchY
+            );
         }
-        else if ( presetSubPage == PRESET_SUBPAGE_SAVE ) {
-          insidePresetSaveHold = ( presetSaveOperationState == PRESET_SAVE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetSaveCandidateId > 0 && findPresetCacheIndex( presetSaveCandidateId ) < 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetSaveHoldTouched( touchX, touchY ) );
+        else if (
+          presetSubPage ==
+          PRESET_SUBPAGE_SAVE
+        ) {
+          insidePresetSaveHold =
+            presetSaveOperationState ==
+              PRESET_SAVE_OP_IDLE &&
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            presetSaveCandidateId > 0 &&
+            findPresetCacheIndex(
+              presetSaveCandidateId
+            ) < 0 &&
+            pendingPresetId == 0 &&
+            !presetNeedsSaving() &&
+            isPresetSaveHoldTouched(
+              touchX,
+              touchY
+            );
         }
-        else if ( presetSubPage == PRESET_SUBPAGE_OVERWRITE ) {
-          insidePresetOverwritePrev = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetOverwritePrevTouched( touchX, touchY ) );
+        else if (
+          presetSubPage ==
+          PRESET_SUBPAGE_OVERWRITE
+        ) {
+          insidePresetOverwritePrev =
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            presetCacheCount > 0 &&
+            isPresetOverwritePrevTouched(
+              touchX,
+              touchY
+            );
 
-          insidePresetOverwriteNext = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetOverwriteNextTouched( touchX, touchY ) );
+          insidePresetOverwriteNext =
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            presetCacheCount > 0 &&
+            isPresetOverwriteNextTouched(
+              touchX,
+              touchY
+            );
 
-          insidePresetOverwriteHold = ( presetSaveOperationState == PRESET_SAVE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetOverwriteTargetId > 0 && findPresetCacheIndex( presetOverwriteTargetId ) >= 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetOverwriteHoldTouched( touchX, touchY ) );
+          insidePresetOverwriteHold =
+            presetSaveOperationState ==
+              PRESET_SAVE_OP_IDLE &&
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            presetOverwriteTargetId > 0 &&
+            findPresetCacheIndex(
+              presetOverwriteTargetId
+            ) >= 0 &&
+            pendingPresetId == 0 &&
+            !presetNeedsSaving() &&
+            isPresetOverwriteHoldTouched(
+              touchX,
+              touchY
+            );
         }
-        else if ( presetSubPage == PRESET_SUBPAGE_DELETE ) {
-          insidePresetDeletePrev = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetDeletePrevTouched( touchX, touchY ) );
+        else if (
+          presetSubPage ==
+          PRESET_SUBPAGE_DELETE
+        ) {
+          insidePresetDeletePrev =
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            presetCacheCount > 0 &&
+            isPresetDeletePrevTouched(
+              touchX,
+              touchY
+            );
 
-          insidePresetDeleteNext = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetDeleteNextTouched( touchX, touchY ) );
+          insidePresetDeleteNext =
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            presetCacheCount > 0 &&
+            isPresetDeleteNextTouched(
+              touchX,
+              touchY
+            );
 
-          insidePresetDeleteHold = ( presetDeleteOperationState == PRESET_DELETE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetDeleteTargetId > 0 && findPresetCacheIndex( presetDeleteTargetId ) >= 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetDeleteHoldTouched( touchX, touchY ) );
+          insidePresetDeleteHold =
+            presetDeleteOperationState ==
+              PRESET_DELETE_OP_IDLE &&
+            presetCacheReady &&
+            !presetCacheBuilding &&
+            presetDeleteTargetId > 0 &&
+            findPresetCacheIndex(
+              presetDeleteTargetId
+            ) >= 0 &&
+            pendingPresetId == 0 &&
+            !presetNeedsSaving() &&
+            isPresetDeleteHoldTouched(
+              touchX,
+              touchY
+            );
         }
       }
 
       if (!touchActive) {
         touchActive = true;
-
         touchTarget = TOUCH_TARGET_NONE;
 
         brightnessLongPressActive = false;
-
         effectLongPressActive = false;
-
         hueLongPressActive = false;
-
         saturationLongPressActive = false;
-
         speedLongPressActive = false;
-
         intensityLongPressActive = false;
-
         paletteLongPressActive = false;
-
         presetLongPressActive = false;
-
         presetSaveHoldStartTime = 0;
-
         presetSaveHoldTriggered = false;
       }
 
-      if ( touchTarget == TOUCH_TARGET_NONE ) {
+      if (
+        touchTarget ==
+        TOUCH_TARGET_NONE
+      ) {
         if (insidePower) {
-          touchTarget = TOUCH_TARGET_POWER;
+          touchTarget =
+            TOUCH_TARGET_POWER;
 
           lastTouchInsidePower = true;
         }
 
-        else if ( currentPage == SCREEN_MAIN ) {
+        else if (
+          currentPage ==
+          SCREEN_MAIN
+        ) {
           if (insideBrightnessDown) {
-            touchTarget = TOUCH_TARGET_BRIGHTNESS_DOWN;
+            touchTarget =
+              TOUCH_TARGET_BRIGHTNESS_DOWN;
 
             lastTouchInsideBrightness = true;
-
             controlPressStartTime = now;
-
             lastBrightnessRepeat = now;
           }
           else if (insideBrightnessUp) {
-            touchTarget = TOUCH_TARGET_BRIGHTNESS_UP;
+            touchTarget =
+              TOUCH_TARGET_BRIGHTNESS_UP;
 
             lastTouchInsideBrightness = true;
-
             controlPressStartTime = now;
-
             lastBrightnessRepeat = now;
           }
           else if (insideEffectPrev) {
-            touchTarget = TOUCH_TARGET_EFFECT_PREV;
+            touchTarget =
+              TOUCH_TARGET_EFFECT_PREV;
 
             lastTouchInsideEffect = true;
-
             effectPressStartTime = now;
-
             lastEffectRepeat = now;
-
             effectLongPressActive = false;
           }
           else if (insideEffectDetail) {
-            touchTarget = TOUCH_TARGET_EFFECT_DETAIL;
+            touchTarget =
+              TOUCH_TARGET_EFFECT_DETAIL;
 
             lastTouchInsideEffectDetail = true;
           }
           else if (insideEffectNext) {
-            touchTarget = TOUCH_TARGET_EFFECT_NEXT;
+            touchTarget =
+              TOUCH_TARGET_EFFECT_NEXT;
 
             lastTouchInsideEffect = true;
-
             effectPressStartTime = now;
-
             lastEffectRepeat = now;
-
             effectLongPressActive = false;
           }
           else if (insideColor) {
-            touchTarget = TOUCH_TARGET_COLOR_OPEN;
+            touchTarget =
+              TOUCH_TARGET_COLOR_OPEN;
 
             lastTouchInsideColor = true;
           }
           else if (insidePresetOpen) {
-            touchTarget = TOUCH_TARGET_PRESET_OPEN;
+            touchTarget =
+              TOUCH_TARGET_PRESET_OPEN;
 
             lastTouchInsidePresetOpen = true;
           }
         }
 
-        else if ( currentPage == SCREEN_COLOR ) {
+        else if (
+          currentPage ==
+          SCREEN_COLOR
+        ) {
           if (insideBack) {
-            touchTarget = TOUCH_TARGET_BACK;
+            touchTarget =
+              TOUCH_TARGET_BACK;
 
             lastTouchInsideBack = true;
           }
           else if (insideHueDown) {
-            touchTarget = TOUCH_TARGET_HUE_DOWN;
+            touchTarget =
+              TOUCH_TARGET_HUE_DOWN;
 
             lastTouchInsideHue = true;
-
             huePressStartTime = now;
-
             lastHueRepeat = now;
 
             beginHueEdit();
           }
           else if (insideHueUp) {
-            touchTarget = TOUCH_TARGET_HUE_UP;
+            touchTarget =
+              TOUCH_TARGET_HUE_UP;
 
             lastTouchInsideHue = true;
-
             huePressStartTime = now;
-
             lastHueRepeat = now;
 
             beginHueEdit();
           }
           else if (insideSaturationDown) {
-            touchTarget = TOUCH_TARGET_SATURATION_DOWN;
+            touchTarget =
+              TOUCH_TARGET_SATURATION_DOWN;
 
             lastTouchInsideSaturation = true;
-
             saturationPressStartTime = now;
-
             lastSaturationRepeat = now;
 
             beginSaturationEdit();
           }
           else if (insideSaturationUp) {
-            touchTarget = TOUCH_TARGET_SATURATION_UP;
+            touchTarget =
+              TOUCH_TARGET_SATURATION_UP;
 
             lastTouchInsideSaturation = true;
-
             saturationPressStartTime = now;
-
             lastSaturationRepeat = now;
 
             beginSaturationEdit();
           }
         }
 
-        else if ( currentPage == SCREEN_EFFECT ) {
+        else if (
+          currentPage ==
+          SCREEN_EFFECT
+        ) {
           if (insideBack) {
-            touchTarget = TOUCH_TARGET_BACK;
+            touchTarget =
+              TOUCH_TARGET_BACK;
 
             lastTouchInsideBack = true;
           }
           else if (insideSpeedDown) {
-            touchTarget = TOUCH_TARGET_SPEED_DOWN;
+            touchTarget =
+              TOUCH_TARGET_SPEED_DOWN;
 
             lastTouchInsideSpeed = true;
-
             speedPressStartTime = now;
-
             lastSpeedRepeat = now;
           }
           else if (insideSpeedUp) {
-            touchTarget = TOUCH_TARGET_SPEED_UP;
+            touchTarget =
+              TOUCH_TARGET_SPEED_UP;
 
             lastTouchInsideSpeed = true;
-
             speedPressStartTime = now;
-
             lastSpeedRepeat = now;
           }
           else if (insideIntensityDown) {
-            touchTarget = TOUCH_TARGET_INTENSITY_DOWN;
+            touchTarget =
+              TOUCH_TARGET_INTENSITY_DOWN;
 
             lastTouchInsideIntensity = true;
-
             intensityPressStartTime = now;
-
             lastIntensityRepeat = now;
           }
           else if (insideIntensityUp) {
-            touchTarget = TOUCH_TARGET_INTENSITY_UP;
+            touchTarget =
+              TOUCH_TARGET_INTENSITY_UP;
 
             lastTouchInsideIntensity = true;
-
             intensityPressStartTime = now;
-
             lastIntensityRepeat = now;
           }
           else if (insidePalettePrev) {
-            touchTarget = TOUCH_TARGET_PALETTE_PREV;
+            touchTarget =
+              TOUCH_TARGET_PALETTE_PREV;
 
             lastTouchInsidePalette = true;
-
             palettePressStartTime = now;
-
             lastPaletteRepeat = now;
-
             paletteLongPressActive = false;
           }
           else if (insidePaletteNext) {
-            touchTarget = TOUCH_TARGET_PALETTE_NEXT;
+            touchTarget =
+              TOUCH_TARGET_PALETTE_NEXT;
 
             lastTouchInsidePalette = true;
-
             palettePressStartTime = now;
-
             lastPaletteRepeat = now;
-
             paletteLongPressActive = false;
           }
         }
 
-        else if ( currentPage == SCREEN_PRESET ) {
+        else if (
+          currentPage ==
+          SCREEN_PRESET
+        ) {
           if (insideBack) {
-            touchTarget = TOUCH_TARGET_BACK;
+            touchTarget =
+              TOUCH_TARGET_BACK;
 
             lastTouchInsideBack = true;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_NAV && insidePresetPrev ) {
-            touchTarget = TOUCH_TARGET_PRESET_PREV;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_NAV &&
+            insidePresetPrev
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_PREV;
 
             lastTouchInsidePresetNav = true;
-
             presetPressStartTime = now;
-
             lastPresetRepeat = now;
-
             presetLongPressActive = false;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_NAV && insidePresetNext ) {
-            touchTarget = TOUCH_TARGET_PRESET_NEXT;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_NAV &&
+            insidePresetNext
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_NEXT;
 
             lastTouchInsidePresetNav = true;
-
             presetPressStartTime = now;
-
             lastPresetRepeat = now;
-
             presetLongPressActive = false;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_NAV && insidePresetManage ) {
-            touchTarget = TOUCH_TARGET_PRESET_MANAGE;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_NAV &&
+            insidePresetManage
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_MANAGE;
 
             lastTouchInsidePresetManage = true;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_MANAGE && insidePresetSaveNew ) {
-            touchTarget = TOUCH_TARGET_PRESET_SAVE_NEW;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_MANAGE &&
+            insidePresetSaveNew
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_SAVE_NEW;
 
             lastTouchInsidePresetSaveNew = true;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_MANAGE && insidePresetOverwriteOpen ) {
-            touchTarget = TOUCH_TARGET_PRESET_OVERWRITE_OPEN;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_MANAGE &&
+            insidePresetOverwriteOpen
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_OVERWRITE_OPEN;
 
             lastTouchInsidePresetOverwriteOpen = true;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_MANAGE && insidePresetDeleteOpen ) {
-            touchTarget = TOUCH_TARGET_PRESET_DELETE_OPEN;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_MANAGE &&
+            insidePresetDeleteOpen
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_DELETE_OPEN;
 
             lastTouchInsidePresetDeleteOpen = true;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_SAVE && insidePresetSaveHold ) {
-            touchTarget = TOUCH_TARGET_PRESET_SAVE_HOLD;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_SAVE &&
+            insidePresetSaveHold
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_SAVE_HOLD;
 
             lastTouchInsidePresetSaveHold = true;
-
             presetSaveHoldStartTime = now;
-
             presetSaveHoldTriggered = false;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_OVERWRITE && insidePresetOverwritePrev ) {
-            touchTarget = TOUCH_TARGET_PRESET_OVERWRITE_PREV;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_OVERWRITE &&
+            insidePresetOverwritePrev
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_OVERWRITE_PREV;
 
             lastTouchInsidePresetOverwriteNav = true;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_OVERWRITE && insidePresetOverwriteNext ) {
-            touchTarget = TOUCH_TARGET_PRESET_OVERWRITE_NEXT;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_OVERWRITE &&
+            insidePresetOverwriteNext
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_OVERWRITE_NEXT;
 
             lastTouchInsidePresetOverwriteNav = true;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_OVERWRITE && insidePresetOverwriteHold ) {
-            touchTarget = TOUCH_TARGET_PRESET_OVERWRITE_HOLD;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_OVERWRITE &&
+            insidePresetOverwriteHold
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_OVERWRITE_HOLD;
 
             lastTouchInsidePresetOverwriteHold = true;
-
             presetSaveHoldStartTime = now;
-
             presetSaveHoldTriggered = false;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_DELETE && insidePresetDeletePrev ) {
-            touchTarget = TOUCH_TARGET_PRESET_DELETE_PREV;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_DELETE &&
+            insidePresetDeletePrev
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_DELETE_PREV;
 
             lastTouchInsidePresetDeleteNav = true;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_DELETE && insidePresetDeleteNext ) {
-            touchTarget = TOUCH_TARGET_PRESET_DELETE_NEXT;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_DELETE &&
+            insidePresetDeleteNext
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_DELETE_NEXT;
 
             lastTouchInsidePresetDeleteNav = true;
           }
-          else if ( presetSubPage == PRESET_SUBPAGE_DELETE && insidePresetDeleteHold ) {
-            touchTarget = TOUCH_TARGET_PRESET_DELETE_HOLD;
+          else if (
+            presetSubPage ==
+              PRESET_SUBPAGE_DELETE &&
+            insidePresetDeleteHold
+          ) {
+            touchTarget =
+              TOUCH_TARGET_PRESET_DELETE_HOLD;
 
             lastTouchInsidePresetDeleteHold = true;
-
             presetSaveHoldStartTime = now;
-
             presetSaveHoldTriggered = false;
           }
         }
       }
 
-      if ( touchTarget == TOUCH_TARGET_POWER ) {
+      if (
+        touchTarget ==
+        TOUCH_TARGET_POWER
+      ) {
         lastTouchInsidePower = insidePower;
 
-        if ( insidePower != powerButtonVisualPressed ) {
-          drawPowerButton( bri > 0, insidePower );
+        if (
+          insidePower !=
+          powerButtonVisualPressed
+        ) {
+          drawPowerButton(
+            bri > 0,
+            insidePower
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_BRIGHTNESS_DOWN || touchTarget == TOUCH_TARGET_BRIGHTNESS_UP ) {
-        bool insideSelectedButton = isInsideSelectedBrightnessButton( touchX, touchY );
+      if (
+        touchTarget ==
+          TOUCH_TARGET_BRIGHTNESS_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_BRIGHTNESS_UP
+      ) {
+        bool insideSelectedButton =
+          isInsideSelectedBrightnessButton(
+            touchX,
+            touchY
+          );
 
-        lastTouchInsideBrightness = insideSelectedButton;
+        lastTouchInsideBrightness =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != brightnessButtonVisualPressed ) {
-          drawBrightness( bri, insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          brightnessButtonVisualPressed
+        ) {
+          drawBrightness(
+            bri,
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          brightnessButtonVisualPressed = insideSelectedButton;
+          brightnessButtonVisualPressed =
+            insideSelectedButton;
         }
 
         if (!insideSelectedButton) {
           return;
         }
 
-        if ( !brightnessLongPressActive && now - controlPressStartTime >= BRI_LONG_PRESS_MS ) {
+        if (
+          !brightnessLongPressActive &&
+          now - controlPressStartTime >=
+          BRI_LONG_PRESS_MS
+        ) {
           brightnessLongPressActive = true;
-
           lastBrightnessRepeat = now;
 
-          brightnessLongPressStep( touchTarget );
+          brightnessLongPressStep(
+            touchTarget
+          );
 
           return;
         }
 
-        if ( brightnessLongPressActive && now - lastBrightnessRepeat >= BRI_REPEAT_MS ) {
+        if (
+          brightnessLongPressActive &&
+          now - lastBrightnessRepeat >=
+          BRI_REPEAT_MS
+        ) {
           lastBrightnessRepeat = now;
 
-          brightnessLongPressStep( touchTarget );
+          brightnessLongPressStep(
+            touchTarget
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_EFFECT_PREV || touchTarget == TOUCH_TARGET_EFFECT_NEXT ) {
-        bool insideSelectedButton = isInsideSelectedEffectButton( touchX, touchY );
+      if (
+        touchTarget ==
+          TOUCH_TARGET_EFFECT_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_EFFECT_NEXT
+      ) {
+        bool insideSelectedButton =
+          isInsideSelectedEffectButton(
+            touchX,
+            touchY
+          );
 
-        lastTouchInsideEffect = insideSelectedButton;
+        lastTouchInsideEffect =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != effectButtonVisualPressed ) {
-          drawEffect( getCurrentEffectMode(), insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          effectButtonVisualPressed
+        ) {
+          drawEffect(
+            getCurrentEffectMode(),
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          effectButtonVisualPressed = insideSelectedButton;
+          effectButtonVisualPressed =
+            insideSelectedButton;
         }
 
         if (!insideSelectedButton) {
           return;
         }
 
-        if ( !effectLongPressActive && now - effectPressStartTime >= EFFECT_LONG_PRESS_MS ) {
+        if (
+          !effectLongPressActive &&
+          now - effectPressStartTime >=
+          EFFECT_LONG_PRESS_MS
+        ) {
           effectLongPressActive = true;
-
           lastEffectRepeat = now;
 
-          effectLongPressStep( touchTarget );
+          effectLongPressStep(
+            touchTarget
+          );
 
           return;
         }
 
-        if ( effectLongPressActive && now - lastEffectRepeat >= EFFECT_REPEAT_MS ) {
+        if (
+          effectLongPressActive &&
+          now - lastEffectRepeat >=
+          EFFECT_REPEAT_MS
+        ) {
           lastEffectRepeat = now;
 
-          effectLongPressStep( touchTarget );
+          effectLongPressStep(
+            touchTarget
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_EFFECT_DETAIL ) {
-        bool insideSelectedButton = isEffectDetailTouched( touchX, touchY );
+      if (
+        touchTarget ==
+        TOUCH_TARGET_EFFECT_DETAIL
+      ) {
+        bool insideSelectedButton =
+          isEffectDetailTouched(
+            touchX,
+            touchY
+          );
 
-        lastTouchInsideEffectDetail = insideSelectedButton;
+        lastTouchInsideEffectDetail =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != effectDetailVisualPressed ) {
-          drawEffectDetailButton( getCurrentEffectMode(), insideSelectedButton );
+        if (
+          insideSelectedButton !=
+          effectDetailVisualPressed
+        ) {
+          drawEffectDetailButton(
+            getCurrentEffectMode(),
+            insideSelectedButton
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_COLOR_OPEN ) {
-        lastTouchInsideColor = insideColor;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_COLOR_OPEN
+      ) {
+        lastTouchInsideColor =
+          insideColor;
 
-        if ( insideColor != colorButtonVisualPressed ) {
-          drawColorButton( getPrimaryColor(), insideColor );
+        if (
+          insideColor !=
+          colorButtonVisualPressed
+        ) {
+          drawColorButton(
+            getPrimaryColor(),
+            insideColor
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_OPEN ) {
-        lastTouchInsidePresetOpen = insidePresetOpen;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_OPEN
+      ) {
+        lastTouchInsidePresetOpen =
+          insidePresetOpen;
 
-        if ( insidePresetOpen != presetOpenButtonVisualPressed ) {
-          drawPresetOpenButton( insidePresetOpen );
+        if (
+          insidePresetOpen !=
+          presetOpenButtonVisualPressed
+        ) {
+          drawPresetOpenButton(
+            insidePresetOpen
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_BACK ) {
-        lastTouchInsideBack = insideBack;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_BACK
+      ) {
+        lastTouchInsideBack =
+          insideBack;
 
-        if ( insideBack != backButtonVisualPressed ) {
-          drawBackButton( insideBack );
+        if (
+          insideBack !=
+          backButtonVisualPressed
+        ) {
+          drawBackButton(
+            insideBack
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_HUE_DOWN || touchTarget == TOUCH_TARGET_HUE_UP ) {
-        bool insideSelectedButton = isInsideSelectedHueButton( touchX, touchY );
+      if (
+        touchTarget ==
+          TOUCH_TARGET_HUE_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_HUE_UP
+      ) {
+        bool insideSelectedButton =
+          isInsideSelectedHueButton(
+            touchX,
+            touchY
+          );
 
-        lastTouchInsideHue = insideSelectedButton;
+        lastTouchInsideHue =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != hueButtonVisualPressed ) {
-          drawHue( logicalHueValue, insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          hueButtonVisualPressed
+        ) {
+          drawHue(
+            logicalHueValue,
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          hueButtonVisualPressed = insideSelectedButton;
+          hueButtonVisualPressed =
+            insideSelectedButton;
         }
 
         if (!insideSelectedButton) {
           return;
         }
 
-        if ( !hueLongPressActive && now - huePressStartTime >= HUE_LONG_PRESS_MS ) {
+        if (
+          !hueLongPressActive &&
+          now - huePressStartTime >=
+          HUE_LONG_PRESS_MS
+        ) {
           hueLongPressActive = true;
-
           lastHueRepeat = now;
 
-          hueLongPressStep( touchTarget );
+          hueLongPressStep(
+            touchTarget
+          );
 
           return;
         }
 
-        if ( hueLongPressActive && now - lastHueRepeat >= HUE_REPEAT_MS ) {
+        if (
+          hueLongPressActive &&
+          now - lastHueRepeat >=
+          HUE_REPEAT_MS
+        ) {
           lastHueRepeat = now;
 
-          hueLongPressStep( touchTarget );
+          hueLongPressStep(
+            touchTarget
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_SATURATION_DOWN || touchTarget == TOUCH_TARGET_SATURATION_UP ) {
-        bool insideSelectedButton = isInsideSelectedSaturationButton( touchX, touchY );
+      if (
+        touchTarget ==
+          TOUCH_TARGET_SATURATION_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_SATURATION_UP
+      ) {
+        bool insideSelectedButton =
+          isInsideSelectedSaturationButton(
+            touchX,
+            touchY
+          );
 
-        lastTouchInsideSaturation = insideSelectedButton;
+        lastTouchInsideSaturation =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != saturationButtonVisualPressed ) {
-          drawSaturation( logicalSaturationValue, insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          saturationButtonVisualPressed
+        ) {
+          drawSaturation(
+            logicalSaturationValue,
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          saturationButtonVisualPressed = insideSelectedButton;
+          saturationButtonVisualPressed =
+            insideSelectedButton;
         }
 
         if (!insideSelectedButton) {
           return;
         }
 
-        if ( !saturationLongPressActive && now - saturationPressStartTime >= SATURATION_LONG_PRESS_MS ) {
+        if (
+          !saturationLongPressActive &&
+          now - saturationPressStartTime >=
+          SATURATION_LONG_PRESS_MS
+        ) {
           saturationLongPressActive = true;
-
           lastSaturationRepeat = now;
 
-          saturationLongPressStep( touchTarget );
+          saturationLongPressStep(
+            touchTarget
+          );
 
           return;
         }
 
-        if ( saturationLongPressActive && now - lastSaturationRepeat >= SATURATION_REPEAT_MS ) {
+        if (
+          saturationLongPressActive &&
+          now - lastSaturationRepeat >=
+          SATURATION_REPEAT_MS
+        ) {
           lastSaturationRepeat = now;
 
-          saturationLongPressStep( touchTarget );
+          saturationLongPressStep(
+            touchTarget
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_SPEED_DOWN || touchTarget == TOUCH_TARGET_SPEED_UP ) {
-        bool insideSelectedButton = isInsideSelectedSpeedButton( touchX, touchY );
+      if (
+        touchTarget ==
+          TOUCH_TARGET_SPEED_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_SPEED_UP
+      ) {
+        bool insideSelectedButton =
+          isInsideSelectedSpeedButton(
+            touchX,
+            touchY
+          );
 
-        lastTouchInsideSpeed = insideSelectedButton;
+        lastTouchInsideSpeed =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != speedButtonVisualPressed ) {
-          drawSpeed( getCurrentSpeed(), insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          speedButtonVisualPressed
+        ) {
+          drawSpeed(
+            getCurrentSpeed(),
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          speedButtonVisualPressed = insideSelectedButton;
+          speedButtonVisualPressed =
+            insideSelectedButton;
         }
 
         if (!insideSelectedButton) {
           return;
         }
 
-        if ( !speedLongPressActive && now - speedPressStartTime >= SPEED_LONG_PRESS_MS ) {
+        if (
+          !speedLongPressActive &&
+          now - speedPressStartTime >=
+          SPEED_LONG_PRESS_MS
+        ) {
           speedLongPressActive = true;
-
           lastSpeedRepeat = now;
 
-          speedLongPressStep( touchTarget );
+          speedLongPressStep(
+            touchTarget
+          );
 
           return;
         }
 
-        if ( speedLongPressActive && now - lastSpeedRepeat >= SPEED_REPEAT_MS ) {
+        if (
+          speedLongPressActive &&
+          now - lastSpeedRepeat >=
+          SPEED_REPEAT_MS
+        ) {
           lastSpeedRepeat = now;
 
-          speedLongPressStep( touchTarget );
+          speedLongPressStep(
+            touchTarget
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_INTENSITY_DOWN || touchTarget == TOUCH_TARGET_INTENSITY_UP ) {
-        bool insideSelectedButton = isInsideSelectedIntensityButton( touchX, touchY );
+      if (
+        touchTarget ==
+          TOUCH_TARGET_INTENSITY_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_INTENSITY_UP
+      ) {
+        bool insideSelectedButton =
+          isInsideSelectedIntensityButton(
+            touchX,
+            touchY
+          );
 
-        lastTouchInsideIntensity = insideSelectedButton;
+        lastTouchInsideIntensity =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != intensityButtonVisualPressed ) {
-          drawIntensity( getCurrentIntensity(), insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          intensityButtonVisualPressed
+        ) {
+          drawIntensity(
+            getCurrentIntensity(),
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          intensityButtonVisualPressed = insideSelectedButton;
+          intensityButtonVisualPressed =
+            insideSelectedButton;
         }
 
         if (!insideSelectedButton) {
           return;
         }
 
-        if ( !intensityLongPressActive && now - intensityPressStartTime >= INTENSITY_LONG_PRESS_MS ) {
+        if (
+          !intensityLongPressActive &&
+          now - intensityPressStartTime >=
+          INTENSITY_LONG_PRESS_MS
+        ) {
           intensityLongPressActive = true;
-
           lastIntensityRepeat = now;
 
-          intensityLongPressStep( touchTarget );
+          intensityLongPressStep(
+            touchTarget
+          );
 
           return;
         }
 
-        if ( intensityLongPressActive && now - lastIntensityRepeat >= INTENSITY_REPEAT_MS ) {
+        if (
+          intensityLongPressActive &&
+          now - lastIntensityRepeat >=
+          INTENSITY_REPEAT_MS
+        ) {
           lastIntensityRepeat = now;
 
-          intensityLongPressStep( touchTarget );
+          intensityLongPressStep(
+            touchTarget
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PALETTE_PREV || touchTarget == TOUCH_TARGET_PALETTE_NEXT ) {
-        bool insideSelectedButton = isInsideSelectedPaletteButton( touchX, touchY );
+      if (
+        touchTarget ==
+          TOUCH_TARGET_PALETTE_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_PALETTE_NEXT
+      ) {
+        bool insideSelectedButton =
+          isInsideSelectedPaletteButton(
+            touchX,
+            touchY
+          );
 
-        lastTouchInsidePalette = insideSelectedButton;
+        lastTouchInsidePalette =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != paletteButtonVisualPressed ) {
-          drawPalette( getCurrentPalette(), insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          paletteButtonVisualPressed
+        ) {
+          drawPalette(
+            getCurrentPalette(),
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          paletteButtonVisualPressed = insideSelectedButton;
+          paletteButtonVisualPressed =
+            insideSelectedButton;
         }
 
         if (!insideSelectedButton) {
           return;
         }
 
-        if ( !paletteLongPressActive && now - palettePressStartTime >= PALETTE_LONG_PRESS_MS ) {
+        if (
+          !paletteLongPressActive &&
+          now - palettePressStartTime >=
+          PALETTE_LONG_PRESS_MS
+        ) {
           paletteLongPressActive = true;
-
           lastPaletteRepeat = now;
 
-          paletteLongPressStep( touchTarget );
+          paletteLongPressStep(
+            touchTarget
+          );
 
           return;
         }
 
-        if ( paletteLongPressActive && now - lastPaletteRepeat >= PALETTE_REPEAT_MS ) {
+        if (
+          paletteLongPressActive &&
+          now - lastPaletteRepeat >=
+          PALETTE_REPEAT_MS
+        ) {
           lastPaletteRepeat = now;
 
-          paletteLongPressStep( touchTarget );
+          paletteLongPressStep(
+            touchTarget
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_PREV || touchTarget == TOUCH_TARGET_PRESET_NEXT ) {
-        bool insideSelectedButton = isInsideSelectedPresetButton( touchX, touchY );
+      if (
+        touchTarget ==
+          TOUCH_TARGET_PRESET_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_PRESET_NEXT
+      ) {
+        bool insideSelectedButton =
+          isInsideSelectedPresetButton(
+            touchX,
+            touchY
+          );
 
-        lastTouchInsidePresetNav = insideSelectedButton;
+        lastTouchInsidePresetNav =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != presetNavButtonVisualPressed ) {
-          drawPresetNavigation( insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          presetNavButtonVisualPressed
+        ) {
+          drawPresetNavigation(
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          presetNavButtonVisualPressed = insideSelectedButton;
+          presetNavButtonVisualPressed =
+            insideSelectedButton;
         }
 
         if (!insideSelectedButton) {
           return;
         }
 
-        if ( !presetLongPressActive && now - presetPressStartTime >= PRESET_LONG_PRESS_MS ) {
+        if (
+          !presetLongPressActive &&
+          now - presetPressStartTime >=
+          PRESET_LONG_PRESS_MS
+        ) {
           presetLongPressActive = true;
-
           lastPresetRepeat = now;
 
-          presetLongPressStep( touchTarget );
+          presetLongPressStep(
+            touchTarget
+          );
 
           return;
         }
 
-        if ( presetLongPressActive && now - lastPresetRepeat >= PRESET_REPEAT_MS ) {
+        if (
+          presetLongPressActive &&
+          now - lastPresetRepeat >=
+          PRESET_REPEAT_MS
+        ) {
           lastPresetRepeat = now;
 
-          presetLongPressStep( touchTarget );
+          presetLongPressStep(
+            touchTarget
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_MANAGE ) {
-        lastTouchInsidePresetManage = insidePresetManage;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_MANAGE
+      ) {
+        lastTouchInsidePresetManage =
+          insidePresetManage;
 
-        if ( insidePresetManage != presetManageButtonVisualPressed ) {
-          drawPresetManageButton( insidePresetManage );
+        if (
+          insidePresetManage !=
+          presetManageButtonVisualPressed
+        ) {
+          drawPresetManageButton(
+            insidePresetManage
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_SAVE_NEW ) {
-        lastTouchInsidePresetSaveNew = insidePresetSaveNew;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_SAVE_NEW
+      ) {
+        lastTouchInsidePresetSaveNew =
+          insidePresetSaveNew;
 
-        if ( insidePresetSaveNew != presetSaveNewButtonVisualPressed ) {
-          drawPresetSaveNewButton( insidePresetSaveNew );
+        if (
+          insidePresetSaveNew !=
+          presetSaveNewButtonVisualPressed
+        ) {
+          drawPresetSaveNewButton(
+            insidePresetSaveNew
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_SAVE_HOLD ) {
-        lastTouchInsidePresetSaveHold = insidePresetSaveHold;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_SAVE_HOLD
+      ) {
+        lastTouchInsidePresetSaveHold =
+          insidePresetSaveHold;
 
-        if ( insidePresetSaveHold != presetSaveHoldButtonVisualPressed ) {
-          drawPresetSaveHoldButton( insidePresetSaveHold );
+        if (
+          insidePresetSaveHold !=
+          presetSaveHoldButtonVisualPressed
+        ) {
+          drawPresetSaveHoldButton(
+            insidePresetSaveHold
+          );
         }
 
         if (!insidePresetSaveHold) {
           presetSaveHoldStartTime = 0;
-
           return;
         }
 
-        if ( presetSaveHoldStartTime == 0 ) {
+        if (
+          presetSaveHoldStartTime == 0
+        ) {
           presetSaveHoldStartTime = now;
         }
 
-        if ( !presetSaveHoldTriggered && now - presetSaveHoldStartTime >= PRESET_SAVE_HOLD_MS ) {
+        if (
+          !presetSaveHoldTriggered &&
+          now - presetSaveHoldStartTime >=
+          PRESET_SAVE_HOLD_MS
+        ) {
           presetSaveHoldTriggered = true;
 
           requestNewPresetSave();
@@ -5583,48 +8346,91 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_OVERWRITE_OPEN ) {
-        lastTouchInsidePresetOverwriteOpen = insidePresetOverwriteOpen;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_OPEN
+      ) {
+        lastTouchInsidePresetOverwriteOpen =
+          insidePresetOverwriteOpen;
 
-        if ( insidePresetOverwriteOpen != presetOverwriteOpenButtonVisualPressed ) {
-          drawPresetOverwriteOpenButton( insidePresetOverwriteOpen );
+        if (
+          insidePresetOverwriteOpen !=
+          presetOverwriteOpenButtonVisualPressed
+        ) {
+          drawPresetOverwriteOpenButton(
+            insidePresetOverwriteOpen
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV || touchTarget == TOUCH_TARGET_PRESET_OVERWRITE_NEXT ) {
-        bool insideSelectedButton = ( touchTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV ) ? insidePresetOverwritePrev : insidePresetOverwriteNext;
+      if (
+        touchTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_NEXT
+      ) {
+        bool insideSelectedButton =
+          (
+            touchTarget ==
+            TOUCH_TARGET_PRESET_OVERWRITE_PREV
+          )
+            ? insidePresetOverwritePrev
+            : insidePresetOverwriteNext;
 
-        lastTouchInsidePresetOverwriteNav = insideSelectedButton;
+        lastTouchInsidePresetOverwriteNav =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != presetOverwriteNavButtonVisualPressed ) {
-          drawPresetOverwriteNavigation( insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          presetOverwriteNavButtonVisualPressed
+        ) {
+          drawPresetOverwriteNavigation(
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          presetOverwriteNavButtonVisualPressed = insideSelectedButton;
+          presetOverwriteNavButtonVisualPressed =
+            insideSelectedButton;
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_OVERWRITE_HOLD ) {
-        lastTouchInsidePresetOverwriteHold = insidePresetOverwriteHold;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_HOLD
+      ) {
+        lastTouchInsidePresetOverwriteHold =
+          insidePresetOverwriteHold;
 
-        if ( insidePresetOverwriteHold != presetOverwriteHoldButtonVisualPressed ) {
-          drawPresetOverwriteHoldButton( insidePresetOverwriteHold );
+        if (
+          insidePresetOverwriteHold !=
+          presetOverwriteHoldButtonVisualPressed
+        ) {
+          drawPresetOverwriteHoldButton(
+            insidePresetOverwriteHold
+          );
         }
 
         if (!insidePresetOverwriteHold) {
           presetSaveHoldStartTime = 0;
-
           return;
         }
 
-        if ( presetSaveHoldStartTime == 0 ) {
+        if (
+          presetSaveHoldStartTime == 0
+        ) {
           presetSaveHoldStartTime = now;
         }
 
-        if ( !presetSaveHoldTriggered && now - presetSaveHoldStartTime >= PRESET_SAVE_HOLD_MS ) {
+        if (
+          !presetSaveHoldTriggered &&
+          now - presetSaveHoldStartTime >=
+          PRESET_SAVE_HOLD_MS
+        ) {
           presetSaveHoldTriggered = true;
 
           requestPresetOverwrite();
@@ -5635,48 +8441,91 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_DELETE_OPEN ) {
-        lastTouchInsidePresetDeleteOpen = insidePresetDeleteOpen;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_DELETE_OPEN
+      ) {
+        lastTouchInsidePresetDeleteOpen =
+          insidePresetDeleteOpen;
 
-        if ( insidePresetDeleteOpen != presetDeleteOpenButtonVisualPressed ) {
-          drawPresetDeleteOpenButton( insidePresetDeleteOpen );
+        if (
+          insidePresetDeleteOpen !=
+          presetDeleteOpenButtonVisualPressed
+        ) {
+          drawPresetDeleteOpenButton(
+            insidePresetDeleteOpen
+          );
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_DELETE_PREV || touchTarget == TOUCH_TARGET_PRESET_DELETE_NEXT ) {
-        bool insideSelectedButton = ( touchTarget == TOUCH_TARGET_PRESET_DELETE_PREV ) ? insidePresetDeletePrev : insidePresetDeleteNext;
+      if (
+        touchTarget ==
+          TOUCH_TARGET_PRESET_DELETE_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_PRESET_DELETE_NEXT
+      ) {
+        bool insideSelectedButton =
+          (
+            touchTarget ==
+            TOUCH_TARGET_PRESET_DELETE_PREV
+          )
+            ? insidePresetDeletePrev
+            : insidePresetDeleteNext;
 
-        lastTouchInsidePresetDeleteNav = insideSelectedButton;
+        lastTouchInsidePresetDeleteNav =
+          insideSelectedButton;
 
-        if ( insideSelectedButton != presetDeleteNavButtonVisualPressed ) {
-          drawPresetDeleteNavigation( insideSelectedButton ? touchTarget : TOUCH_TARGET_NONE );
+        if (
+          insideSelectedButton !=
+          presetDeleteNavButtonVisualPressed
+        ) {
+          drawPresetDeleteNavigation(
+            insideSelectedButton
+              ? touchTarget
+              : TOUCH_TARGET_NONE
+          );
 
-          presetDeleteNavButtonVisualPressed = insideSelectedButton;
+          presetDeleteNavButtonVisualPressed =
+            insideSelectedButton;
         }
 
         return;
       }
 
-      if ( touchTarget == TOUCH_TARGET_PRESET_DELETE_HOLD ) {
-        lastTouchInsidePresetDeleteHold = insidePresetDeleteHold;
+      if (
+        touchTarget ==
+        TOUCH_TARGET_PRESET_DELETE_HOLD
+      ) {
+        lastTouchInsidePresetDeleteHold =
+          insidePresetDeleteHold;
 
-        if ( insidePresetDeleteHold != presetDeleteHoldButtonVisualPressed ) {
-          drawPresetDeleteHoldButton( insidePresetDeleteHold );
+        if (
+          insidePresetDeleteHold !=
+          presetDeleteHoldButtonVisualPressed
+        ) {
+          drawPresetDeleteHoldButton(
+            insidePresetDeleteHold
+          );
         }
 
         if (!insidePresetDeleteHold) {
           presetSaveHoldStartTime = 0;
-
           return;
         }
 
-        if ( presetSaveHoldStartTime == 0 ) {
+        if (
+          presetSaveHoldStartTime == 0
+        ) {
           presetSaveHoldStartTime = now;
         }
 
-        if ( !presetSaveHoldTriggered && now - presetSaveHoldStartTime >= PRESET_SAVE_HOLD_MS ) {
+        if (
+          !presetSaveHoldTriggered &&
+          now - presetSaveHoldStartTime >=
+          PRESET_SAVE_HOLD_MS
+        ) {
           presetSaveHoldTriggered = true;
 
           requestPresetDelete();
@@ -5694,193 +8543,497 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchReleaseCandidate == 0 ) {
+    if (
+      touchReleaseCandidate == 0
+    ) {
       touchReleaseCandidate = now;
-
       return;
     }
 
-    if ( now - touchReleaseCandidate < TOUCH_RELEASE_CONFIRM_MS ) {
+    if (
+      now - touchReleaseCandidate <
+      TOUCH_RELEASE_CONFIRM_MS
+    ) {
       return;
     }
 
-    TouchTarget releasedTarget = touchTarget;
+    TouchTarget releasedTarget =
+      touchTarget;
 
-    bool wasBrightnessLongPress = brightnessLongPressActive;
+    bool wasBrightnessLongPress =
+      brightnessLongPressActive;
 
-    bool wasEffectLongPress = effectLongPressActive;
+    bool wasEffectLongPress =
+      effectLongPressActive;
 
-    bool wasHueLongPress = hueLongPressActive;
+    bool wasHueLongPress =
+      hueLongPressActive;
 
-    bool wasSaturationLongPress = saturationLongPressActive;
+    bool wasSaturationLongPress =
+      saturationLongPressActive;
 
-    bool wasSpeedLongPress = speedLongPressActive;
+    bool wasSpeedLongPress =
+      speedLongPressActive;
 
-    bool wasIntensityLongPress = intensityLongPressActive;
+    bool wasIntensityLongPress =
+      intensityLongPressActive;
 
-    bool wasPaletteLongPress = paletteLongPressActive;
+    bool wasPaletteLongPress =
+      paletteLongPressActive;
 
-    bool wasPresetLongPress = presetLongPressActive;
+    bool wasPresetLongPress =
+      presetLongPressActive;
 
-    bool executePowerAction = ( releasedTarget == TOUCH_TARGET_POWER ) && lastTouchInsidePower && ( now - lastTouchAction >= TOUCH_ACTION_COOLDOWN_MS );
+    bool executePowerAction =
+      releasedTarget ==
+        TOUCH_TARGET_POWER &&
+      lastTouchInsidePower &&
+      now - lastTouchAction >=
+        TOUCH_ACTION_COOLDOWN_MS;
 
-    bool executeBrightnessShortPress = ( releasedTarget == TOUCH_TARGET_BRIGHTNESS_DOWN || releasedTarget == TOUCH_TARGET_BRIGHTNESS_UP ) && lastTouchInsideBrightness && !wasBrightnessLongPress;
+    bool executeBrightnessShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_BRIGHTNESS_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_BRIGHTNESS_UP
+      ) &&
+      lastTouchInsideBrightness &&
+      !wasBrightnessLongPress;
 
-    bool executeEffectAction = ( releasedTarget == TOUCH_TARGET_EFFECT_PREV || releasedTarget == TOUCH_TARGET_EFFECT_NEXT ) && lastTouchInsideEffect && !wasEffectLongPress;
+    bool executeEffectAction =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_EFFECT_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_EFFECT_NEXT
+      ) &&
+      lastTouchInsideEffect &&
+      !wasEffectLongPress;
 
-    bool executeEffectDetail = ( releasedTarget == TOUCH_TARGET_EFFECT_DETAIL ) && lastTouchInsideEffectDetail;
+    bool executeEffectDetail =
+      releasedTarget ==
+        TOUCH_TARGET_EFFECT_DETAIL &&
+      lastTouchInsideEffectDetail;
 
-    bool executeColorOpen = ( releasedTarget == TOUCH_TARGET_COLOR_OPEN ) && lastTouchInsideColor;
+    bool executeColorOpen =
+      releasedTarget ==
+        TOUCH_TARGET_COLOR_OPEN &&
+      lastTouchInsideColor;
 
-    bool executePresetOpen = ( releasedTarget == TOUCH_TARGET_PRESET_OPEN ) && lastTouchInsidePresetOpen;
+    bool executePresetOpen =
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_OPEN &&
+      lastTouchInsidePresetOpen;
 
-    bool executeBack = ( releasedTarget == TOUCH_TARGET_BACK ) && lastTouchInsideBack;
+    bool executeBack =
+      releasedTarget ==
+        TOUCH_TARGET_BACK &&
+      lastTouchInsideBack;
 
-    bool executeHueShortPress = ( releasedTarget == TOUCH_TARGET_HUE_DOWN || releasedTarget == TOUCH_TARGET_HUE_UP ) && lastTouchInsideHue && !wasHueLongPress;
+    bool executeHueShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_HUE_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_HUE_UP
+      ) &&
+      lastTouchInsideHue &&
+      !wasHueLongPress;
 
-    bool executeSaturationShortPress = ( releasedTarget == TOUCH_TARGET_SATURATION_DOWN || releasedTarget == TOUCH_TARGET_SATURATION_UP ) && lastTouchInsideSaturation && !wasSaturationLongPress;
+    bool executeSaturationShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_SATURATION_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_SATURATION_UP
+      ) &&
+      lastTouchInsideSaturation &&
+      !wasSaturationLongPress;
 
-    bool executeSpeedShortPress = ( releasedTarget == TOUCH_TARGET_SPEED_DOWN || releasedTarget == TOUCH_TARGET_SPEED_UP ) && lastTouchInsideSpeed && !wasSpeedLongPress;
+    bool executeSpeedShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_SPEED_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_SPEED_UP
+      ) &&
+      lastTouchInsideSpeed &&
+      !wasSpeedLongPress;
 
-    bool executeIntensityShortPress = ( releasedTarget == TOUCH_TARGET_INTENSITY_DOWN || releasedTarget == TOUCH_TARGET_INTENSITY_UP ) && lastTouchInsideIntensity && !wasIntensityLongPress;
+    bool executeIntensityShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_INTENSITY_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_INTENSITY_UP
+      ) &&
+      lastTouchInsideIntensity &&
+      !wasIntensityLongPress;
 
-    bool executePaletteShortPress = ( releasedTarget == TOUCH_TARGET_PALETTE_PREV || releasedTarget == TOUCH_TARGET_PALETTE_NEXT ) && lastTouchInsidePalette && !wasPaletteLongPress;
+    bool executePaletteShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PALETTE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PALETTE_NEXT
+      ) &&
+      lastTouchInsidePalette &&
+      !wasPaletteLongPress;
 
-    bool executePresetShortPress = ( releasedTarget == TOUCH_TARGET_PRESET_PREV || releasedTarget == TOUCH_TARGET_PRESET_NEXT ) && lastTouchInsidePresetNav && !wasPresetLongPress;
+    bool executePresetShortPress =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_NEXT
+      ) &&
+      lastTouchInsidePresetNav &&
+      !wasPresetLongPress;
 
-    bool executePresetManageOpen = ( releasedTarget == TOUCH_TARGET_PRESET_MANAGE ) && lastTouchInsidePresetManage;
+    bool executePresetManageOpen =
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_MANAGE &&
+      lastTouchInsidePresetManage;
 
-    bool executePresetSaveNew = ( releasedTarget == TOUCH_TARGET_PRESET_SAVE_NEW ) && lastTouchInsidePresetSaveNew;
+    bool executePresetSaveNew =
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_SAVE_NEW &&
+      lastTouchInsidePresetSaveNew;
 
-    bool executePresetOverwriteOpen = ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_OPEN ) && lastTouchInsidePresetOverwriteOpen;
+    bool executePresetOverwriteOpen =
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_OPEN &&
+      lastTouchInsidePresetOverwriteOpen;
 
-    bool executePresetOverwriteStep = ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV || releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_NEXT ) && lastTouchInsidePresetOverwriteNav;
+    bool executePresetOverwriteStep =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_NEXT
+      ) &&
+      lastTouchInsidePresetOverwriteNav;
 
-    bool executePresetDeleteOpen = ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_OPEN ) && lastTouchInsidePresetDeleteOpen;
+    bool executePresetDeleteOpen =
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_OPEN &&
+      lastTouchInsidePresetDeleteOpen;
 
-    bool executePresetDeleteStep = ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_PREV || releasedTarget == TOUCH_TARGET_PRESET_DELETE_NEXT ) && lastTouchInsidePresetDeleteNav;
+    bool executePresetDeleteStep =
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_NEXT
+      ) &&
+      lastTouchInsidePresetDeleteNav;
 
-    if ( releasedTarget == TOUCH_TARGET_POWER && powerButtonVisualPressed ) {
-      drawPowerButton( bri > 0, false );
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_POWER &&
+      powerButtonVisualPressed
+    ) {
+      drawPowerButton(
+        bri > 0,
+        false
+      );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_BRIGHTNESS_DOWN || releasedTarget == TOUCH_TARGET_BRIGHTNESS_UP ) && brightnessButtonVisualPressed ) {
-      drawBrightness( bri, TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_BRIGHTNESS_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_BRIGHTNESS_UP
+      ) &&
+      brightnessButtonVisualPressed
+    ) {
+      drawBrightness(
+        bri,
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_EFFECT_PREV || releasedTarget == TOUCH_TARGET_EFFECT_NEXT ) && effectButtonVisualPressed ) {
-      drawEffect( getCurrentEffectMode(), TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_EFFECT_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_EFFECT_NEXT
+      ) &&
+      effectButtonVisualPressed
+    ) {
+      drawEffect(
+        getCurrentEffectMode(),
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_EFFECT_DETAIL && effectDetailVisualPressed ) {
-      drawEffectDetailButton( getCurrentEffectMode(), false );
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_EFFECT_DETAIL &&
+      effectDetailVisualPressed
+    ) {
+      drawEffectDetailButton(
+        getCurrentEffectMode(),
+        false
+      );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_COLOR_OPEN && colorButtonVisualPressed ) {
-      drawColorButton( getPrimaryColor(), false );
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_COLOR_OPEN &&
+      colorButtonVisualPressed
+    ) {
+      drawColorButton(
+        getPrimaryColor(),
+        false
+      );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_PRESET_OPEN && presetOpenButtonVisualPressed ) {
-      drawPresetOpenButton( false );
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_OPEN &&
+      presetOpenButtonVisualPressed
+    ) {
+      drawPresetOpenButton(
+        false
+      );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_BACK && backButtonVisualPressed ) {
-      drawBackButton( false );
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_BACK &&
+      backButtonVisualPressed
+    ) {
+      drawBackButton(
+        false
+      );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_HUE_DOWN || releasedTarget == TOUCH_TARGET_HUE_UP ) && hueButtonVisualPressed ) {
-      drawHue( logicalHueValue, TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_HUE_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_HUE_UP
+      ) &&
+      hueButtonVisualPressed
+    ) {
+      drawHue(
+        logicalHueValue,
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_SATURATION_DOWN || releasedTarget == TOUCH_TARGET_SATURATION_UP ) && saturationButtonVisualPressed ) {
-      drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_SATURATION_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_SATURATION_UP
+      ) &&
+      saturationButtonVisualPressed
+    ) {
+      drawSaturation(
+        logicalSaturationValue,
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_SPEED_DOWN || releasedTarget == TOUCH_TARGET_SPEED_UP ) && speedButtonVisualPressed ) {
-      drawSpeed( getCurrentSpeed(), TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_SPEED_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_SPEED_UP
+      ) &&
+      speedButtonVisualPressed
+    ) {
+      drawSpeed(
+        getCurrentSpeed(),
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_INTENSITY_DOWN || releasedTarget == TOUCH_TARGET_INTENSITY_UP ) && intensityButtonVisualPressed ) {
-      drawIntensity( getCurrentIntensity(), TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_INTENSITY_DOWN ||
+        releasedTarget ==
+          TOUCH_TARGET_INTENSITY_UP
+      ) &&
+      intensityButtonVisualPressed
+    ) {
+      drawIntensity(
+        getCurrentIntensity(),
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_PALETTE_PREV || releasedTarget == TOUCH_TARGET_PALETTE_NEXT ) && paletteButtonVisualPressed ) {
-      drawPalette( getCurrentPalette(), TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PALETTE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PALETTE_NEXT
+      ) &&
+      paletteButtonVisualPressed
+    ) {
+      drawPalette(
+        getCurrentPalette(),
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_PRESET_PREV || releasedTarget == TOUCH_TARGET_PRESET_NEXT ) && presetNavButtonVisualPressed ) {
-      drawPresetNavigation( TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_NEXT
+      ) &&
+      presetNavButtonVisualPressed
+    ) {
+      drawPresetNavigation(
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_PRESET_MANAGE && presetManageButtonVisualPressed ) {
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_MANAGE &&
+      presetManageButtonVisualPressed
+    ) {
       drawPresetManageButton( false );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_PRESET_SAVE_NEW && presetSaveNewButtonVisualPressed ) {
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_SAVE_NEW &&
+      presetSaveNewButtonVisualPressed
+    ) {
       drawPresetSaveNewButton( false );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_PRESET_SAVE_HOLD && presetSaveHoldButtonVisualPressed ) {
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_SAVE_HOLD &&
+      presetSaveHoldButtonVisualPressed
+    ) {
       drawPresetSaveHoldButton( false );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_OPEN && presetOverwriteOpenButtonVisualPressed ) {
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_OPEN &&
+      presetOverwriteOpenButtonVisualPressed
+    ) {
       drawPresetOverwriteOpenButton( false );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV || releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_NEXT ) && presetOverwriteNavButtonVisualPressed ) {
-      drawPresetOverwriteNavigation( TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_NEXT
+      ) &&
+      presetOverwriteNavButtonVisualPressed
+    ) {
+      drawPresetOverwriteNavigation(
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_HOLD && presetOverwriteHoldButtonVisualPressed ) {
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_OVERWRITE_HOLD &&
+      presetOverwriteHoldButtonVisualPressed
+    ) {
       drawPresetOverwriteHoldButton( false );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_OPEN && presetDeleteOpenButtonVisualPressed ) {
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_OPEN &&
+      presetDeleteOpenButtonVisualPressed
+    ) {
       drawPresetDeleteOpenButton( false );
     }
 
-    if ( ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_PREV || releasedTarget == TOUCH_TARGET_PRESET_DELETE_NEXT ) && presetDeleteNavButtonVisualPressed ) {
-      drawPresetDeleteNavigation( TOUCH_TARGET_NONE );
+    if (
+      (
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_PREV ||
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_NEXT
+      ) &&
+      presetDeleteNavButtonVisualPressed
+    ) {
+      drawPresetDeleteNavigation(
+        TOUCH_TARGET_NONE
+      );
     }
 
-    if ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_HOLD && presetDeleteHoldButtonVisualPressed ) {
+    if (
+      releasedTarget ==
+        TOUCH_TARGET_PRESET_DELETE_HOLD &&
+      presetDeleteHoldButtonVisualPressed
+    ) {
       drawPresetDeleteHoldButton( false );
     }
 
-    bool savedHueEditValid = hueEditValid;
+    bool savedHueEditValid =
+      hueEditValid;
 
-    CHSV32 savedHueEditHsv = hueEditHsv;
+    CHSV32 savedHueEditHsv =
+      hueEditHsv;
 
-    uint8_t savedHueEditValue = hueEditValue;
+    uint8_t savedHueEditValue =
+      hueEditValue;
 
-    uint8_t savedHueEditWhite = hueEditWhite;
+    uint8_t savedHueEditWhite =
+      hueEditWhite;
 
-    bool savedSaturationEditValid = saturationEditValid;
+    bool savedSaturationEditValid =
+      saturationEditValid;
 
-    CHSV32 savedSaturationEditHsv = saturationEditHsv;
+    CHSV32 savedSaturationEditHsv =
+      saturationEditHsv;
 
-    uint8_t savedSaturationEditValue = saturationEditValue;
+    uint8_t savedSaturationEditValue =
+      saturationEditValue;
 
-    uint8_t savedSaturationEditWhite = saturationEditWhite;
+    uint8_t savedSaturationEditWhite =
+      saturationEditWhite;
 
     resetTouchGesture();
 
-    hueEditValid = savedHueEditValid;
+    hueEditValid =
+      savedHueEditValid;
 
-    hueEditHsv = savedHueEditHsv;
+    hueEditHsv =
+      savedHueEditHsv;
 
-    hueEditValue = savedHueEditValue;
+    hueEditValue =
+      savedHueEditValue;
 
-    hueEditWhite = savedHueEditWhite;
+    hueEditWhite =
+      savedHueEditWhite;
 
-    saturationEditValid = savedSaturationEditValid;
+    saturationEditValid =
+      savedSaturationEditValid;
 
-    saturationEditHsv = savedSaturationEditHsv;
+    saturationEditHsv =
+      savedSaturationEditHsv;
 
-    saturationEditValue = savedSaturationEditValue;
+    saturationEditValue =
+      savedSaturationEditValue;
 
-    saturationEditWhite = savedSaturationEditWhite;
+    saturationEditWhite =
+      savedSaturationEditWhite;
 
     if (executePowerAction) {
       lastTouchAction = now;
@@ -5888,38 +9041,45 @@ class CoreS3DisplayUsermod : public Usermod {
       toggleLedPowerFromTouch();
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
     }
 
     if (executeBrightnessShortPress) {
-      brightnessShortPress( releasedTarget );
+      brightnessShortPress(
+        releasedTarget
+      );
 
-      drawBrightness( bri, TOUCH_TARGET_NONE );
+      drawBrightness(
+        bri,
+        TOUCH_TARGET_NONE
+      );
 
       lastBrightnessValue = bri;
-
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
     }
 
     if (executeEffectAction) {
-      if ( releasedTarget == TOUCH_TARGET_EFFECT_PREV ) {
+      if (
+        releasedTarget ==
+        TOUCH_TARGET_EFFECT_PREV
+      ) {
         applyEffectStep( -1 );
       }
       else {
         applyEffectStep( 1 );
       }
 
-      drawEffect( getCurrentEffectMode(), TOUCH_TARGET_NONE );
+      drawEffect(
+        getCurrentEffectMode(),
+        TOUCH_TARGET_NONE
+      );
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
@@ -5927,7 +9087,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if (executeEffectDetail) {
       hueEditValid = false;
-
       saturationEditValid = false;
 
       drawEffectDetailScreen();
@@ -5937,7 +9096,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if (executeColorOpen) {
       hueEditValid = false;
-
       saturationEditValid = false;
 
       drawColorScreen();
@@ -5947,9 +9105,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if (executePresetOpen) {
       hueEditValid = false;
-
       saturationEditValid = false;
-
       presetNoEntries = false;
 
       drawPresetScreen();
@@ -5959,7 +9115,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if (executePresetManageOpen) {
       hueEditValid = false;
-
       saturationEditValid = false;
 
       drawPresetManageScreen();
@@ -5969,10 +9124,11 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if (executePresetSaveNew) {
       hueEditValid = false;
-
       saturationEditValid = false;
 
-      if ( preparePresetSaveCandidate() ) {
+      if (
+        preparePresetSaveCandidate()
+      ) {
         drawPresetSaveScreen();
       }
       else {
@@ -5984,10 +9140,11 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if (executePresetOverwriteOpen) {
       hueEditValid = false;
-
       saturationEditValid = false;
 
-      if ( preparePresetOverwriteTarget() ) {
+      if (
+        preparePresetOverwriteTarget()
+      ) {
         drawPresetOverwriteScreen();
       }
       else {
@@ -5998,14 +9155,21 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     if (executePresetOverwriteStep) {
-      int direction = ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV ) ? -1 : 1;
+      int direction =
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_OVERWRITE_PREV
+          ? -1
+          : 1;
 
-      if ( stepPresetOverwriteTarget( direction ) ) {
+      if (
+        stepPresetOverwriteTarget(
+          direction
+        )
+      ) {
         drawPresetOverwriteScreen();
       }
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
@@ -6013,10 +9177,11 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if (executePresetDeleteOpen) {
       hueEditValid = false;
-
       saturationEditValid = false;
 
-      if ( preparePresetDeleteTarget() ) {
+      if (
+        preparePresetDeleteTarget()
+      ) {
         drawPresetDeleteScreen();
       }
       else {
@@ -6027,14 +9192,21 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     if (executePresetDeleteStep) {
-      int direction = ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_PREV ) ? -1 : 1;
+      int direction =
+        releasedTarget ==
+          TOUCH_TARGET_PRESET_DELETE_PREV
+          ? -1
+          : 1;
 
-      if ( stepPresetDeleteTarget( direction ) ) {
+      if (
+        stepPresetDeleteTarget(
+          direction
+        )
+      ) {
         drawPresetDeleteScreen();
       }
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
@@ -6042,18 +9214,18 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if (executeBack) {
       hueEditValid = false;
-
       saturationEditValid = false;
 
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_DELETE ) {
-        presetDeleteOperationState = PRESET_DELETE_OP_IDLE;
+      if (
+        currentPage == SCREEN_PRESET &&
+        presetSubPage == PRESET_SUBPAGE_DELETE
+      ) {
+        presetDeleteOperationState =
+          PRESET_DELETE_OP_IDLE;
 
         presetDeleteTargetId = 0;
-
         presetDeleteTargetName = "";
-
         presetDeleteWasCurrentPreset = false;
-
         presetDeleteResultStartMs = 0;
 
         drawPresetManageScreen();
@@ -6061,17 +9233,17 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_OVERWRITE ) {
-        presetSaveOperationState = PRESET_SAVE_OP_IDLE;
+      if (
+        currentPage == SCREEN_PRESET &&
+        presetSubPage == PRESET_SUBPAGE_OVERWRITE
+      ) {
+        presetSaveOperationState =
+          PRESET_SAVE_OP_IDLE;
 
         presetSaveOperationIsOverwrite = false;
-
         presetSaveCandidateId = 0;
-
         presetSaveCandidateName = "";
-
         presetOverwriteTargetId = 0;
-
         presetOverwriteTargetName = "";
 
         drawPresetManageScreen();
@@ -6079,11 +9251,14 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_SAVE ) {
-        presetSaveOperationState = PRESET_SAVE_OP_IDLE;
+      if (
+        currentPage == SCREEN_PRESET &&
+        presetSubPage == PRESET_SUBPAGE_SAVE
+      ) {
+        presetSaveOperationState =
+          PRESET_SAVE_OP_IDLE;
 
         presetSaveCandidateId = 0;
-
         presetSaveCandidateName = "";
 
         drawPresetManageScreen();
@@ -6091,220 +9266,477 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_MANAGE ) {
+      if (
+        currentPage == SCREEN_PRESET &&
+        presetSubPage == PRESET_SUBPAGE_MANAGE
+      ) {
         drawPresetScreen();
 
         return;
       }
 
-      drawMainScreen( WiFi.localIP().toString() );
+      drawMainScreen(
+        WiFi.localIP().toString()
+      );
 
       return;
     }
 
     if (executeHueShortPress) {
-      hueShortPress( releasedTarget );
+      hueShortPress(
+        releasedTarget
+      );
 
-      drawHue( logicalHueValue, TOUCH_TARGET_NONE );
+      drawHue(
+        logicalHueValue,
+        TOUCH_TARGET_NONE
+      );
 
-      drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+      drawSaturation(
+        logicalSaturationValue,
+        TOUCH_TARGET_NONE
+      );
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
     }
 
     if (executeSaturationShortPress) {
-      saturationShortPress( releasedTarget );
+      saturationShortPress(
+        releasedTarget
+      );
 
-      drawHue( logicalHueValue, TOUCH_TARGET_NONE );
+      drawHue(
+        logicalHueValue,
+        TOUCH_TARGET_NONE
+      );
 
-      drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+      drawSaturation(
+        logicalSaturationValue,
+        TOUCH_TARGET_NONE
+      );
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
     }
 
     if (executeSpeedShortPress) {
-      speedShortPress( releasedTarget );
+      speedShortPress(
+        releasedTarget
+      );
 
-      drawSpeed( getCurrentSpeed(), TOUCH_TARGET_NONE );
+      drawSpeed(
+        getCurrentSpeed(),
+        TOUCH_TARGET_NONE
+      );
 
-      lastSpeedValue = getCurrentSpeed();
+      lastSpeedValue =
+        getCurrentSpeed();
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
     }
 
     if (executeIntensityShortPress) {
-      intensityShortPress( releasedTarget );
+      intensityShortPress(
+        releasedTarget
+      );
 
-      drawIntensity( getCurrentIntensity(), TOUCH_TARGET_NONE );
+      drawIntensity(
+        getCurrentIntensity(),
+        TOUCH_TARGET_NONE
+      );
 
-      lastIntensityValue = getCurrentIntensity();
+      lastIntensityValue =
+        getCurrentIntensity();
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
     }
 
     if (executePaletteShortPress) {
-      paletteShortPress( releasedTarget );
+      paletteShortPress(
+        releasedTarget
+      );
 
-      drawPalette( getCurrentPalette(), TOUCH_TARGET_NONE );
+      drawPalette(
+        getCurrentPalette(),
+        TOUCH_TARGET_NONE
+      );
 
-      lastPaletteValue = getCurrentPalette();
+      lastPaletteValue =
+        getCurrentPalette();
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
     }
 
     if (executePresetShortPress) {
-      presetShortPress( releasedTarget );
+      presetShortPress(
+        releasedTarget
+      );
 
-      drawPresetNavigation( TOUCH_TARGET_NONE );
+      drawPresetNavigation(
+        TOUCH_TARGET_NONE
+      );
 
       hueEditValid = false;
-
       saturationEditValid = false;
 
       return;
     }
 
     hueEditValid = false;
-
     saturationEditValid = false;
   }
 
-  public:
+public:
 
-  void addToConfig( JsonObject& root ) override {
-    JsonObject top = root.createNestedObject( FPSTR( CORES3_DISPLAY_CONFIG_NAME ) );
+  void addToConfig(
+    JsonObject& root
+  ) override {
+    JsonObject top =
+      root.createNestedObject(
+        FPSTR(
+          CORES3_DISPLAY_CONFIG_NAME
+        )
+      );
 
-    top[ F("sleep-timeout") ] = sleepTimeoutSec;
+    top[F("sleep-timeout")] =
+      sleepTimeoutSec;
 
-    top[ F("lcd-brightness") ] = lcdBrightness;
+    top[F("lcd-brightness")] =
+      lcdBrightness;
 
-    top[ F("fade") ] = fadeEnabled;
+    top[F("fade")] =
+      fadeEnabled;
 
-    top[ F("fade-duration") ] = fadeDurationMs;
+    top[F("fade-duration")] =
+      fadeDurationMs;
   }
 
-  bool readFromConfig( JsonObject& root ) override {
-    JsonObject top = root[ FPSTR( CORES3_DISPLAY_CONFIG_NAME ) ];
+  bool readFromConfig(
+    JsonObject& root
+  ) override {
+    JsonObject top =
+      root[
+        FPSTR(
+          CORES3_DISPLAY_CONFIG_NAME
+        )
+      ];
 
     if ( top.isNull() ) {
-      Serial.println( F( "[CoreS3_Display] " "No display config found. Using defaults." ) );
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "No display config found. Using defaults."
+        )
+      );
 
       return false;
     }
 
     bool configComplete = true;
 
-    int newSleepTimeout = sleepTimeoutSec;
+    int newSleepTimeout =
+      sleepTimeoutSec;
 
-    int newLcdBrightness = lcdBrightness;
+    int newLcdBrightness =
+      lcdBrightness;
 
-    bool newFadeEnabled = fadeEnabled;
+    bool newFadeEnabled =
+      fadeEnabled;
 
-    int newFadeDuration = fadeDurationMs;
+    int newFadeDuration =
+      fadeDurationMs;
 
-    configComplete &= getJsonValue( top[ F("sleep-timeout") ], newSleepTimeout, 30 );
+    configComplete &=
+      getJsonValue(
+        top[F("sleep-timeout")],
+        newSleepTimeout,
+        30
+      );
 
-    configComplete &= getJsonValue( top[ F("lcd-brightness") ], newLcdBrightness, 128 );
+    configComplete &=
+      getJsonValue(
+        top[F("lcd-brightness")],
+        newLcdBrightness,
+        128
+      );
 
-    configComplete &= getJsonValue( top[ F("fade") ], newFadeEnabled, true );
+    configComplete &=
+      getJsonValue(
+        top[F("fade")],
+        newFadeEnabled,
+        true
+      );
 
-    configComplete &= getJsonValue( top[ F("fade-duration") ], newFadeDuration, 250 );
+    configComplete &=
+      getJsonValue(
+        top[F("fade-duration")],
+        newFadeDuration,
+        250
+      );
 
-    newSleepTimeout = constrain( newSleepTimeout, 0, 3600 );
+    newSleepTimeout =
+      constrain(
+        newSleepTimeout,
+        0,
+        3600
+      );
 
-    newLcdBrightness = constrain( newLcdBrightness, 1, 255 );
+    newLcdBrightness =
+      constrain(
+        newLcdBrightness,
+        1,
+        255
+      );
 
-    newFadeDuration = constrain( newFadeDuration, 50, 2000 );
+    newFadeDuration =
+      constrain(
+        newFadeDuration,
+        50,
+        2000
+      );
 
-    sleepTimeoutSec = (uint16_t)newSleepTimeout;
+    sleepTimeoutSec =
+      (uint16_t)newSleepTimeout;
 
-    lcdBrightness = (uint16_t)newLcdBrightness;
+    lcdBrightness =
+      (uint16_t)newLcdBrightness;
 
-    fadeEnabled = newFadeEnabled;
+    fadeEnabled =
+      newFadeEnabled;
 
-    fadeDurationMs = (uint16_t)newFadeDuration;
+    fadeDurationMs =
+      (uint16_t)newFadeDuration;
 
-    Serial.printf( "[CoreS3_Display] " "Config: Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Config: Sleep=%u sec, "
+      "LCD=%u, "
+      "Fade=%s, "
+      "FadeDuration=%u ms\n",
+      sleepTimeoutSec,
+      lcdBrightness,
+      fadeEnabled
+        ? "ON"
+        : "OFF",
+      fadeDurationMs
+    );
 
-    if ( initDone && displayReady && displayPowerState == DISPLAY_POWER_ACTIVE ) {
-      setDisplayBrightness( getNormalDisplayBrightness() );
+    if (
+      initDone &&
+      displayReady &&
+      displayPowerState ==
+        DISPLAY_POWER_ACTIVE
+    ) {
+      setDisplayBrightness(
+        getNormalDisplayBrightness()
+      );
     }
 
     return configComplete;
   }
 
-  void appendConfigData( Print& settingsScript ) override {
-    settingsScript.print( F( "cs3st=addDropdown(" "'CoreS3_Display'," "'sleep-timeout'" ");" ) );
+  void appendConfigData(
+    Print& settingsScript
+  ) override {
+    settingsScript.print(
+      F(
+        "cs3st=addDropdown("
+        "'CoreS3_Display',"
+        "'sleep-timeout'"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addOption(" "cs3st," "'Never'," "0" ");" ) );
+    settingsScript.print(
+      F(
+        "addOption("
+        "cs3st,"
+        "'Never',"
+        "0"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addOption(" "cs3st," "'15 sec'," "15" ");" ) );
+    settingsScript.print(
+      F(
+        "addOption("
+        "cs3st,"
+        "'15 sec',"
+        "15"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addOption(" "cs3st," "'30 sec'," "30" ");" ) );
+    settingsScript.print(
+      F(
+        "addOption("
+        "cs3st,"
+        "'30 sec',"
+        "30"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addOption(" "cs3st," "'60 sec'," "60" ");" ) );
+    settingsScript.print(
+      F(
+        "addOption("
+        "cs3st,"
+        "'60 sec',"
+        "60"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addOption(" "cs3st," "'120 sec'," "120" ");" ) );
+    settingsScript.print(
+      F(
+        "addOption("
+        "cs3st,"
+        "'120 sec',"
+        "120"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addInfo(" "'CoreS3_Display:lcd-brightness'," "1," "'<small>1-255</small>'" ");" ) );
+    settingsScript.print(
+      F(
+        "addInfo("
+        "'CoreS3_Display:lcd-brightness',"
+        "1,"
+        "'<small>1-255</small>'"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "cs3fd=addDropdown(" "'CoreS3_Display'," "'fade-duration'" ");" ) );
+    settingsScript.print(
+      F(
+        "cs3fd=addDropdown("
+        "'CoreS3_Display',"
+        "'fade-duration'"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addOption(" "cs3fd," "'Fast - 150 ms'," "150" ");" ) );
+    settingsScript.print(
+      F(
+        "addOption("
+        "cs3fd,"
+        "'Fast - 150 ms',"
+        "150"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addOption(" "cs3fd," "'Normal - 250 ms'," "250" ");" ) );
+    settingsScript.print(
+      F(
+        "addOption("
+        "cs3fd,"
+        "'Normal - 250 ms',"
+        "250"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addOption(" "cs3fd," "'Slow - 400 ms'," "400" ");" ) );
+    settingsScript.print(
+      F(
+        "addOption("
+        "cs3fd,"
+        "'Slow - 400 ms',"
+        "400"
+        ");"
+      )
+    );
 
-    settingsScript.print( F( "addOption(" "cs3fd," "'Very Slow - 600 ms'," "600" ");" ) );
+    settingsScript.print(
+      F(
+        "addOption("
+        "cs3fd,"
+        "'Very Slow - 600 ms',"
+        "600"
+        ");"
+      )
+    );
   }
 
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.0 start" ) );
+    Serial.println(
+      F(
+        "[CoreS3_Display] "
+        "Phase 10.3.1 start"
+      )
+    );
 
-    Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Settings: "
+      "Sleep=%u sec, "
+      "LCD=%u, "
+      "Fade=%s, "
+      "FadeDuration=%u ms\n",
+      sleepTimeoutSec,
+      lcdBrightness,
+      fadeEnabled
+        ? "ON"
+        : "OFF",
+      fadeDurationMs
+    );
 
     display.begin();
 
     display.setRotation( 1 );
 
-    screenWidth = display.width();
+    screenWidth =
+      display.width();
 
-    screenHeight = display.height();
+    screenHeight =
+      display.height();
 
-    Serial.printf( "[CoreS3_Display] " "Display size: %d x %d\n", screenWidth, screenHeight );
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Display size: %d x %d\n",
+      screenWidth,
+      screenHeight
+    );
 
-    if ( screenWidth <= 0 || screenHeight <= 0 ) {
-      Serial.println( F( "[CoreS3_Display] " "ERROR: Display not detected" ) );
+    if (
+      screenWidth <= 0 ||
+      screenHeight <= 0
+    ) {
+      Serial.println(
+        F(
+          "[CoreS3_Display] "
+          "ERROR: Display not detected"
+        )
+      );
 
       return;
     }
 
-    touchReady = ( display.touch() != nullptr );
+    touchReady =
+      display.touch() != nullptr;
 
-    Serial.printf( "[CoreS3_Display] " "Touch: %s\n", touchReady ? "READY" : "NOT FOUND" );
+    Serial.printf(
+      "[CoreS3_Display] "
+      "Touch: %s\n",
+      touchReady
+        ? "READY"
+        : "NOT FOUND"
+    );
 
     setDisplayBrightness( 0 );
 
@@ -6315,34 +9747,35 @@ class CoreS3DisplayUsermod : public Usermod {
     drawStartupConnectingStatus();
 
     startupState = STARTUP_FADE_IN;
-
     startupStateStart = millis();
-
     startupLastFadeStep = startupStateStart;
-
     startupLastDotsUpdate = startupStateStart;
 
-    displayPowerState = DISPLAY_POWER_ACTIVE;
+    displayPowerState =
+      DISPLAY_POWER_ACTIVE;
 
-    lastUserActivityMs = startupStateStart;
+    lastUserActivityMs =
+      startupStateStart;
 
-    lastPresetsModifiedTime = presetsModifiedTime;
+    lastPresetsModifiedTime =
+      presetsModifiedTime;
 
     presetCacheCount = 0;
-
     presetCacheReady = false;
-
     presetCacheBuilding = false;
-
     presetCacheScanId = 1;
-
-    presetCacheSourceModifiedTime = presetsModifiedTime;
+    presetCacheSourceModifiedTime =
+      presetsModifiedTime;
 
     displayReady = true;
-
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.0 setup complete" ) );
+    Serial.println(
+      F(
+        "[CoreS3_Display] "
+        "Phase 10.3.1 setup complete"
+      )
+    );
 
     Serial.println();
   }
@@ -6354,25 +9787,30 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if ( startupState != STARTUP_DONE ) {
       handleStartupSequence();
-
       return;
     }
 
-    if ( !presetCacheReady && !presetCacheBuilding ) {
+    if (
+      !presetCacheReady &&
+      !presetCacheBuilding
+    ) {
       startPresetCacheRebuild();
     }
 
     servicePresetCache();
-
     servicePresetSaveOperation();
-
     servicePresetDeleteOperation();
 
-    if ( displayPowerState == DISPLAY_POWER_ACTIVE ) {
+    if (
+      displayPowerState ==
+      DISPLAY_POWER_ACTIVE
+    ) {
       handleTouch();
     }
 
-    if ( handleDisplayPowerManagement() ) {
+    if (
+      handleDisplayPowerManagement()
+    ) {
       return;
     }
 
@@ -6384,39 +9822,56 @@ class CoreS3DisplayUsermod : public Usermod {
 
     lastUpdate = now;
 
-    bool presetPendingSettled = settlePendingPreset();
+    bool presetPendingSettled =
+      settlePendingPreset();
 
-    bool wifiConnected = ( WiFi.status() == WL_CONNECTED );
+    bool wifiConnected =
+      WiFi.status() == WL_CONNECTED;
 
     if (!wifiConnected) {
-      if ( !connectingScreenShown ) {
+      if (!connectingScreenShown) {
         drawConnectingScreen();
       }
 
       lastWiFiConnected = false;
-
       lastIPAddress = "";
 
       return;
     }
 
-    String currentIPAddress = WiFi.localIP().toString();
+    String currentIPAddress =
+      WiFi.localIP().toString();
 
-    if ( !lastWiFiConnected || !readyScreenShown ) {
-      drawMainScreen( currentIPAddress );
+    if (
+      !lastWiFiConnected ||
+      !readyScreenShown
+    ) {
+      drawMainScreen(
+        currentIPAddress
+      );
 
-      lastIPAddress = currentIPAddress;
+      lastIPAddress =
+        currentIPAddress;
 
       lastWiFiConnected = true;
 
       return;
     }
 
-    if ( currentIPAddress != lastIPAddress ) {
-      lastIPAddress = currentIPAddress;
+    if (
+      currentIPAddress !=
+      lastIPAddress
+    ) {
+      lastIPAddress =
+        currentIPAddress;
 
-      if ( currentPage == SCREEN_MAIN ) {
-        drawMainScreen( currentIPAddress );
+      if (
+        currentPage ==
+        SCREEN_MAIN
+      ) {
+        drawMainScreen(
+          currentIPAddress
+        );
 
         return;
       }
@@ -6424,391 +9879,780 @@ class CoreS3DisplayUsermod : public Usermod {
 
     lastWiFiConnected = true;
 
-    bool ledOn = (bri > 0);
+    bool ledOn = bri > 0;
 
-    if ( (int8_t)ledOn != lastLedState ) {
-      if ( touchTarget != TOUCH_TARGET_POWER ) {
-        drawPowerButton( ledOn, false );
+    if (
+      (int8_t)ledOn !=
+      lastLedState
+    ) {
+      if (
+        touchTarget !=
+        TOUCH_TARGET_POWER
+      ) {
+        drawPowerButton(
+          ledOn,
+          false
+        );
       }
 
-      lastLedState = ledOn ? 1 : 0;
+      lastLedState =
+        ledOn ? 1 : 0;
     }
 
-    uint8_t effectMode = getCurrentEffectMode();
+    uint8_t effectMode =
+      getCurrentEffectMode();
 
-    uint8_t currentSpeed = getCurrentSpeed();
+    uint8_t currentSpeed =
+      getCurrentSpeed();
 
-    uint8_t currentIntensity = getCurrentIntensity();
+    uint8_t currentIntensity =
+      getCurrentIntensity();
 
-    uint8_t currentPalette = getCurrentPalette();
+    uint8_t currentPalette =
+      getCurrentPalette();
 
-    uint8_t displayedPreset = getDisplayedPresetId();
+    uint8_t displayedPreset =
+      getDisplayedPresetId();
 
-    uint32_t primaryColor = getPrimaryColor();
+    uint32_t primaryColor =
+      getPrimaryColor();
 
-    bool primaryColorChanged = ( !lastPrimaryColorValid || primaryColor != lastPrimaryColor );
+    bool primaryColorChanged =
+      !lastPrimaryColorValid ||
+      primaryColor != lastPrimaryColor;
 
-    bool hueTouchActive = ( touchTarget == TOUCH_TARGET_HUE_DOWN || touchTarget == TOUCH_TARGET_HUE_UP );
+    bool hueTouchActive =
+      touchTarget ==
+        TOUCH_TARGET_HUE_DOWN ||
+      touchTarget ==
+        TOUCH_TARGET_HUE_UP;
 
-    bool saturationTouchActive = ( touchTarget == TOUCH_TARGET_SATURATION_DOWN || touchTarget == TOUCH_TARGET_SATURATION_UP );
+    bool saturationTouchActive =
+      touchTarget ==
+        TOUCH_TARGET_SATURATION_DOWN ||
+      touchTarget ==
+        TOUCH_TARGET_SATURATION_UP;
 
-    bool colorControlTouchActive = ( hueTouchActive || saturationTouchActive );
+    bool colorControlTouchActive =
+      hueTouchActive ||
+      saturationTouchActive;
 
-    bool primaryColorChangeHandled = false;
+    bool primaryColorChangeHandled =
+      false;
 
     if ( currentPage == SCREEN_MAIN ) {
-      bool brightnessTouchActive = ( touchTarget == TOUCH_TARGET_BRIGHTNESS_DOWN || touchTarget == TOUCH_TARGET_BRIGHTNESS_UP );
+      bool brightnessTouchActive =
+        touchTarget ==
+          TOUCH_TARGET_BRIGHTNESS_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_BRIGHTNESS_UP;
 
-      if ( !brightnessTouchActive && (int)bri != lastBrightnessValue ) {
-        drawBrightness( bri, TOUCH_TARGET_NONE );
+      if (
+        !brightnessTouchActive &&
+        (int)bri !=
+          lastBrightnessValue
+      ) {
+        drawBrightness(
+          bri,
+          TOUCH_TARGET_NONE
+        );
 
         lastBrightnessValue = bri;
       }
 
-      bool effectTouchActive = ( touchTarget == TOUCH_TARGET_EFFECT_PREV || touchTarget == TOUCH_TARGET_EFFECT_DETAIL || touchTarget == TOUCH_TARGET_EFFECT_NEXT );
+      bool effectTouchActive =
+        touchTarget ==
+          TOUCH_TARGET_EFFECT_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_EFFECT_DETAIL ||
+        touchTarget ==
+          TOUCH_TARGET_EFFECT_NEXT;
 
-      if ( !effectTouchActive && (int)effectMode != lastEffectMode ) {
-        drawEffect( effectMode, TOUCH_TARGET_NONE );
+      if (
+        !effectTouchActive &&
+        (int)effectMode !=
+          lastEffectMode
+      ) {
+        drawEffect(
+          effectMode,
+          TOUCH_TARGET_NONE
+        );
 
         lastEffectMode = effectMode;
-
         lastSpeedValue = currentSpeed;
-
         lastIntensityValue = currentIntensity;
-
         lastPaletteValue = currentPalette;
       }
 
-      if ( (int)currentPalette != lastPaletteValue ) {
-        lastPaletteValue = currentPalette;
+      if (
+        (int)currentPalette !=
+        lastPaletteValue
+      ) {
+        lastPaletteValue =
+          currentPalette;
       }
 
-      if ( (int)currentPreset != lastPresetValue ) {
-        lastPresetValue = currentPreset;
+      if (
+        (int)currentPreset !=
+        lastPresetValue
+      ) {
+        lastPresetValue =
+          currentPreset;
       }
 
-      if ( primaryColorChanged && touchTarget != TOUCH_TARGET_COLOR_OPEN ) {
-        syncLogicalColorFromRgb( primaryColor );
+      if (
+        primaryColorChanged &&
+        touchTarget !=
+          TOUCH_TARGET_COLOR_OPEN
+      ) {
+        syncLogicalColorFromRgb(
+          primaryColor
+        );
 
-        drawColorButton( primaryColor, false );
+        drawColorButton(
+          primaryColor,
+          false
+        );
 
-        primaryColorChangeHandled = true;
+        primaryColorChangeHandled =
+          true;
       }
     }
 
-    else if ( currentPage == SCREEN_COLOR ) {
-      if ( primaryColorChanged && !colorControlTouchActive ) {
-        syncLogicalColorFromRgb( primaryColor );
+    else if (
+      currentPage ==
+      SCREEN_COLOR
+    ) {
+      if (
+        primaryColorChanged &&
+        !colorControlTouchActive
+      ) {
+        syncLogicalColorFromRgb(
+          primaryColor
+        );
 
-        drawColorDetails( primaryColor );
+        drawColorDetails(
+          primaryColor
+        );
 
-        drawHue( logicalHueValue, TOUCH_TARGET_NONE );
+        drawHue(
+          logicalHueValue,
+          TOUCH_TARGET_NONE
+        );
 
-        drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+        drawSaturation(
+          logicalSaturationValue,
+          TOUCH_TARGET_NONE
+        );
 
-        lastHueValue = logicalHueValue;
+        lastHueValue =
+          logicalHueValue;
 
-        lastSaturationValue = logicalSaturationValue;
+        lastSaturationValue =
+          logicalSaturationValue;
 
-        primaryColorChangeHandled = true;
+        primaryColorChangeHandled =
+          true;
       }
     }
 
-    else if ( currentPage == SCREEN_EFFECT ) {
-      bool speedTouchActive = ( touchTarget == TOUCH_TARGET_SPEED_DOWN || touchTarget == TOUCH_TARGET_SPEED_UP );
+    else if (
+      currentPage ==
+      SCREEN_EFFECT
+    ) {
+      bool speedTouchActive =
+        touchTarget ==
+          TOUCH_TARGET_SPEED_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_SPEED_UP;
 
-      bool intensityTouchActive = ( touchTarget == TOUCH_TARGET_INTENSITY_DOWN || touchTarget == TOUCH_TARGET_INTENSITY_UP );
+      bool intensityTouchActive =
+        touchTarget ==
+          TOUCH_TARGET_INTENSITY_DOWN ||
+        touchTarget ==
+          TOUCH_TARGET_INTENSITY_UP;
 
-      bool paletteTouchActive = ( touchTarget == TOUCH_TARGET_PALETTE_PREV || touchTarget == TOUCH_TARGET_PALETTE_NEXT );
+      bool paletteTouchActive =
+        touchTarget ==
+          TOUCH_TARGET_PALETTE_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_PALETTE_NEXT;
 
-      if ( touchTarget == TOUCH_TARGET_NONE && (int)effectMode != lastEffectMode ) {
+      if (
+        touchTarget ==
+          TOUCH_TARGET_NONE &&
+        (int)effectMode !=
+          lastEffectMode
+      ) {
         drawEffectDetailScreen();
-
         return;
       }
 
-      if ( !speedTouchActive && (int)currentSpeed != lastSpeedValue ) {
-        drawSpeed( currentSpeed, TOUCH_TARGET_NONE );
+      if (
+        !speedTouchActive &&
+        (int)currentSpeed !=
+          lastSpeedValue
+      ) {
+        drawSpeed(
+          currentSpeed,
+          TOUCH_TARGET_NONE
+        );
 
-        lastSpeedValue = currentSpeed;
+        lastSpeedValue =
+          currentSpeed;
       }
 
-      if ( !intensityTouchActive && (int)currentIntensity != lastIntensityValue ) {
-        drawIntensity( currentIntensity, TOUCH_TARGET_NONE );
+      if (
+        !intensityTouchActive &&
+        (int)currentIntensity !=
+          lastIntensityValue
+      ) {
+        drawIntensity(
+          currentIntensity,
+          TOUCH_TARGET_NONE
+        );
 
-        lastIntensityValue = currentIntensity;
+        lastIntensityValue =
+          currentIntensity;
       }
 
-      if ( !paletteTouchActive && (int)currentPalette != lastPaletteValue ) {
-        drawPalette( currentPalette, TOUCH_TARGET_NONE );
+      if (
+        !paletteTouchActive &&
+        (int)currentPalette !=
+          lastPaletteValue
+      ) {
+        drawPalette(
+          currentPalette,
+          TOUCH_TARGET_NONE
+        );
 
-        lastPaletteValue = currentPalette;
+        lastPaletteValue =
+          currentPalette;
       }
     }
 
-    else if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_NAV ) {
-      bool presetTouchActive = ( touchTarget == TOUCH_TARGET_PRESET_PREV || touchTarget == TOUCH_TARGET_PRESET_NEXT );
+    else if (
+      currentPage ==
+        SCREEN_PRESET &&
+      presetSubPage ==
+        PRESET_SUBPAGE_NAV
+    ) {
+      bool presetTouchActive =
+        touchTarget ==
+          TOUCH_TARGET_PRESET_PREV ||
+        touchTarget ==
+          TOUCH_TARGET_PRESET_NEXT;
 
-      bool presetFileChanged = ( presetsModifiedTime != lastPresetsModifiedTime );
+      bool presetFileChanged =
+        presetsModifiedTime !=
+        lastPresetsModifiedTime;
 
       if (presetFileChanged) {
-        lastPresetsModifiedTime = presetsModifiedTime;
+        lastPresetsModifiedTime =
+          presetsModifiedTime;
 
         presetNoEntries = false;
       }
 
-      if ( !presetTouchActive && ( (int)displayedPreset != lastPresetValue || presetPendingSettled || presetFileChanged ) ) {
-        drawPresetDetails( displayedPreset, pendingPresetId > 0 );
+      if (
+        !presetTouchActive &&
+        (
+          (int)displayedPreset !=
+            lastPresetValue ||
+          presetPendingSettled ||
+          presetFileChanged
+        )
+      ) {
+        drawPresetDetails(
+          displayedPreset,
+          pendingPresetId > 0
+        );
 
-        drawPresetNavigation( TOUCH_TARGET_NONE );
+        drawPresetNavigation(
+          TOUCH_TARGET_NONE
+        );
 
-        lastPresetValue = displayedPreset;
+        lastPresetValue =
+          displayedPreset;
       }
     }
 
-    if ( primaryColorChanged && primaryColorChangeHandled ) {
-      lastPrimaryColor = primaryColor;
+    if (
+      primaryColorChanged &&
+      primaryColorChangeHandled
+    ) {
+      lastPrimaryColor =
+        primaryColor;
 
       lastPrimaryColorValid = true;
     }
   }
 
-  void addToJsonInfo( JsonObject& root ) override {
-    JsonObject user = root["u"];
+  void addToJsonInfo(
+    JsonObject& root
+  ) override {
+    JsonObject user =
+      root["u"];
 
     if ( user.isNull() ) {
-      user = root.createNestedObject( "u" );
+      user =
+        root.createNestedObject(
+          "u"
+        );
     }
 
-    JsonArray displayInfo = user.createNestedArray( "CoreS3 Display" );
+    JsonArray displayInfo =
+      user.createNestedArray(
+        "CoreS3 Display"
+      );
 
     if (displayReady) {
       char text[32];
 
-      snprintf( text, sizeof(text), "READY (%d x %d)", screenWidth, screenHeight );
+      snprintf(
+        text,
+        sizeof(text),
+        "READY (%d x %d)",
+        screenWidth,
+        screenHeight
+      );
 
-      displayInfo.add( text );
+      displayInfo.add(
+        text
+      );
     }
     else {
-      displayInfo.add( "FAILED" );
+      displayInfo.add(
+        "FAILED"
+      );
     }
 
-    JsonArray touchInfo = user.createNestedArray( "CoreS3 Display Touch" );
+    JsonArray touchInfo =
+      user.createNestedArray(
+        "CoreS3 Display Touch"
+      );
 
-    touchInfo.add( touchReady ? "READY" : "NOT FOUND" );
+    touchInfo.add(
+      touchReady
+        ? "READY"
+        : "NOT FOUND"
+    );
 
-    JsonArray wifiInfo = user.createNestedArray( "CoreS3 Display WiFi" );
+    JsonArray wifiInfo =
+      user.createNestedArray(
+        "CoreS3 Display WiFi"
+      );
 
-    if ( WiFi.status() == WL_CONNECTED ) {
-      wifiInfo.add( WiFi.localIP().toString() );
+    if (
+      WiFi.status() ==
+      WL_CONNECTED
+    ) {
+      wifiInfo.add(
+        WiFi.localIP().toString()
+      );
     }
     else {
-      wifiInfo.add( "Not connected" );
+      wifiInfo.add(
+        "Not connected"
+      );
     }
 
-    JsonArray ledInfo = user.createNestedArray( "CoreS3 Display LED" );
+    JsonArray ledInfo =
+      user.createNestedArray(
+        "CoreS3 Display LED"
+      );
 
-    ledInfo.add( bri > 0 ? "ON" : "OFF" );
+    ledInfo.add(
+      bri > 0
+        ? "ON"
+        : "OFF"
+    );
 
-    JsonArray brightnessInfo = user.createNestedArray( "CoreS3 Display Brightness" );
+    JsonArray brightnessInfo =
+      user.createNestedArray(
+        "CoreS3 Display Brightness"
+      );
 
-    brightnessInfo.add( bri );
+    brightnessInfo.add(
+      bri
+    );
 
-    JsonArray effectInfo = user.createNestedArray( "CoreS3 Display Effect" );
+    JsonArray effectInfo =
+      user.createNestedArray(
+        "CoreS3 Display Effect"
+      );
 
-    if ( strip.getSegmentsNum() > 0 ) {
+    if (
+      strip.getSegmentsNum() > 0
+    ) {
       char effectName[64];
 
-      getEffectName( strip.getMainSegment().mode, effectName, sizeof(effectName) );
+      getEffectName(
+        strip.getMainSegment().mode,
+        effectName,
+        sizeof(effectName)
+      );
 
-      effectInfo.add( effectName );
+      effectInfo.add(
+        effectName
+      );
     }
     else {
-      effectInfo.add( "No segment" );
+      effectInfo.add(
+        "No segment"
+      );
     }
 
-    JsonArray speedInfo = user.createNestedArray( "CoreS3 Effect Speed" );
+    JsonArray speedInfo =
+      user.createNestedArray(
+        "CoreS3 Effect Speed"
+      );
 
-    if ( strip.getSegmentsNum() > 0 ) {
-      speedInfo.add( getCurrentSpeed() );
+    if (
+      strip.getSegmentsNum() > 0
+    ) {
+      speedInfo.add(
+        getCurrentSpeed()
+      );
     }
     else {
-      speedInfo.add( "No segment" );
+      speedInfo.add(
+        "No segment"
+      );
     }
 
-    JsonArray intensityInfo = user.createNestedArray( "CoreS3 Effect Intensity" );
+    JsonArray intensityInfo =
+      user.createNestedArray(
+        "CoreS3 Effect Intensity"
+      );
 
-    if ( strip.getSegmentsNum() > 0 ) {
-      intensityInfo.add( getCurrentIntensity() );
+    if (
+      strip.getSegmentsNum() > 0
+    ) {
+      intensityInfo.add(
+        getCurrentIntensity()
+      );
     }
     else {
-      intensityInfo.add( "No segment" );
+      intensityInfo.add(
+        "No segment"
+      );
     }
 
-    JsonArray paletteInfo = user.createNestedArray( "CoreS3 Effect Palette" );
+    JsonArray paletteInfo =
+      user.createNestedArray(
+        "CoreS3 Effect Palette"
+      );
 
-    if ( strip.getSegmentsNum() > 0 ) {
+    if (
+      strip.getSegmentsNum() > 0
+    ) {
       char paletteName[64];
 
-      getPaletteName( getCurrentPalette(), paletteName, sizeof(paletteName) );
+      getPaletteName(
+        getCurrentPalette(),
+        paletteName,
+        sizeof(paletteName)
+      );
 
-      paletteInfo.add( paletteName );
+      paletteInfo.add(
+        paletteName
+      );
     }
     else {
-      paletteInfo.add( "No segment" );
+      paletteInfo.add(
+        "No segment"
+      );
     }
 
-    JsonArray paletteIdInfo = user.createNestedArray( "CoreS3 Effect Palette ID" );
+    JsonArray paletteIdInfo =
+      user.createNestedArray(
+        "CoreS3 Effect Palette ID"
+      );
 
-    if ( strip.getSegmentsNum() > 0 ) {
-      paletteIdInfo.add( getCurrentPalette() );
+    if (
+      strip.getSegmentsNum() > 0
+    ) {
+      paletteIdInfo.add(
+        getCurrentPalette()
+      );
     }
     else {
-      paletteIdInfo.add( "No segment" );
+      paletteIdInfo.add(
+        "No segment"
+      );
     }
 
-    JsonArray paletteTouchInfo = user.createNestedArray( "CoreS3 Palette Touch Area" );
+    JsonArray paletteTouchInfo =
+      user.createNestedArray(
+        "CoreS3 Palette Touch Area"
+      );
 
-    paletteTouchInfo.add( "Expanded" );
+    paletteTouchInfo.add(
+      "Expanded"
+    );
 
-    JsonArray presetInfo = user.createNestedArray( "CoreS3 Display Preset" );
+    JsonArray presetInfo =
+      user.createNestedArray(
+        "CoreS3 Display Preset"
+      );
 
-    presetInfo.add( currentPreset > 0 ? "Active Preset" : "Custom State" );
+    presetInfo.add(
+      currentPreset > 0
+        ? "Active Preset"
+        : "Custom State"
+    );
 
-    JsonArray presetIdInfo = user.createNestedArray( "CoreS3 Display Preset ID" );
+    JsonArray presetIdInfo =
+      user.createNestedArray(
+        "CoreS3 Display Preset ID"
+      );
 
-    presetIdInfo.add( currentPreset );
+    presetIdInfo.add(
+      currentPreset
+    );
 
-    JsonArray presetTouchInfo = user.createNestedArray( "CoreS3 Preset Touch Area" );
+    JsonArray presetTouchInfo =
+      user.createNestedArray(
+        "CoreS3 Preset Touch Area"
+      );
 
-    presetTouchInfo.add( "Expanded" );
+    presetTouchInfo.add(
+      "Expanded"
+    );
 
-    JsonArray presetCacheInfo = user.createNestedArray( "CoreS3 Preset Cache" );
+    JsonArray presetCacheInfo =
+      user.createNestedArray(
+        "CoreS3 Preset Cache"
+      );
 
-    if ( presetCacheReady ) {
+    if (presetCacheReady) {
       char cacheText[32];
 
-      snprintf( cacheText, sizeof(cacheText), "READY (%u)", (unsigned)presetCacheCount );
+      snprintf(
+        cacheText,
+        sizeof(cacheText),
+        "READY (%u)",
+        (unsigned)presetCacheCount
+      );
 
-      presetCacheInfo.add( cacheText );
+      presetCacheInfo.add(
+        cacheText
+      );
     }
-    else if ( presetCacheBuilding ) {
-      // -----------------------------------------------------
-      // Phase 10.2.4
-      // Do not expose the internal 1..250 scan position.
-      // -----------------------------------------------------
-
-      presetCacheInfo.add( "LOADING" );
+    else if (presetCacheBuilding) {
+      presetCacheInfo.add(
+        "LOADING"
+      );
     }
     else {
-      presetCacheInfo.add( "NOT READY" );
+      presetCacheInfo.add(
+        "NOT READY"
+      );
     }
 
-    JsonArray colorInfo = user.createNestedArray( "CoreS3 Display Color" );
+    JsonArray colorInfo =
+      user.createNestedArray(
+        "CoreS3 Display Color"
+      );
 
-    if ( strip.getSegmentsNum() > 0 ) {
-      uint32_t color = getPrimaryColor();
+    if (
+      strip.getSegmentsNum() > 0
+    ) {
+      uint32_t color =
+        getPrimaryColor();
 
       char colorText[16];
 
-      snprintf( colorText, sizeof(colorText), "#%02X%02X%02X", R(color), G(color), B(color) );
+      snprintf(
+        colorText,
+        sizeof(colorText),
+        "#%02X%02X%02X",
+        R(color),
+        G(color),
+        B(color)
+      );
 
-      colorInfo.add( colorText );
+      colorInfo.add(
+        colorText
+      );
     }
     else {
-      colorInfo.add( "No segment" );
+      colorInfo.add(
+        "No segment"
+      );
     }
 
-    JsonArray hueInfo = user.createNestedArray( "CoreS3 Display Hue" );
+    JsonArray hueInfo =
+      user.createNestedArray(
+        "CoreS3 Display Hue"
+      );
 
-    if ( strip.getSegmentsNum() > 0 ) {
-      hueInfo.add( getDisplayedHue() );
+    if (
+      strip.getSegmentsNum() > 0
+    ) {
+      hueInfo.add(
+        getDisplayedHue()
+      );
     }
     else {
-      hueInfo.add( "No segment" );
+      hueInfo.add(
+        "No segment"
+      );
     }
 
-    JsonArray saturationInfo = user.createNestedArray( "CoreS3 Display Saturation" );
+    JsonArray saturationInfo =
+      user.createNestedArray(
+        "CoreS3 Display Saturation"
+      );
 
-    if ( strip.getSegmentsNum() > 0 ) {
-      saturationInfo.add( getDisplayedSaturation() );
+    if (
+      strip.getSegmentsNum() > 0
+    ) {
+      saturationInfo.add(
+        getDisplayedSaturation()
+      );
     }
     else {
-      saturationInfo.add( "No segment" );
+      saturationInfo.add(
+        "No segment"
+      );
     }
 
-    JsonArray pageInfo = user.createNestedArray( "CoreS3 Display Page" );
+    JsonArray pageInfo =
+      user.createNestedArray(
+        "CoreS3 Display Page"
+      );
 
     if ( currentPage == SCREEN_MAIN ) {
-      pageInfo.add( "MAIN" );
+      pageInfo.add(
+        "MAIN"
+      );
     }
-    else if ( currentPage == SCREEN_COLOR ) {
-      pageInfo.add( "COLOR" );
+    else if (
+      currentPage == SCREEN_COLOR
+    ) {
+      pageInfo.add(
+        "COLOR"
+      );
     }
-    else if ( currentPage == SCREEN_EFFECT ) {
-      pageInfo.add( "EFFECT" );
+    else if (
+      currentPage == SCREEN_EFFECT
+    ) {
+      pageInfo.add(
+        "EFFECT"
+      );
     }
     else {
-      pageInfo.add( "PRESET" );
+      pageInfo.add(
+        "PRESET"
+      );
     }
 
-    JsonArray powerStateInfo = user.createNestedArray( "CoreS3 Display Power State" );
+    JsonArray powerStateInfo =
+      user.createNestedArray(
+        "CoreS3 Display Power State"
+      );
 
-    switch ( displayPowerState ) {
-    case DISPLAY_POWER_ACTIVE:
-      powerStateInfo.add( "ACTIVE" );
-      break;
+    switch (displayPowerState) {
+      case DISPLAY_POWER_ACTIVE:
+        powerStateInfo.add(
+          "ACTIVE"
+        );
+        break;
 
-    case DISPLAY_POWER_SLEEP_FADE_OUT:
-      powerStateInfo.add( "SLEEP FADE OUT" );
-      break;
+      case DISPLAY_POWER_SLEEP_FADE_OUT:
+        powerStateInfo.add(
+          "SLEEP FADE OUT"
+        );
+        break;
 
-    case DISPLAY_POWER_SLEEPING:
-      powerStateInfo.add( "SLEEPING" );
-      break;
+      case DISPLAY_POWER_SLEEPING:
+        powerStateInfo.add(
+          "SLEEPING"
+        );
+        break;
 
-    case DISPLAY_POWER_WAKE_FADE_IN:
-      powerStateInfo.add( "WAKE FADE IN" );
-      break;
+      case DISPLAY_POWER_WAKE_FADE_IN:
+        powerStateInfo.add(
+          "WAKE FADE IN"
+        );
+        break;
 
-    case DISPLAY_POWER_WAKE_WAIT_RELEASE:
-      powerStateInfo.add( "WAKE WAIT RELEASE" );
-      break;
+      case DISPLAY_POWER_WAKE_WAIT_RELEASE:
+        powerStateInfo.add(
+          "WAKE WAIT RELEASE"
+        );
+        break;
     }
 
-    JsonArray lcdBrightnessInfo = user.createNestedArray( "CoreS3 LCD Brightness" );
+    JsonArray lcdBrightnessInfo =
+      user.createNestedArray(
+        "CoreS3 LCD Brightness"
+      );
 
-    lcdBrightnessInfo.add( lcdBrightness );
+    lcdBrightnessInfo.add(
+      lcdBrightness
+    );
 
-    JsonArray sleepInfo = user.createNestedArray( "CoreS3 Display Sleep" );
+    JsonArray sleepInfo =
+      user.createNestedArray(
+        "CoreS3 Display Sleep"
+      );
 
     if ( sleepTimeoutSec == 0 ) {
-      sleepInfo.add( "Never" );
+      sleepInfo.add(
+        "Never"
+      );
     }
     else {
       char sleepText[24];
 
-      snprintf( sleepText, sizeof(sleepText), "%u sec", sleepTimeoutSec );
+      snprintf(
+        sleepText,
+        sizeof(sleepText),
+        "%u sec",
+        sleepTimeoutSec
+      );
 
-      sleepInfo.add( sleepText );
+      sleepInfo.add(
+        sleepText
+      );
     }
 
-    JsonArray fadeInfo = user.createNestedArray( "CoreS3 Display Fade" );
+    JsonArray fadeInfo =
+      user.createNestedArray(
+        "CoreS3 Display Fade"
+      );
 
     if (!fadeEnabled) {
-      fadeInfo.add( "OFF" );
+      fadeInfo.add(
+        "OFF"
+      );
     }
     else {
       char fadeText[24];
 
-      snprintf( fadeText, sizeof(fadeText), "ON (%u ms)", fadeDurationMs );
+      snprintf(
+        fadeText,
+        sizeof(fadeText),
+        "ON (%u ms)",
+        fadeDurationMs
+      );
 
-      fadeInfo.add( fadeText );
+      fadeInfo.add(
+        fadeText
+      );
     }
 
-    JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
+    JsonArray phaseInfo =
+      user.createNestedArray(
+        "CoreS3 Display Phase"
+      );
 
-    phaseInfo.add( "10.3.0" );
+    phaseInfo.add(
+      "10.3.1"
+    );
   }
 };
 
