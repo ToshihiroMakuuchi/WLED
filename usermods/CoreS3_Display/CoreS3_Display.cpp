@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.6
+// Phase 10.3.7
 //
 // MAIN
 //   Power
@@ -135,6 +135,13 @@
 //   rectangle hit tests for paired controls.
 //   Press acquisition, release actions, coordinates, timings,
 //   WLED operations, Preset behavior, and visible UI are unchanged.
+//
+// Phase 10.3.7
+//   Touch Release action selection and execution are separated.
+//   One release-action enum replaces parallel execute flags.
+//   Pressed-visual release and Back navigation are isolated helpers.
+//   Release confirmation, action conditions, action order semantics,
+//   coordinates, timings, WLED operations, and visible UI are unchanged.
 //
 // Common
 //   Startup animation
@@ -5773,88 +5780,133 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
   // =========================================================
-  // Phase 10.3.2
-  // Touch Release
+  // Phase 10.3.7
+  // Touch Release action state
   //
-  // Release confirmation and all short-press actions are
-  // preserved from Phase 10.3.1.
+  // Only one TouchTarget can own a gesture, so release-time
+  // execution is represented by one action instead of parallel
+  // boolean flags.
   // =========================================================
 
-  void handleTouchRelease( unsigned long now ) {
-    if (!touchActive) {
-      return;
+  enum TouchReleaseAction : uint8_t {
+    TOUCH_RELEASE_ACTION_NONE = 0,
+    TOUCH_RELEASE_ACTION_POWER,
+    TOUCH_RELEASE_ACTION_BRIGHTNESS_SHORT,
+    TOUCH_RELEASE_ACTION_EFFECT_STEP,
+    TOUCH_RELEASE_ACTION_EFFECT_DETAIL,
+    TOUCH_RELEASE_ACTION_COLOR_OPEN,
+    TOUCH_RELEASE_ACTION_PRESET_OPEN,
+    TOUCH_RELEASE_ACTION_BACK,
+    TOUCH_RELEASE_ACTION_HUE_SHORT,
+    TOUCH_RELEASE_ACTION_SATURATION_SHORT,
+    TOUCH_RELEASE_ACTION_SPEED_SHORT,
+    TOUCH_RELEASE_ACTION_INTENSITY_SHORT,
+    TOUCH_RELEASE_ACTION_PALETTE_SHORT,
+    TOUCH_RELEASE_ACTION_PRESET_SHORT,
+    TOUCH_RELEASE_ACTION_PRESET_MANAGE_OPEN,
+    TOUCH_RELEASE_ACTION_PRESET_SAVE_NEW,
+    TOUCH_RELEASE_ACTION_PRESET_OVERWRITE_OPEN,
+    TOUCH_RELEASE_ACTION_PRESET_OVERWRITE_STEP,
+    TOUCH_RELEASE_ACTION_PRESET_DELETE_OPEN,
+    TOUCH_RELEASE_ACTION_PRESET_DELETE_STEP,
+    TOUCH_RELEASE_ACTION_PRESET_BOOT_OPEN,
+    TOUCH_RELEASE_ACTION_PRESET_BOOT_STEP
+  };
+
+  struct ColorEditSnapshot {
+    bool hueValid;
+    CHSV32 hueHsv;
+    uint8_t hueValue;
+    uint8_t hueWhite;
+
+    bool saturationValid;
+    CHSV32 saturationHsv;
+    uint8_t saturationValue;
+    uint8_t saturationWhite;
+  };
+
+  TouchReleaseAction determineTouchReleaseAction( TouchTarget releasedTarget, unsigned long now ) {
+    switch (releasedTarget) {
+      case TOUCH_TARGET_POWER:
+        return ( lastTouchInsidePower && now - lastTouchAction >= TOUCH_ACTION_COOLDOWN_MS ) ? TOUCH_RELEASE_ACTION_POWER : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_BRIGHTNESS_DOWN:
+      case TOUCH_TARGET_BRIGHTNESS_UP:
+        return ( lastTouchInsideBrightness && !brightnessRepeatState.longPressActive ) ? TOUCH_RELEASE_ACTION_BRIGHTNESS_SHORT : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_EFFECT_PREV:
+      case TOUCH_TARGET_EFFECT_NEXT:
+        return ( lastTouchInsideEffect && !effectRepeatState.longPressActive ) ? TOUCH_RELEASE_ACTION_EFFECT_STEP : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_EFFECT_DETAIL:
+        return lastTouchInsideEffectDetail ? TOUCH_RELEASE_ACTION_EFFECT_DETAIL : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_COLOR_OPEN:
+        return lastTouchInsideColor ? TOUCH_RELEASE_ACTION_COLOR_OPEN : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_OPEN:
+        return lastTouchInsidePresetOpen ? TOUCH_RELEASE_ACTION_PRESET_OPEN : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_BACK:
+        return lastTouchInsideBack ? TOUCH_RELEASE_ACTION_BACK : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_HUE_DOWN:
+      case TOUCH_TARGET_HUE_UP:
+        return ( lastTouchInsideHue && !hueRepeatState.longPressActive ) ? TOUCH_RELEASE_ACTION_HUE_SHORT : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_SATURATION_DOWN:
+      case TOUCH_TARGET_SATURATION_UP:
+        return ( lastTouchInsideSaturation && !saturationRepeatState.longPressActive ) ? TOUCH_RELEASE_ACTION_SATURATION_SHORT : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_SPEED_DOWN:
+      case TOUCH_TARGET_SPEED_UP:
+        return ( lastTouchInsideSpeed && !speedRepeatState.longPressActive ) ? TOUCH_RELEASE_ACTION_SPEED_SHORT : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_INTENSITY_DOWN:
+      case TOUCH_TARGET_INTENSITY_UP:
+        return ( lastTouchInsideIntensity && !intensityRepeatState.longPressActive ) ? TOUCH_RELEASE_ACTION_INTENSITY_SHORT : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PALETTE_PREV:
+      case TOUCH_TARGET_PALETTE_NEXT:
+        return ( lastTouchInsidePalette && !paletteRepeatState.longPressActive ) ? TOUCH_RELEASE_ACTION_PALETTE_SHORT : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_PREV:
+      case TOUCH_TARGET_PRESET_NEXT:
+        return ( lastTouchInsidePresetNav && !presetRepeatState.longPressActive ) ? TOUCH_RELEASE_ACTION_PRESET_SHORT : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_MANAGE:
+        return lastTouchInsidePresetManage ? TOUCH_RELEASE_ACTION_PRESET_MANAGE_OPEN : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_SAVE_NEW:
+        return lastTouchInsidePresetSaveNew ? TOUCH_RELEASE_ACTION_PRESET_SAVE_NEW : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_OVERWRITE_OPEN:
+        return lastTouchInsidePresetOverwriteOpen ? TOUCH_RELEASE_ACTION_PRESET_OVERWRITE_OPEN : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_OVERWRITE_PREV:
+      case TOUCH_TARGET_PRESET_OVERWRITE_NEXT:
+        return lastTouchInsidePresetOverwriteNav ? TOUCH_RELEASE_ACTION_PRESET_OVERWRITE_STEP : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_DELETE_OPEN:
+        return lastTouchInsidePresetDeleteOpen ? TOUCH_RELEASE_ACTION_PRESET_DELETE_OPEN : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_DELETE_PREV:
+      case TOUCH_TARGET_PRESET_DELETE_NEXT:
+        return lastTouchInsidePresetDeleteNav ? TOUCH_RELEASE_ACTION_PRESET_DELETE_STEP : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_BOOT_OPEN:
+        return lastTouchInsidePresetBootOpen ? TOUCH_RELEASE_ACTION_PRESET_BOOT_OPEN : TOUCH_RELEASE_ACTION_NONE;
+
+      case TOUCH_TARGET_PRESET_BOOT_PREV:
+      case TOUCH_TARGET_PRESET_BOOT_NEXT:
+        return lastTouchInsidePresetBootNav ? TOUCH_RELEASE_ACTION_PRESET_BOOT_STEP : TOUCH_RELEASE_ACTION_NONE;
+
+      default:
+        return TOUCH_RELEASE_ACTION_NONE;
     }
+  }
 
-    if ( touchReleaseCandidate == 0 ) {
-      touchReleaseCandidate = now;
-
-      return;
-    }
-
-    if ( now - touchReleaseCandidate < TOUCH_RELEASE_CONFIRM_MS ) {
-      return;
-    }
-
-    TouchTarget releasedTarget = touchTarget;
-
-    bool wasBrightnessLongPress = brightnessRepeatState.longPressActive;
-
-    bool wasEffectLongPress = effectRepeatState.longPressActive;
-
-    bool wasHueLongPress = hueRepeatState.longPressActive;
-
-    bool wasSaturationLongPress = saturationRepeatState.longPressActive;
-
-    bool wasSpeedLongPress = speedRepeatState.longPressActive;
-
-    bool wasIntensityLongPress = intensityRepeatState.longPressActive;
-
-    bool wasPaletteLongPress = paletteRepeatState.longPressActive;
-
-    bool wasPresetLongPress = presetRepeatState.longPressActive;
-
-    bool executePowerAction = ( releasedTarget == TOUCH_TARGET_POWER ) && lastTouchInsidePower && ( now - lastTouchAction >= TOUCH_ACTION_COOLDOWN_MS );
-
-    bool executeBrightnessShortPress = ( releasedTarget == TOUCH_TARGET_BRIGHTNESS_DOWN || releasedTarget == TOUCH_TARGET_BRIGHTNESS_UP ) && lastTouchInsideBrightness && !wasBrightnessLongPress;
-
-    bool executeEffectAction = ( releasedTarget == TOUCH_TARGET_EFFECT_PREV || releasedTarget == TOUCH_TARGET_EFFECT_NEXT ) && lastTouchInsideEffect && !wasEffectLongPress;
-
-    bool executeEffectDetail = ( releasedTarget == TOUCH_TARGET_EFFECT_DETAIL ) && lastTouchInsideEffectDetail;
-
-    bool executeColorOpen = ( releasedTarget == TOUCH_TARGET_COLOR_OPEN ) && lastTouchInsideColor;
-
-    bool executePresetOpen = ( releasedTarget == TOUCH_TARGET_PRESET_OPEN ) && lastTouchInsidePresetOpen;
-
-    bool executeBack = ( releasedTarget == TOUCH_TARGET_BACK ) && lastTouchInsideBack;
-
-    bool executeHueShortPress = ( releasedTarget == TOUCH_TARGET_HUE_DOWN || releasedTarget == TOUCH_TARGET_HUE_UP ) && lastTouchInsideHue && !wasHueLongPress;
-
-    bool executeSaturationShortPress = ( releasedTarget == TOUCH_TARGET_SATURATION_DOWN || releasedTarget == TOUCH_TARGET_SATURATION_UP ) && lastTouchInsideSaturation && !wasSaturationLongPress;
-
-    bool executeSpeedShortPress = ( releasedTarget == TOUCH_TARGET_SPEED_DOWN || releasedTarget == TOUCH_TARGET_SPEED_UP ) && lastTouchInsideSpeed && !wasSpeedLongPress;
-
-    bool executeIntensityShortPress = ( releasedTarget == TOUCH_TARGET_INTENSITY_DOWN || releasedTarget == TOUCH_TARGET_INTENSITY_UP ) && lastTouchInsideIntensity && !wasIntensityLongPress;
-
-    bool executePaletteShortPress = ( releasedTarget == TOUCH_TARGET_PALETTE_PREV || releasedTarget == TOUCH_TARGET_PALETTE_NEXT ) && lastTouchInsidePalette && !wasPaletteLongPress;
-
-    bool executePresetShortPress = ( releasedTarget == TOUCH_TARGET_PRESET_PREV || releasedTarget == TOUCH_TARGET_PRESET_NEXT ) && lastTouchInsidePresetNav && !wasPresetLongPress;
-
-    bool executePresetManageOpen = ( releasedTarget == TOUCH_TARGET_PRESET_MANAGE ) && lastTouchInsidePresetManage;
-
-    bool executePresetSaveNew = ( releasedTarget == TOUCH_TARGET_PRESET_SAVE_NEW ) && lastTouchInsidePresetSaveNew;
-
-    bool executePresetOverwriteOpen = ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_OPEN ) && lastTouchInsidePresetOverwriteOpen;
-
-    bool executePresetOverwriteStep = ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV || releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_NEXT ) && lastTouchInsidePresetOverwriteNav;
-
-    bool executePresetDeleteOpen = ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_OPEN ) && lastTouchInsidePresetDeleteOpen;
-
-    bool executePresetDeleteStep = ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_PREV || releasedTarget == TOUCH_TARGET_PRESET_DELETE_NEXT ) && lastTouchInsidePresetDeleteNav;
-
-    bool executePresetBootOpen = releasedTarget == TOUCH_TARGET_PRESET_BOOT_OPEN && lastTouchInsidePresetBootOpen;
-
-    bool executePresetBootStep = ( releasedTarget == TOUCH_TARGET_PRESET_BOOT_PREV || releasedTarget == TOUCH_TARGET_PRESET_BOOT_NEXT ) && lastTouchInsidePresetBootNav;
-
+  void releaseTouchVisualState( TouchTarget releasedTarget ) {
     if ( releasedTarget == TOUCH_TARGET_POWER && powerButtonVisualPressed ) {
       drawPowerButton( bri > 0, false );
     }
@@ -5954,386 +6006,336 @@ class CoreS3DisplayUsermod : public Usermod {
     if ( releasedTarget == TOUCH_TARGET_PRESET_BOOT_HOLD && presetBootHoldButtonVisualPressed ) {
       drawPresetBootHoldButton( false );
     }
+  }
 
-    bool savedHueEditValid = hueEditValid;
+  void clearColorEditState() {
+    hueEditValid = false;
+    saturationEditValid = false;
+  }
 
-    CHSV32 savedHueEditHsv = hueEditHsv;
-
-    uint8_t savedHueEditValue = hueEditValue;
-
-    uint8_t savedHueEditWhite = hueEditWhite;
-
-    bool savedSaturationEditValid = saturationEditValid;
-
-    CHSV32 savedSaturationEditHsv = saturationEditHsv;
-
-    uint8_t savedSaturationEditValue = saturationEditValue;
-
-    uint8_t savedSaturationEditWhite = saturationEditWhite;
-
-    resetTouchGesture();
-
-    hueEditValid = savedHueEditValid;
-
-    hueEditHsv = savedHueEditHsv;
-
-    hueEditValue = savedHueEditValue;
-
-    hueEditWhite = savedHueEditWhite;
-
-    saturationEditValid = savedSaturationEditValid;
-
-    saturationEditHsv = savedSaturationEditHsv;
-
-    saturationEditValue = savedSaturationEditValue;
-
-    saturationEditWhite = savedSaturationEditWhite;
-
-    if (executePowerAction) {
-      lastTouchAction = now;
-
-      toggleLedPowerFromTouch();
-
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      return;
-    }
-
-    if (executeBrightnessShortPress) {
-      brightnessShortPress( releasedTarget );
-
-      drawBrightness( bri, TOUCH_TARGET_NONE );
-
-      lastBrightnessValue = bri;
-
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      return;
-    }
-
-    if (executeEffectAction) {
-      if ( releasedTarget == TOUCH_TARGET_EFFECT_PREV ) {
-        applyEffectStep( -1 );
-      }
-      else {
-        applyEffectStep( 1 );
-      }
-
-      drawEffect( getCurrentEffectMode(), TOUCH_TARGET_NONE );
-
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      return;
-    }
-
-    if (executeEffectDetail) {
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      drawEffectDetailScreen();
-
-      return;
-    }
-
-    if (executeColorOpen) {
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      drawColorScreen();
-
-      return;
-    }
-
-    if (executePresetOpen) {
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      presetNoEntries = false;
-
-      drawPresetScreen();
-
-      return;
-    }
-
-    if (executePresetManageOpen) {
-      hueEditValid = false;
-
-      saturationEditValid = false;
+  void executeBackReleaseAction() {
+    if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_BOOT ) {
+      presetBootOperationState = PRESET_BOOT_OP_IDLE;
+      presetBootTargetId = 0;
+      presetBootTargetName = "NONE";
+      presetBootResultStartMs = 0;
 
       drawPresetManageScreen();
 
       return;
     }
 
-    if (executePresetSaveNew) {
-      hueEditValid = false;
+    if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_DELETE ) {
+      presetDeleteOperationState = PRESET_DELETE_OP_IDLE;
 
-      saturationEditValid = false;
+      presetDeleteTargetId = 0;
 
-      if ( preparePresetSaveCandidate() ) {
-        drawPresetSaveScreen();
-      }
-      else {
-        drawPresetManageScreen();
-      }
+      presetDeleteTargetName = "";
 
-      return;
-    }
+      presetDeleteWasCurrentPreset = false;
+      presetDeleteWasBootPreset = false;
 
-    if (executePresetOverwriteOpen) {
-      hueEditValid = false;
+      presetDeleteResultStartMs = 0;
 
-      saturationEditValid = false;
-
-      if ( preparePresetOverwriteTarget() ) {
-        drawPresetOverwriteScreen();
-      }
-      else {
-        drawPresetManageScreen();
-      }
+      drawPresetManageScreen();
 
       return;
     }
 
-    if (executePresetOverwriteStep) {
-      int direction = ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV ) ? -1 : 1;
+    if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_OVERWRITE ) {
+      presetSaveOperationState = PRESET_SAVE_OP_IDLE;
 
-      if ( stepPresetOverwriteTarget( direction ) ) {
-        drawPresetOverwriteScreen();
-      }
+      presetSaveOperationIsOverwrite = false;
 
-      hueEditValid = false;
+      presetSaveCandidateId = 0;
 
-      saturationEditValid = false;
+      presetSaveCandidateName = "";
 
-      return;
-    }
+      presetOverwriteTargetId = 0;
 
-    if (executePresetDeleteOpen) {
-      hueEditValid = false;
+      presetOverwriteTargetName = "";
 
-      saturationEditValid = false;
-
-      if ( preparePresetDeleteTarget() ) {
-        drawPresetDeleteScreen();
-      }
-      else {
-        drawPresetManageScreen();
-      }
+      drawPresetManageScreen();
 
       return;
     }
 
-    if (executePresetDeleteStep) {
-      int direction = ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_PREV ) ? -1 : 1;
+    if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_SAVE ) {
+      presetSaveOperationState = PRESET_SAVE_OP_IDLE;
 
-      if ( stepPresetDeleteTarget( direction ) ) {
-        drawPresetDeleteScreen();
-      }
+      presetSaveCandidateId = 0;
 
-      hueEditValid = false;
+      presetSaveCandidateName = "";
 
-      saturationEditValid = false;
+      drawPresetManageScreen();
 
       return;
     }
 
-    if (executePresetBootOpen) {
-      hueEditValid = false;
-      saturationEditValid = false;
-
-      if ( preparePresetBootTarget() ) {
-        drawPresetBootScreen();
-      }
-      else {
-        drawPresetManageScreen();
-      }
+    if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_MANAGE ) {
+      drawPresetScreen();
 
       return;
     }
 
-    if (executePresetBootStep) {
-      int direction = ( releasedTarget == TOUCH_TARGET_PRESET_BOOT_PREV ) ? -1 : 1;
+    drawMainScreen( WiFi.localIP().toString() );
+  }
 
-      if ( stepPresetBootTarget( direction ) ) {
-        drawPresetBootScreen();
-      }
+  void executeTouchReleaseAction( TouchReleaseAction action, TouchTarget releasedTarget, unsigned long now ) {
+    switch (action) {
+      case TOUCH_RELEASE_ACTION_POWER:
+        lastTouchAction = now;
 
-      hueEditValid = false;
-      saturationEditValid = false;
+        toggleLedPowerFromTouch();
 
-      return;
-    }
-
-    if (executeBack) {
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_BOOT ) {
-        presetBootOperationState = PRESET_BOOT_OP_IDLE;
-        presetBootTargetId = 0;
-        presetBootTargetName = "NONE";
-        presetBootResultStartMs = 0;
-
-        drawPresetManageScreen();
-
+        clearColorEditState();
         return;
-      }
 
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_DELETE ) {
-        presetDeleteOperationState = PRESET_DELETE_OP_IDLE;
+      case TOUCH_RELEASE_ACTION_BRIGHTNESS_SHORT:
+        brightnessShortPress( releasedTarget );
 
-        presetDeleteTargetId = 0;
+        drawBrightness( bri, TOUCH_TARGET_NONE );
 
-        presetDeleteTargetName = "";
+        lastBrightnessValue = bri;
 
-        presetDeleteWasCurrentPreset = false;
-        presetDeleteWasBootPreset = false;
-
-        presetDeleteResultStartMs = 0;
-
-        drawPresetManageScreen();
-
+        clearColorEditState();
         return;
-      }
 
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_OVERWRITE ) {
-        presetSaveOperationState = PRESET_SAVE_OP_IDLE;
+      case TOUCH_RELEASE_ACTION_EFFECT_STEP:
+        if ( releasedTarget == TOUCH_TARGET_EFFECT_PREV ) {
+          applyEffectStep( -1 );
+        }
+        else {
+          applyEffectStep( 1 );
+        }
 
-        presetSaveOperationIsOverwrite = false;
+        drawEffect( getCurrentEffectMode(), TOUCH_TARGET_NONE );
 
-        presetSaveCandidateId = 0;
-
-        presetSaveCandidateName = "";
-
-        presetOverwriteTargetId = 0;
-
-        presetOverwriteTargetName = "";
-
-        drawPresetManageScreen();
-
+        clearColorEditState();
         return;
-      }
 
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_SAVE ) {
-        presetSaveOperationState = PRESET_SAVE_OP_IDLE;
+      case TOUCH_RELEASE_ACTION_EFFECT_DETAIL:
+        clearColorEditState();
 
-        presetSaveCandidateId = 0;
-
-        presetSaveCandidateName = "";
-
-        drawPresetManageScreen();
-
+        drawEffectDetailScreen();
         return;
-      }
 
-      if ( currentPage == SCREEN_PRESET && presetSubPage == PRESET_SUBPAGE_MANAGE ) {
+      case TOUCH_RELEASE_ACTION_COLOR_OPEN:
+        clearColorEditState();
+
+        drawColorScreen();
+        return;
+
+      case TOUCH_RELEASE_ACTION_PRESET_OPEN:
+        clearColorEditState();
+
+        presetNoEntries = false;
+
         drawPresetScreen();
+        return;
 
+      case TOUCH_RELEASE_ACTION_PRESET_MANAGE_OPEN:
+        clearColorEditState();
+
+        drawPresetManageScreen();
+        return;
+
+      case TOUCH_RELEASE_ACTION_PRESET_SAVE_NEW:
+        clearColorEditState();
+
+        if ( preparePresetSaveCandidate() ) {
+          drawPresetSaveScreen();
+        }
+        else {
+          drawPresetManageScreen();
+        }
+        return;
+
+      case TOUCH_RELEASE_ACTION_PRESET_OVERWRITE_OPEN:
+        clearColorEditState();
+
+        if ( preparePresetOverwriteTarget() ) {
+          drawPresetOverwriteScreen();
+        }
+        else {
+          drawPresetManageScreen();
+        }
+        return;
+
+      case TOUCH_RELEASE_ACTION_PRESET_OVERWRITE_STEP: {
+        int direction = ( releasedTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV ) ? -1 : 1;
+
+        if ( stepPresetOverwriteTarget( direction ) ) {
+          drawPresetOverwriteScreen();
+        }
+
+        clearColorEditState();
         return;
       }
 
-      drawMainScreen( WiFi.localIP().toString() );
+      case TOUCH_RELEASE_ACTION_PRESET_DELETE_OPEN:
+        clearColorEditState();
+
+        if ( preparePresetDeleteTarget() ) {
+          drawPresetDeleteScreen();
+        }
+        else {
+          drawPresetManageScreen();
+        }
+        return;
+
+      case TOUCH_RELEASE_ACTION_PRESET_DELETE_STEP: {
+        int direction = ( releasedTarget == TOUCH_TARGET_PRESET_DELETE_PREV ) ? -1 : 1;
+
+        if ( stepPresetDeleteTarget( direction ) ) {
+          drawPresetDeleteScreen();
+        }
+
+        clearColorEditState();
+        return;
+      }
+
+      case TOUCH_RELEASE_ACTION_PRESET_BOOT_OPEN:
+        clearColorEditState();
+
+        if ( preparePresetBootTarget() ) {
+          drawPresetBootScreen();
+        }
+        else {
+          drawPresetManageScreen();
+        }
+        return;
+
+      case TOUCH_RELEASE_ACTION_PRESET_BOOT_STEP: {
+        int direction = ( releasedTarget == TOUCH_TARGET_PRESET_BOOT_PREV ) ? -1 : 1;
+
+        if ( stepPresetBootTarget( direction ) ) {
+          drawPresetBootScreen();
+        }
+
+        clearColorEditState();
+        return;
+      }
+
+      case TOUCH_RELEASE_ACTION_BACK:
+        clearColorEditState();
+
+        executeBackReleaseAction();
+        return;
+
+      case TOUCH_RELEASE_ACTION_HUE_SHORT:
+        hueShortPress( releasedTarget );
+
+        drawHue( logicalHueValue, TOUCH_TARGET_NONE );
+
+        drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+
+        clearColorEditState();
+        return;
+
+      case TOUCH_RELEASE_ACTION_SATURATION_SHORT:
+        saturationShortPress( releasedTarget );
+
+        drawHue( logicalHueValue, TOUCH_TARGET_NONE );
+
+        drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+
+        clearColorEditState();
+        return;
+
+      case TOUCH_RELEASE_ACTION_SPEED_SHORT:
+        speedShortPress( releasedTarget );
+
+        drawSpeed( getCurrentSpeed(), TOUCH_TARGET_NONE );
+
+        lastSpeedValue = getCurrentSpeed();
+
+        clearColorEditState();
+        return;
+
+      case TOUCH_RELEASE_ACTION_INTENSITY_SHORT:
+        intensityShortPress( releasedTarget );
+
+        drawIntensity( getCurrentIntensity(), TOUCH_TARGET_NONE );
+
+        lastIntensityValue = getCurrentIntensity();
+
+        clearColorEditState();
+        return;
+
+      case TOUCH_RELEASE_ACTION_PALETTE_SHORT:
+        paletteShortPress( releasedTarget );
+
+        drawPalette( getCurrentPalette(), TOUCH_TARGET_NONE );
+
+        lastPaletteValue = getCurrentPalette();
+
+        clearColorEditState();
+        return;
+
+      case TOUCH_RELEASE_ACTION_PRESET_SHORT:
+        presetShortPress( releasedTarget );
+
+        drawPresetNavigation( TOUCH_TARGET_NONE );
+
+        clearColorEditState();
+        return;
+
+      default:
+        clearColorEditState();
+        return;
+    }
+  }
+
+  // =========================================================
+  // Phase 10.3.7
+  // Touch Release
+  //
+  // Release confirmation is unchanged. Action selection,
+  // pressed-visual release, gesture reset, and action execution
+  // are now separated into focused helpers.
+  // =========================================================
+
+  void handleTouchRelease( unsigned long now ) {
+    if (!touchActive) {
+      return;
+    }
+
+    if ( touchReleaseCandidate == 0 ) {
+      touchReleaseCandidate = now;
 
       return;
     }
 
-    if (executeHueShortPress) {
-      hueShortPress( releasedTarget );
-
-      drawHue( logicalHueValue, TOUCH_TARGET_NONE );
-
-      drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
-
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
+    if ( now - touchReleaseCandidate < TOUCH_RELEASE_CONFIRM_MS ) {
       return;
     }
 
-    if (executeSaturationShortPress) {
-      saturationShortPress( releasedTarget );
+    TouchTarget releasedTarget = touchTarget;
 
-      drawHue( logicalHueValue, TOUCH_TARGET_NONE );
+    TouchReleaseAction releaseAction = determineTouchReleaseAction( releasedTarget, now );
 
-      drawSaturation( logicalSaturationValue, TOUCH_TARGET_NONE );
+    releaseTouchVisualState( releasedTarget );
 
-      hueEditValid = false;
+    ColorEditSnapshot editSnapshot = {
+      hueEditValid, hueEditHsv, hueEditValue, hueEditWhite,
+      saturationEditValid, saturationEditHsv, saturationEditValue, saturationEditWhite
+    };
 
-      saturationEditValid = false;
+    resetTouchGesture();
 
-      return;
-    }
+    hueEditValid = editSnapshot.hueValid;
+    hueEditHsv = editSnapshot.hueHsv;
+    hueEditValue = editSnapshot.hueValue;
+    hueEditWhite = editSnapshot.hueWhite;
 
-    if (executeSpeedShortPress) {
-      speedShortPress( releasedTarget );
+    saturationEditValid = editSnapshot.saturationValid;
+    saturationEditHsv = editSnapshot.saturationHsv;
+    saturationEditValue = editSnapshot.saturationValue;
+    saturationEditWhite = editSnapshot.saturationWhite;
 
-      drawSpeed( getCurrentSpeed(), TOUCH_TARGET_NONE );
-
-      lastSpeedValue = getCurrentSpeed();
-
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      return;
-    }
-
-    if (executeIntensityShortPress) {
-      intensityShortPress( releasedTarget );
-
-      drawIntensity( getCurrentIntensity(), TOUCH_TARGET_NONE );
-
-      lastIntensityValue = getCurrentIntensity();
-
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      return;
-    }
-
-    if (executePaletteShortPress) {
-      paletteShortPress( releasedTarget );
-
-      drawPalette( getCurrentPalette(), TOUCH_TARGET_NONE );
-
-      lastPaletteValue = getCurrentPalette();
-
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      return;
-    }
-
-    if (executePresetShortPress) {
-      presetShortPress( releasedTarget );
-
-      drawPresetNavigation( TOUCH_TARGET_NONE );
-
-      hueEditValid = false;
-
-      saturationEditValid = false;
-
-      return;
-    }
-
-    hueEditValid = false;
-
-    saturationEditValid = false;
-    }
+    executeTouchReleaseAction( releaseAction, releasedTarget, now );
+  }
 
   // =========================================================
   // Phase 10.3.2
@@ -6485,7 +6487,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.6 start" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.7 start" ) );
 
     Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
 
@@ -6545,7 +6547,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.6 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.7 setup complete" ) );
 
     Serial.println();
   }
@@ -7028,7 +7030,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.6" );
+    phaseInfo.add( "10.3.7" );
   }
 };
 
