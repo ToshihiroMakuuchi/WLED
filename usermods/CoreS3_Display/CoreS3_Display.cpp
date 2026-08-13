@@ -8,7 +8,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.11
+// Phase 10.3.13
 //
 // MAIN
 //   Power
@@ -177,6 +177,27 @@
 //   CoreS3 skips the probe entirely, preserving its hardware-tested
 //   I2C ownership, UI, Touch, brightness, WLED operations, and runtime.
 //
+// Phase 10.3.12
+//   Core2-family profiles can now enter an explicit diagnostic-only
+//   runtime selected at build time. In this mode only the read-only
+//   I2C hardware probe runs; Display, Touch sampling, LCD brightness,
+//   Power initialization, UI drawing, and WLED control from the LCD
+//   remain intentionally disabled until the detected hardware is known.
+//   Core2-family profiles require an explicit diagnostic-only build flag,
+//   preventing accidental use of unfinished hardware initialization.
+//   CoreS3 remains the default and keeps the exact Phase 10.3.11 runtime.
+//
+// Phase 10.3.13
+//   Core2 porting preparation is frozen behind an explicit hardware
+//   capability boundary before CoreS3 feature development resumes.
+//   Display runtime, Touch sampling, LCD brightness writes, and Core2
+//   diagnostic probing now have separate compile-time capability flags.
+//   CoreS3 remains the only verified active Display runtime. Core2 and
+//   Core2 for AWS remain diagnostic-only and cannot enter UI/Power runtime.
+//   The existing CoreS3_Display class/config key is intentionally retained
+//   for configuration compatibility while future hardware ports reuse the
+//   hardware-neutral UI/WLED logic. No CoreS3 runtime behavior is changed.
+//
 // Common
 //   Startup animation
 //   Auto suspend
@@ -213,6 +234,14 @@ static const char CORES3_DISPLAY_CONFIG_NAME[] PROGMEM = "CoreS3_Display";
   #define WLED_M5STACK_DISPLAY_REVISION WLED_M5STACK_DISPLAY_REVISION_UNKNOWN
 #endif
 
+// Phase 10.3.12 / 10.3.13
+// Core2 / Core2 for AWS profiles remain diagnostic-only in this phase.
+// An explicit opt-in flag is required so unfinished Display/Power
+// initialization can never be selected accidentally.
+#ifndef WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY
+  #define WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY 0
+#endif
+
 static_assert(
   WLED_M5STACK_DISPLAY_PROFILE >= WLED_M5STACK_DISPLAY_PROFILE_CORES3 &&
   WLED_M5STACK_DISPLAY_PROFILE <= WLED_M5STACK_DISPLAY_PROFILE_CORE2_AWS,
@@ -225,6 +254,25 @@ static_assert(
   WLED_M5STACK_DISPLAY_REVISION == WLED_M5STACK_DISPLAY_REVISION_V1_1 ||
   WLED_M5STACK_DISPLAY_REVISION == WLED_M5STACK_DISPLAY_REVISION_V1_3,
   "Invalid WLED_M5STACK_DISPLAY_REVISION"
+);
+
+static_assert(
+  WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY == 0 ||
+  WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY == 1,
+  "WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY must be 0 or 1"
+);
+
+static_assert(
+  WLED_M5STACK_DISPLAY_PROFILE == WLED_M5STACK_DISPLAY_PROFILE_CORES3 ||
+  WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY == 1,
+  "Core2-family profiles require WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY=1 in Phase 10.3.13"
+);
+
+static_assert(
+  WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY == 0 ||
+  WLED_M5STACK_DISPLAY_PROFILE == WLED_M5STACK_DISPLAY_PROFILE_CORE2 ||
+  WLED_M5STACK_DISPLAY_PROFILE == WLED_M5STACK_DISPLAY_PROFILE_CORE2_AWS,
+  "Diagnostic-only mode is reserved for Core2-family profiles"
 );
 
 enum M5StackDisplayHardwareProfile : uint8_t {
@@ -245,6 +293,33 @@ static constexpr M5StackDisplayHardwareProfile ACTIVE_M5STACK_DISPLAY_PROFILE =
 
 static constexpr M5StackDisplayHardwareRevision ACTIVE_M5STACK_DISPLAY_REVISION =
   static_cast<M5StackDisplayHardwareRevision>( WLED_M5STACK_DISPLAY_REVISION );
+
+
+static constexpr bool ACTIVE_M5STACK_CORE2_DIAGNOSTIC_ONLY =
+  ( WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY == 1 );
+
+// ===========================================================
+// Phase 10.3.13
+// Hardware port capability boundary
+//
+// These flags define the only hardware-dependent runtime features
+// currently allowed for each profile. They intentionally keep the
+// Core2 family diagnostic-only until its Display/Touch/Power path is
+// implemented and verified on real hardware.
+// ===========================================================
+
+static constexpr bool ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED =
+  ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORES3 );
+
+static constexpr bool ACTIVE_M5STACK_TOUCH_RUNTIME_ENABLED =
+  ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED;
+
+static constexpr bool ACTIVE_M5STACK_BRIGHTNESS_RUNTIME_ENABLED =
+  ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED;
+
+static constexpr bool ACTIVE_M5STACK_CORE2_DIAGNOSTIC_PROBE_ENABLED =
+  ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2 ||
+    ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2_AWS );
 
 // ===========================================================
 // Phase 10.3.11
@@ -1182,7 +1257,7 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.11
+  // Phase 10.3.11 / 10.3.12
   // Core2-family read-only hardware diagnostics
   //
   // CoreS3 intentionally skips these probes. Core2 and Core2 for
@@ -1249,6 +1324,51 @@ class CoreS3DisplayUsermod : public Usermod {
 
       case M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3:
         return "Core2 for AWS v1.3 signature";
+
+      case M5STACK_DETECTED_VARIANT_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+
+  bool isCore2FamilyProfile() {
+    return ACTIVE_M5STACK_CORE2_DIAGNOSTIC_PROBE_ENABLED;
+  }
+
+  bool isCore2DiagnosticOnlyMode() {
+    return isCore2FamilyProfile() && ACTIVE_M5STACK_CORE2_DIAGNOSTIC_ONLY;
+  }
+
+  const char* getHardwareRuntimeModeName() {
+    return isCore2DiagnosticOnlyMode() ? "CORE2 DIAGNOSTIC ONLY" : "DISPLAY ACTIVE";
+  }
+
+  const char* getHardwarePortStatusName() {
+    if ( ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED ) {
+      return "CORES3 VERIFIED DISPLAY RUNTIME";
+    }
+
+    if ( isCore2DiagnosticOnlyMode() ) {
+      return "CORE2 PORT PREPARED - DIAGNOSTIC ONLY";
+    }
+
+    return "HARDWARE RUNTIME BLOCKED";
+  }
+
+  const char* getDetectedRevisionName() {
+    switch ( hardwareProbe.variant ) {
+      case M5STACK_DETECTED_VARIANT_CORE2_V1_1:
+        return "v1.1 signature";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3:
+        return "v1.3 signature";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY:
+        return "Legacy MPU6886 generation; exact revision unknown";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_LEGACY:
+        return "Legacy generation; exact revision unknown";
 
       case M5STACK_DETECTED_VARIANT_UNKNOWN:
       default:
@@ -1343,6 +1463,11 @@ class CoreS3DisplayUsermod : public Usermod {
     Serial.println();
 
     Serial.printf(
+      "[CoreS3_Display] Detected revision: %s\n",
+      getDetectedRevisionName()
+    );
+
+    Serial.printf(
       "[CoreS3_Display] Core2 I2C signature: "
       "34=%s 35=%s 38=%s 40=%s 51=%s 68=%s\n",
       hardwareProbe.address34 ? "YES" : "NO",
@@ -1357,7 +1482,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void runHardwareDiagnostics() {
     hardwareProbe = HardwareProbeResult();
 
-    if ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORES3 ) {
+    if ( !ACTIVE_M5STACK_CORE2_DIAGNOSTIC_PROBE_ENABLED ) {
       hardwareProbe.state = M5STACK_HARDWARE_PROBE_NOT_REQUIRED;
 
       Serial.println( F( "[CoreS3_Display] CoreS3 hardware probe skipped (verified profile)" ) );
@@ -1434,8 +1559,8 @@ class CoreS3DisplayUsermod : public Usermod {
     }
   }
 
-  bool isHardwareProfileImplemented() {
-    return ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORES3;
+  bool isHardwareDisplayRuntimeEnabled() {
+    return ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED;
   }
 
   uint8_t getHardwareDisplayRotation() {
@@ -1445,9 +1570,9 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   bool initializeDisplayHardware() {
-    if ( !isHardwareProfileImplemented() ) {
+    if ( !isHardwareDisplayRuntimeEnabled() ) {
       Serial.printf(
-        "[CoreS3_Display] Hardware profile not enabled in Phase 10.3.11: %s (%s)\n",
+        "[CoreS3_Display] Hardware profile not enabled for Display in Phase 10.3.13: %s (%s)\n",
         getHardwareProfileName(),
         getHardwareRevisionName()
       );
@@ -1479,10 +1604,18 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   bool readDisplayTouch( int16_t& touchX, int16_t& touchY ) {
+    if ( !ACTIVE_M5STACK_TOUCH_RUNTIME_ENABLED ) {
+      return false;
+    }
+
     return ( display.getTouch( &touchX, &touchY ) > 0 );
   }
 
   void writeDisplayBrightness( uint8_t value ) {
+    if ( !ACTIVE_M5STACK_BRIGHTNESS_RUNTIME_ENABLED ) {
+      return;
+    }
+
     display.setBrightness( value );
   }
 
@@ -7081,17 +7214,34 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.11 start" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.13 start" ) );
 
     Serial.printf(
-      "[CoreS3_Display] " "Hardware: %s, Revision=%s\n",
+      "[CoreS3_Display] " "Hardware: %s, Revision=%s, Runtime=%s\n",
       getHardwareProfileName(),
-      getHardwareRevisionName()
+      getHardwareRevisionName(),
+      getHardwareRuntimeModeName()
+    );
+
+    Serial.printf(
+      "[CoreS3_Display] " "Port status: %s\n",
+      getHardwarePortStatusName()
     );
 
     Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
 
     runHardwareDiagnostics();
+
+    if ( isCore2DiagnosticOnlyMode() ) {
+      initDone = true;
+
+      Serial.println( F( "[CoreS3_Display] Core2 diagnostic-only runtime complete" ) );
+      Serial.println( F( "[CoreS3_Display] Display/Touch/LCD brightness initialization intentionally skipped" ) );
+      Serial.println( F( "[CoreS3_Display] Capture the hardware probe result before enabling Core2 UI/Power support" ) );
+      Serial.println();
+
+      return;
+    }
 
     if ( !initializeDisplayHardware() ) {
       return;
@@ -7133,7 +7283,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.11 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.13 setup complete" ) );
 
     Serial.println();
   }
@@ -7286,6 +7436,14 @@ class CoreS3DisplayUsermod : public Usermod {
 
     hardwareRevisionInfo.add( getHardwareRevisionName() );
 
+    JsonArray hardwareRuntimeInfo = user.createNestedArray( "M5Stack Runtime Mode" );
+
+    hardwareRuntimeInfo.add( getHardwareRuntimeModeName() );
+
+    JsonArray hardwarePortStatusInfo = user.createNestedArray( "M5Stack Porting Status" );
+
+    hardwarePortStatusInfo.add( getHardwarePortStatusName() );
+
     JsonArray hardwareProbeInfo = user.createNestedArray( "M5Stack Hardware Probe" );
 
     hardwareProbeInfo.add( getHardwareProbeStateName() );
@@ -7293,6 +7451,10 @@ class CoreS3DisplayUsermod : public Usermod {
     JsonArray hardwareVariantInfo = user.createNestedArray( "M5Stack Detected Variant" );
 
     hardwareVariantInfo.add( getDetectedVariantName() );
+
+    JsonArray hardwareDetectedRevisionInfo = user.createNestedArray( "M5Stack Detected Revision" );
+
+    hardwareDetectedRevisionInfo.add( getDetectedRevisionName() );
 
     JsonArray hardwarePmuInfo = user.createNestedArray( "M5Stack Detected PMU" );
 
@@ -7327,7 +7489,10 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray displayInfo = user.createNestedArray( "CoreS3 Display" );
 
-    if (displayReady) {
+    if ( isCore2DiagnosticOnlyMode() ) {
+      displayInfo.add( "DIAGNOSTIC ONLY - NOT INITIALIZED" );
+    }
+    else if (displayReady) {
       char text[32];
 
       snprintf( text, sizeof(text), "READY (%d x %d)", screenWidth, screenHeight );
@@ -7340,7 +7505,17 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray touchInfo = user.createNestedArray( "CoreS3 Display Touch" );
 
-    touchInfo.add( touchReady ? "READY" : "NOT FOUND" );
+    if ( isCore2DiagnosticOnlyMode() ) {
+      if ( hardwareProbe.state == M5STACK_HARDWARE_PROBE_COMPLETE ) {
+        touchInfo.add( hardwareProbe.address38 ? "I2C 0x38 DETECTED - NOT INITIALIZED" : "I2C 0x38 NOT DETECTED" );
+      }
+      else {
+        touchInfo.add( "DIAGNOSTIC PROBE UNAVAILABLE" );
+      }
+    }
+    else {
+      touchInfo.add( touchReady ? "READY" : "NOT FOUND" );
+    }
 
     JsonArray wifiInfo = user.createNestedArray( "CoreS3 Display WiFi" );
 
@@ -7562,7 +7737,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.11" );
+    phaseInfo.add( "10.3.12" );
   }
 };
 
