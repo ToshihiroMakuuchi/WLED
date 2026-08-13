@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.3
+// Phase 10.3.4
 //
 // MAIN
 //   Power
@@ -114,6 +114,13 @@
 //   persisted through WLED's standard configuration writer.
 //   Deleting the configured boot Preset from CoreS3 clears
 //   the boot Preset setting after deletion is verified.
+//
+// Phase 10.3.4
+//   Long-press and repeat timing state is consolidated.
+//   Brightness / Effect / Hue / Saturation / Speed /
+//   Intensity / Palette / Preset share one timing-state type.
+//   Existing timing constants, repeat actions, touch areas,
+//   release behavior, WLED operations, and UI are unchanged.
 //
 // Common
 //   Startup animation
@@ -610,81 +617,27 @@ class CoreS3DisplayUsermod : public Usermod {
   bool presetBootHoldButtonVisualPressed = false;
 
   // =========================================================
-  // Long press state
+  // Phase 10.3.4
+  // Shared long press / repeat timing state
   // =========================================================
 
-  bool brightnessLongPressActive = false;
-  bool effectLongPressActive = false;
+  struct RepeatTouchState {
+    unsigned long pressStart = 0;
+    unsigned long lastRepeat = 0;
+    bool longPressActive = false;
+  };
 
-  bool hueLongPressActive = false;
-  bool saturationLongPressActive = false;
-
-  bool speedLongPressActive = false;
-  bool intensityLongPressActive = false;
-
-  bool paletteLongPressActive = false;
-
-  bool presetLongPressActive = false;
+  RepeatTouchState brightnessRepeatState;
+  RepeatTouchState effectRepeatState;
+  RepeatTouchState hueRepeatState;
+  RepeatTouchState saturationRepeatState;
+  RepeatTouchState speedRepeatState;
+  RepeatTouchState intensityRepeatState;
+  RepeatTouchState paletteRepeatState;
+  RepeatTouchState presetRepeatState;
 
   int16_t lastTouchX = -1;
   int16_t lastTouchY = -1;
-
-  // =========================================================
-  // Brightness timing
-  // =========================================================
-
-  unsigned long controlPressStartTime = 0;
-  unsigned long lastBrightnessRepeat = 0;
-
-  // =========================================================
-  // Effect timing
-  // =========================================================
-
-  unsigned long effectPressStartTime = 0;
-  unsigned long lastEffectRepeat = 0;
-
-  // =========================================================
-  // Hue timing
-  // =========================================================
-
-  unsigned long huePressStartTime = 0;
-  unsigned long lastHueRepeat = 0;
-
-  // =========================================================
-  // Saturation timing
-  // =========================================================
-
-  unsigned long saturationPressStartTime = 0;
-  unsigned long lastSaturationRepeat = 0;
-
-  // =========================================================
-  // Speed timing
-  // =========================================================
-
-  unsigned long speedPressStartTime = 0;
-  unsigned long lastSpeedRepeat = 0;
-
-  // =========================================================
-  // Intensity timing
-  // =========================================================
-
-  unsigned long intensityPressStartTime = 0;
-  unsigned long lastIntensityRepeat = 0;
-
-  // =========================================================
-  // Palette timing
-  // =========================================================
-
-  unsigned long palettePressStartTime = 0;
-  unsigned long lastPaletteRepeat = 0;
-
-  // =========================================================
-  // Phase 10.1
-  // Preset timing
-  // =========================================================
-
-  unsigned long presetPressStartTime = 0;
-  unsigned long lastPresetRepeat = 0;
 
   // =========================================================
   // Hue gesture
@@ -983,6 +936,38 @@ class CoreS3DisplayUsermod : public Usermod {
 
   static constexpr unsigned long PRESET_LONG_PRESS_MS = 400;
   static constexpr unsigned long PRESET_REPEAT_MS = 600;
+
+  // =========================================================
+  // Phase 10.3.4
+  // Shared long press / repeat timing helpers
+  // =========================================================
+
+  void resetRepeatTouch( RepeatTouchState& state ) {
+    state.pressStart = 0;
+    state.lastRepeat = 0;
+    state.longPressActive = false;
+  }
+
+  void beginRepeatTouch( RepeatTouchState& state, unsigned long now ) {
+    state.pressStart = now;
+    state.lastRepeat = now;
+    state.longPressActive = false;
+  }
+
+  bool serviceRepeatTouch( RepeatTouchState& state, unsigned long now, unsigned long longPressMs, unsigned long repeatMs ) {
+    if ( !state.longPressActive && now - state.pressStart >= longPressMs ) {
+      state.longPressActive = true;
+      state.lastRepeat = now;
+      return true;
+    }
+
+    if ( state.longPressActive && now - state.lastRepeat >= repeatMs ) {
+      state.lastRepeat = now;
+      return true;
+    }
+
+    return false;
+  }
 
   // =========================================================
   // Normal LCD brightness
@@ -4369,59 +4354,20 @@ class CoreS3DisplayUsermod : public Usermod {
     presetBootNavButtonVisualPressed = false;
     presetBootHoldButtonVisualPressed = false;
 
-    brightnessLongPressActive = false;
-
-    effectLongPressActive = false;
-
-    hueLongPressActive = false;
-
-    saturationLongPressActive = false;
-
-    speedLongPressActive = false;
-
-    intensityLongPressActive = false;
-
-    paletteLongPressActive = false;
-
-    presetLongPressActive = false;
+    resetRepeatTouch( brightnessRepeatState );
+    resetRepeatTouch( effectRepeatState );
+    resetRepeatTouch( hueRepeatState );
+    resetRepeatTouch( saturationRepeatState );
+    resetRepeatTouch( speedRepeatState );
+    resetRepeatTouch( intensityRepeatState );
+    resetRepeatTouch( paletteRepeatState );
+    resetRepeatTouch( presetRepeatState );
 
     hueEditValid = false;
 
     saturationEditValid = false;
 
     touchReleaseCandidate = 0;
-
-    controlPressStartTime = 0;
-
-    lastBrightnessRepeat = 0;
-
-    effectPressStartTime = 0;
-
-    lastEffectRepeat = 0;
-
-    huePressStartTime = 0;
-
-    lastHueRepeat = 0;
-
-    saturationPressStartTime = 0;
-
-    lastSaturationRepeat = 0;
-
-    speedPressStartTime = 0;
-
-    lastSpeedRepeat = 0;
-
-    intensityPressStartTime = 0;
-
-    lastIntensityRepeat = 0;
-
-    palettePressStartTime = 0;
-
-    lastPaletteRepeat = 0;
-
-    presetPressStartTime = 0;
-
-    lastPresetRepeat = 0;
 
     presetSaveHoldStartTime = 0;
 
@@ -5222,21 +5168,14 @@ class CoreS3DisplayUsermod : public Usermod {
 
       touchTarget = TOUCH_TARGET_NONE;
 
-      brightnessLongPressActive = false;
-
-      effectLongPressActive = false;
-
-      hueLongPressActive = false;
-
-      saturationLongPressActive = false;
-
-      speedLongPressActive = false;
-
-      intensityLongPressActive = false;
-
-      paletteLongPressActive = false;
-
-      presetLongPressActive = false;
+      resetRepeatTouch( brightnessRepeatState );
+      resetRepeatTouch( effectRepeatState );
+      resetRepeatTouch( hueRepeatState );
+      resetRepeatTouch( saturationRepeatState );
+      resetRepeatTouch( speedRepeatState );
+      resetRepeatTouch( intensityRepeatState );
+      resetRepeatTouch( paletteRepeatState );
+      resetRepeatTouch( presetRepeatState );
 
       presetSaveHoldStartTime = 0;
 
@@ -5256,29 +5195,21 @@ class CoreS3DisplayUsermod : public Usermod {
 
           lastTouchInsideBrightness = true;
 
-          controlPressStartTime = now;
-
-          lastBrightnessRepeat = now;
+          beginRepeatTouch( brightnessRepeatState, now );
         }
         else if (hit.insideBrightnessUp) {
           touchTarget = TOUCH_TARGET_BRIGHTNESS_UP;
 
           lastTouchInsideBrightness = true;
 
-          controlPressStartTime = now;
-
-          lastBrightnessRepeat = now;
+          beginRepeatTouch( brightnessRepeatState, now );
         }
         else if (hit.insideEffectPrev) {
           touchTarget = TOUCH_TARGET_EFFECT_PREV;
 
           lastTouchInsideEffect = true;
 
-          effectPressStartTime = now;
-
-          lastEffectRepeat = now;
-
-          effectLongPressActive = false;
+          beginRepeatTouch( effectRepeatState, now );
         }
         else if (hit.insideEffectDetail) {
           touchTarget = TOUCH_TARGET_EFFECT_DETAIL;
@@ -5290,11 +5221,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           lastTouchInsideEffect = true;
 
-          effectPressStartTime = now;
-
-          lastEffectRepeat = now;
-
-          effectLongPressActive = false;
+          beginRepeatTouch( effectRepeatState, now );
         }
         else if (hit.insideColor) {
           touchTarget = TOUCH_TARGET_COLOR_OPEN;
@@ -5319,9 +5246,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           lastTouchInsideHue = true;
 
-          huePressStartTime = now;
-
-          lastHueRepeat = now;
+          beginRepeatTouch( hueRepeatState, now );
 
           beginHueEdit();
         }
@@ -5330,9 +5255,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           lastTouchInsideHue = true;
 
-          huePressStartTime = now;
-
-          lastHueRepeat = now;
+          beginRepeatTouch( hueRepeatState, now );
 
           beginHueEdit();
         }
@@ -5341,9 +5264,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           lastTouchInsideSaturation = true;
 
-          saturationPressStartTime = now;
-
-          lastSaturationRepeat = now;
+          beginRepeatTouch( saturationRepeatState, now );
 
           beginSaturationEdit();
         }
@@ -5352,9 +5273,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           lastTouchInsideSaturation = true;
 
-          saturationPressStartTime = now;
-
-          lastSaturationRepeat = now;
+          beginRepeatTouch( saturationRepeatState, now );
 
           beginSaturationEdit();
         }
@@ -5371,58 +5290,42 @@ class CoreS3DisplayUsermod : public Usermod {
 
           lastTouchInsideSpeed = true;
 
-          speedPressStartTime = now;
-
-          lastSpeedRepeat = now;
+          beginRepeatTouch( speedRepeatState, now );
         }
         else if (hit.insideSpeedUp) {
           touchTarget = TOUCH_TARGET_SPEED_UP;
 
           lastTouchInsideSpeed = true;
 
-          speedPressStartTime = now;
-
-          lastSpeedRepeat = now;
+          beginRepeatTouch( speedRepeatState, now );
         }
         else if (hit.insideIntensityDown) {
           touchTarget = TOUCH_TARGET_INTENSITY_DOWN;
 
           lastTouchInsideIntensity = true;
 
-          intensityPressStartTime = now;
-
-          lastIntensityRepeat = now;
+          beginRepeatTouch( intensityRepeatState, now );
         }
         else if (hit.insideIntensityUp) {
           touchTarget = TOUCH_TARGET_INTENSITY_UP;
 
           lastTouchInsideIntensity = true;
 
-          intensityPressStartTime = now;
-
-          lastIntensityRepeat = now;
+          beginRepeatTouch( intensityRepeatState, now );
         }
         else if (hit.insidePalettePrev) {
           touchTarget = TOUCH_TARGET_PALETTE_PREV;
 
           lastTouchInsidePalette = true;
 
-          palettePressStartTime = now;
-
-          lastPaletteRepeat = now;
-
-          paletteLongPressActive = false;
+          beginRepeatTouch( paletteRepeatState, now );
         }
         else if (hit.insidePaletteNext) {
           touchTarget = TOUCH_TARGET_PALETTE_NEXT;
 
           lastTouchInsidePalette = true;
 
-          palettePressStartTime = now;
-
-          lastPaletteRepeat = now;
-
-          paletteLongPressActive = false;
+          beginRepeatTouch( paletteRepeatState, now );
         }
       }
 
@@ -5437,22 +5340,14 @@ class CoreS3DisplayUsermod : public Usermod {
 
           lastTouchInsidePresetNav = true;
 
-          presetPressStartTime = now;
-
-          lastPresetRepeat = now;
-
-          presetLongPressActive = false;
+          beginRepeatTouch( presetRepeatState, now );
         }
         else if ( presetSubPage == PRESET_SUBPAGE_NAV && hit.insidePresetNext ) {
           touchTarget = TOUCH_TARGET_PRESET_NEXT;
 
           lastTouchInsidePresetNav = true;
 
-          presetPressStartTime = now;
-
-          lastPresetRepeat = now;
-
-          presetLongPressActive = false;
+          beginRepeatTouch( presetRepeatState, now );
         }
         else if ( presetSubPage == PRESET_SUBPAGE_NAV && hit.insidePresetManage ) {
           touchTarget = TOUCH_TARGET_PRESET_MANAGE;
@@ -5583,19 +5478,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( !brightnessLongPressActive && now - controlPressStartTime >= BRI_LONG_PRESS_MS ) {
-        brightnessLongPressActive = true;
-
-        lastBrightnessRepeat = now;
-
-        brightnessLongPressStep( touchTarget );
-
-        return;
-      }
-
-      if ( brightnessLongPressActive && now - lastBrightnessRepeat >= BRI_REPEAT_MS ) {
-        lastBrightnessRepeat = now;
-
+      if ( serviceRepeatTouch( brightnessRepeatState, now, BRI_LONG_PRESS_MS, BRI_REPEAT_MS ) ) {
         brightnessLongPressStep( touchTarget );
       }
 
@@ -5617,19 +5500,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( !effectLongPressActive && now - effectPressStartTime >= EFFECT_LONG_PRESS_MS ) {
-        effectLongPressActive = true;
-
-        lastEffectRepeat = now;
-
-        effectLongPressStep( touchTarget );
-
-        return;
-      }
-
-      if ( effectLongPressActive && now - lastEffectRepeat >= EFFECT_REPEAT_MS ) {
-        lastEffectRepeat = now;
-
+      if ( serviceRepeatTouch( effectRepeatState, now, EFFECT_LONG_PRESS_MS, EFFECT_REPEAT_MS ) ) {
         effectLongPressStep( touchTarget );
       }
 
@@ -5693,19 +5564,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( !hueLongPressActive && now - huePressStartTime >= HUE_LONG_PRESS_MS ) {
-        hueLongPressActive = true;
-
-        lastHueRepeat = now;
-
-        hueLongPressStep( touchTarget );
-
-        return;
-      }
-
-      if ( hueLongPressActive && now - lastHueRepeat >= HUE_REPEAT_MS ) {
-        lastHueRepeat = now;
-
+      if ( serviceRepeatTouch( hueRepeatState, now, HUE_LONG_PRESS_MS, HUE_REPEAT_MS ) ) {
         hueLongPressStep( touchTarget );
       }
 
@@ -5727,19 +5586,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( !saturationLongPressActive && now - saturationPressStartTime >= SATURATION_LONG_PRESS_MS ) {
-        saturationLongPressActive = true;
-
-        lastSaturationRepeat = now;
-
-        saturationLongPressStep( touchTarget );
-
-        return;
-      }
-
-      if ( saturationLongPressActive && now - lastSaturationRepeat >= SATURATION_REPEAT_MS ) {
-        lastSaturationRepeat = now;
-
+      if ( serviceRepeatTouch( saturationRepeatState, now, SATURATION_LONG_PRESS_MS, SATURATION_REPEAT_MS ) ) {
         saturationLongPressStep( touchTarget );
       }
 
@@ -5761,19 +5608,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( !speedLongPressActive && now - speedPressStartTime >= SPEED_LONG_PRESS_MS ) {
-        speedLongPressActive = true;
-
-        lastSpeedRepeat = now;
-
-        speedLongPressStep( touchTarget );
-
-        return;
-      }
-
-      if ( speedLongPressActive && now - lastSpeedRepeat >= SPEED_REPEAT_MS ) {
-        lastSpeedRepeat = now;
-
+      if ( serviceRepeatTouch( speedRepeatState, now, SPEED_LONG_PRESS_MS, SPEED_REPEAT_MS ) ) {
         speedLongPressStep( touchTarget );
       }
 
@@ -5795,19 +5630,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( !intensityLongPressActive && now - intensityPressStartTime >= INTENSITY_LONG_PRESS_MS ) {
-        intensityLongPressActive = true;
-
-        lastIntensityRepeat = now;
-
-        intensityLongPressStep( touchTarget );
-
-        return;
-      }
-
-      if ( intensityLongPressActive && now - lastIntensityRepeat >= INTENSITY_REPEAT_MS ) {
-        lastIntensityRepeat = now;
-
+      if ( serviceRepeatTouch( intensityRepeatState, now, INTENSITY_LONG_PRESS_MS, INTENSITY_REPEAT_MS ) ) {
         intensityLongPressStep( touchTarget );
       }
 
@@ -5829,19 +5652,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( !paletteLongPressActive && now - palettePressStartTime >= PALETTE_LONG_PRESS_MS ) {
-        paletteLongPressActive = true;
-
-        lastPaletteRepeat = now;
-
-        paletteLongPressStep( touchTarget );
-
-        return;
-      }
-
-      if ( paletteLongPressActive && now - lastPaletteRepeat >= PALETTE_REPEAT_MS ) {
-        lastPaletteRepeat = now;
-
+      if ( serviceRepeatTouch( paletteRepeatState, now, PALETTE_LONG_PRESS_MS, PALETTE_REPEAT_MS ) ) {
         paletteLongPressStep( touchTarget );
       }
 
@@ -5863,19 +5674,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( !presetLongPressActive && now - presetPressStartTime >= PRESET_LONG_PRESS_MS ) {
-        presetLongPressActive = true;
-
-        lastPresetRepeat = now;
-
-        presetLongPressStep( touchTarget );
-
-        return;
-      }
-
-      if ( presetLongPressActive && now - lastPresetRepeat >= PRESET_REPEAT_MS ) {
-        lastPresetRepeat = now;
-
+      if ( serviceRepeatTouch( presetRepeatState, now, PRESET_LONG_PRESS_MS, PRESET_REPEAT_MS ) ) {
         presetLongPressStep( touchTarget );
       }
 
@@ -6114,21 +5913,21 @@ class CoreS3DisplayUsermod : public Usermod {
 
     TouchTarget releasedTarget = touchTarget;
 
-    bool wasBrightnessLongPress = brightnessLongPressActive;
+    bool wasBrightnessLongPress = brightnessRepeatState.longPressActive;
 
-    bool wasEffectLongPress = effectLongPressActive;
+    bool wasEffectLongPress = effectRepeatState.longPressActive;
 
-    bool wasHueLongPress = hueLongPressActive;
+    bool wasHueLongPress = hueRepeatState.longPressActive;
 
-    bool wasSaturationLongPress = saturationLongPressActive;
+    bool wasSaturationLongPress = saturationRepeatState.longPressActive;
 
-    bool wasSpeedLongPress = speedLongPressActive;
+    bool wasSpeedLongPress = speedRepeatState.longPressActive;
 
-    bool wasIntensityLongPress = intensityLongPressActive;
+    bool wasIntensityLongPress = intensityRepeatState.longPressActive;
 
-    bool wasPaletteLongPress = paletteLongPressActive;
+    bool wasPaletteLongPress = paletteRepeatState.longPressActive;
 
-    bool wasPresetLongPress = presetLongPressActive;
+    bool wasPresetLongPress = presetRepeatState.longPressActive;
 
     bool executePowerAction = ( releasedTarget == TOUCH_TARGET_POWER ) && lastTouchInsidePower && ( now - lastTouchAction >= TOUCH_ACTION_COOLDOWN_MS );
 
@@ -6802,7 +6601,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.3 start" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.4 start" ) );
 
     Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
 
@@ -6862,7 +6661,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.3 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.4 setup complete" ) );
 
     Serial.println();
   }
@@ -7345,7 +7144,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.3" );
+    phaseInfo.add( "10.3.4" );
   }
 };
 
