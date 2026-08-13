@@ -7,7 +7,7 @@
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.5
+// Phase 10.3.6
 //
 // MAIN
 //   Power
@@ -128,6 +128,13 @@
 //   their existing wrapper functions and exact coordinates.
 //   Touch areas, value logic, long-press/repeat behavior,
 //   WLED operations, and visible UI are unchanged.
+//
+// Phase 10.3.6
+//   Touch-pair hit handling is consolidated in Hold processing.
+//   The TouchHitState snapshot is reused instead of repeating
+//   rectangle hit tests for paired controls.
+//   Press acquisition, release actions, coordinates, timings,
+//   WLED operations, Preset behavior, and visible UI are unchanged.
 //
 // Common
 //   Startup animation
@@ -4904,97 +4911,22 @@ class CoreS3DisplayUsermod : public Usermod {
     }
   }
 
-  bool isInsideSelectedBrightnessButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_BRIGHTNESS_DOWN ) {
-      return isBrightnessDownTouched( x, y );
-    }
+  // =========================================================
+  // Phase 10.3.6
+  // Shared paired-touch helpers
+  // =========================================================
 
-    if ( touchTarget == TOUCH_TARGET_BRIGHTNESS_UP ) {
-      return isBrightnessUpTouched( x, y );
-    }
-
-    return false;
+  bool isTouchTargetPair( TouchTarget target, TouchTarget firstTarget, TouchTarget secondTarget ) {
+    return target == firstTarget || target == secondTarget;
   }
 
-  bool isInsideSelectedEffectButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_EFFECT_PREV ) {
-      return isEffectPrevTouched( x, y );
+  bool isSelectedTouchPairInside( TouchTarget firstTarget, bool firstInside, TouchTarget secondTarget, bool secondInside ) {
+    if ( touchTarget == firstTarget ) {
+      return firstInside;
     }
 
-    if ( touchTarget == TOUCH_TARGET_EFFECT_NEXT ) {
-      return isEffectNextTouched( x, y );
-    }
-
-    return false;
-  }
-
-  bool isInsideSelectedHueButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_HUE_DOWN ) {
-      return isHueDownTouched( x, y );
-    }
-
-    if ( touchTarget == TOUCH_TARGET_HUE_UP ) {
-      return isHueUpTouched( x, y );
-    }
-
-    return false;
-  }
-
-  bool isInsideSelectedSaturationButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_SATURATION_DOWN ) {
-      return isSaturationDownTouched( x, y );
-    }
-
-    if ( touchTarget == TOUCH_TARGET_SATURATION_UP ) {
-      return isSaturationUpTouched( x, y );
-    }
-
-    return false;
-  }
-
-  bool isInsideSelectedSpeedButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_SPEED_DOWN ) {
-      return isSpeedDownTouched( x, y );
-    }
-
-    if ( touchTarget == TOUCH_TARGET_SPEED_UP ) {
-      return isSpeedUpTouched( x, y );
-    }
-
-    return false;
-  }
-
-  bool isInsideSelectedIntensityButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_INTENSITY_DOWN ) {
-      return isIntensityDownTouched( x, y );
-    }
-
-    if ( touchTarget == TOUCH_TARGET_INTENSITY_UP ) {
-      return isIntensityUpTouched( x, y );
-    }
-
-    return false;
-  }
-
-  bool isInsideSelectedPaletteButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_PALETTE_PREV ) {
-      return isPalettePrevTouched( x, y );
-    }
-
-    if ( touchTarget == TOUCH_TARGET_PALETTE_NEXT ) {
-      return isPaletteNextTouched( x, y );
-    }
-
-    return false;
-  }
-
-  bool isInsideSelectedPresetButton( int16_t x, int16_t y ) {
-    if ( touchTarget == TOUCH_TARGET_PRESET_PREV ) {
-      return isPresetPrevTouched( x, y );
-    }
-
-    if ( touchTarget == TOUCH_TARGET_PRESET_NEXT ) {
-      return isPresetNextTouched( x, y );
+    if ( touchTarget == secondTarget ) {
+      return secondInside;
     }
 
     return false;
@@ -5404,7 +5336,7 @@ class CoreS3DisplayUsermod : public Usermod {
   // Preserves pressed visuals, long-press and repeat behavior.
   // =========================================================
 
-  void handleTouchHold( const TouchHitState& hit, int16_t touchX, int16_t touchY, unsigned long now ) {
+  void handleTouchHold( const TouchHitState& hit, unsigned long now ) {
     if ( touchTarget == TOUCH_TARGET_POWER ) {
       lastTouchInsidePower = hit.insidePower;
 
@@ -5415,8 +5347,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_BRIGHTNESS_DOWN || touchTarget == TOUCH_TARGET_BRIGHTNESS_UP ) {
-      bool insideSelectedButton = isInsideSelectedBrightnessButton( touchX, touchY );
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_BRIGHTNESS_DOWN, TOUCH_TARGET_BRIGHTNESS_UP ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_BRIGHTNESS_DOWN, hit.insideBrightnessDown, TOUCH_TARGET_BRIGHTNESS_UP, hit.insideBrightnessUp );
 
       lastTouchInsideBrightness = insideSelectedButton;
 
@@ -5437,8 +5369,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_EFFECT_PREV || touchTarget == TOUCH_TARGET_EFFECT_NEXT ) {
-      bool insideSelectedButton = isInsideSelectedEffectButton( touchX, touchY );
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_EFFECT_PREV, TOUCH_TARGET_EFFECT_NEXT ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_EFFECT_PREV, hit.insideEffectPrev, TOUCH_TARGET_EFFECT_NEXT, hit.insideEffectNext );
 
       lastTouchInsideEffect = insideSelectedButton;
 
@@ -5460,7 +5392,7 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     if ( touchTarget == TOUCH_TARGET_EFFECT_DETAIL ) {
-      bool insideSelectedButton = isEffectDetailTouched( touchX, touchY );
+      bool insideSelectedButton = hit.insideEffectDetail;
 
       lastTouchInsideEffectDetail = insideSelectedButton;
 
@@ -5501,8 +5433,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_HUE_DOWN || touchTarget == TOUCH_TARGET_HUE_UP ) {
-      bool insideSelectedButton = isInsideSelectedHueButton( touchX, touchY );
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_HUE_DOWN, TOUCH_TARGET_HUE_UP ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_HUE_DOWN, hit.insideHueDown, TOUCH_TARGET_HUE_UP, hit.insideHueUp );
 
       lastTouchInsideHue = insideSelectedButton;
 
@@ -5523,8 +5455,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_SATURATION_DOWN || touchTarget == TOUCH_TARGET_SATURATION_UP ) {
-      bool insideSelectedButton = isInsideSelectedSaturationButton( touchX, touchY );
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_SATURATION_DOWN, TOUCH_TARGET_SATURATION_UP ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_SATURATION_DOWN, hit.insideSaturationDown, TOUCH_TARGET_SATURATION_UP, hit.insideSaturationUp );
 
       lastTouchInsideSaturation = insideSelectedButton;
 
@@ -5545,8 +5477,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_SPEED_DOWN || touchTarget == TOUCH_TARGET_SPEED_UP ) {
-      bool insideSelectedButton = isInsideSelectedSpeedButton( touchX, touchY );
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_SPEED_DOWN, TOUCH_TARGET_SPEED_UP ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_SPEED_DOWN, hit.insideSpeedDown, TOUCH_TARGET_SPEED_UP, hit.insideSpeedUp );
 
       lastTouchInsideSpeed = insideSelectedButton;
 
@@ -5567,8 +5499,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_INTENSITY_DOWN || touchTarget == TOUCH_TARGET_INTENSITY_UP ) {
-      bool insideSelectedButton = isInsideSelectedIntensityButton( touchX, touchY );
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_INTENSITY_DOWN, TOUCH_TARGET_INTENSITY_UP ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_INTENSITY_DOWN, hit.insideIntensityDown, TOUCH_TARGET_INTENSITY_UP, hit.insideIntensityUp );
 
       lastTouchInsideIntensity = insideSelectedButton;
 
@@ -5589,8 +5521,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_PALETTE_PREV || touchTarget == TOUCH_TARGET_PALETTE_NEXT ) {
-      bool insideSelectedButton = isInsideSelectedPaletteButton( touchX, touchY );
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_PALETTE_PREV, TOUCH_TARGET_PALETTE_NEXT ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_PALETTE_PREV, hit.insidePalettePrev, TOUCH_TARGET_PALETTE_NEXT, hit.insidePaletteNext );
 
       lastTouchInsidePalette = insideSelectedButton;
 
@@ -5611,8 +5543,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_PRESET_PREV || touchTarget == TOUCH_TARGET_PRESET_NEXT ) {
-      bool insideSelectedButton = isInsideSelectedPresetButton( touchX, touchY );
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_PRESET_PREV, TOUCH_TARGET_PRESET_NEXT ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_PRESET_PREV, hit.insidePresetPrev, TOUCH_TARGET_PRESET_NEXT, hit.insidePresetNext );
 
       lastTouchInsidePresetNav = insideSelectedButton;
 
@@ -5691,8 +5623,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV || touchTarget == TOUCH_TARGET_PRESET_OVERWRITE_NEXT ) {
-      bool insideSelectedButton = ( touchTarget == TOUCH_TARGET_PRESET_OVERWRITE_PREV ) ? hit.insidePresetOverwritePrev : hit.insidePresetOverwriteNext;
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_PRESET_OVERWRITE_PREV, TOUCH_TARGET_PRESET_OVERWRITE_NEXT ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_PRESET_OVERWRITE_PREV, hit.insidePresetOverwritePrev, TOUCH_TARGET_PRESET_OVERWRITE_NEXT, hit.insidePresetOverwriteNext );
 
       lastTouchInsidePresetOverwriteNav = insideSelectedButton;
 
@@ -5743,8 +5675,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_PRESET_DELETE_PREV || touchTarget == TOUCH_TARGET_PRESET_DELETE_NEXT ) {
-      bool insideSelectedButton = ( touchTarget == TOUCH_TARGET_PRESET_DELETE_PREV ) ? hit.insidePresetDeletePrev : hit.insidePresetDeleteNext;
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_PRESET_DELETE_PREV, TOUCH_TARGET_PRESET_DELETE_NEXT ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_PRESET_DELETE_PREV, hit.insidePresetDeletePrev, TOUCH_TARGET_PRESET_DELETE_NEXT, hit.insidePresetDeleteNext );
 
       lastTouchInsidePresetDeleteNav = insideSelectedButton;
 
@@ -5795,8 +5727,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( touchTarget == TOUCH_TARGET_PRESET_BOOT_PREV || touchTarget == TOUCH_TARGET_PRESET_BOOT_NEXT ) {
-      bool insideSelectedButton = ( touchTarget == TOUCH_TARGET_PRESET_BOOT_PREV ) ? hit.insidePresetBootPrev : hit.insidePresetBootNext;
+    if ( isTouchTargetPair( touchTarget, TOUCH_TARGET_PRESET_BOOT_PREV, TOUCH_TARGET_PRESET_BOOT_NEXT ) ) {
+      bool insideSelectedButton = isSelectedTouchPairInside( TOUCH_TARGET_PRESET_BOOT_PREV, hit.insidePresetBootPrev, TOUCH_TARGET_PRESET_BOOT_NEXT, hit.insidePresetBootNext );
 
       lastTouchInsidePresetBootNav = insideSelectedButton;
 
@@ -6452,7 +6384,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
       handleTouchPress( hit, now );
 
-      handleTouchHold( hit, touchX, touchY, now );
+      handleTouchHold( hit, now );
 
       return;
     }
@@ -6553,7 +6485,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.5 start" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.6 start" ) );
 
     Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
 
@@ -6613,7 +6545,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.5 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.6 setup complete" ) );
 
     Serial.println();
   }
@@ -7096,7 +7028,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.5" );
+    phaseInfo.add( "10.3.6" );
   }
 };
 
