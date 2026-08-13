@@ -1,13 +1,14 @@
 #include "wled.h"
 #include <WiFi.h>
 #include <M5GFX.h>
+#include <Wire.h>
 
 #include "CoreS3_WLED_Logo.h"
 
 // ===========================================================
 // CoreS3 Display Usermod
 //
-// Phase 10.3.10
+// Phase 10.3.11
 //
 // MAIN
 //   Power
@@ -168,6 +169,14 @@
 //   The active CoreS3 profile keeps the exact Phase 10.3.9 UI,
 //   Touch, brightness, timings, WLED operations, and synchronization.
 //
+// Phase 10.3.11
+//   Read-only Core2-family hardware diagnostics are added behind
+//   the hardware-profile boundary. The diagnostic probe uses the
+//   official Core2 internal I2C pins and classifies PMU/IMU/variant
+//   signatures without enabling Core2 display or power control yet.
+//   CoreS3 skips the probe entirely, preserving its hardware-tested
+//   I2C ownership, UI, Touch, brightness, WLED operations, and runtime.
+//
 // Common
 //   Startup animation
 //   Auto suspend
@@ -236,6 +245,38 @@ static constexpr M5StackDisplayHardwareProfile ACTIVE_M5STACK_DISPLAY_PROFILE =
 
 static constexpr M5StackDisplayHardwareRevision ACTIVE_M5STACK_DISPLAY_REVISION =
   static_cast<M5StackDisplayHardwareRevision>( WLED_M5STACK_DISPLAY_REVISION );
+
+// ===========================================================
+// Phase 10.3.11
+// Core2-family read-only hardware diagnostic classifications
+// ===========================================================
+
+enum M5StackHardwareProbeState : uint8_t {
+  M5STACK_HARDWARE_PROBE_NOT_REQUIRED = 0,
+  M5STACK_HARDWARE_PROBE_NOT_RUN,
+  M5STACK_HARDWARE_PROBE_COMPLETE,
+  M5STACK_HARDWARE_PROBE_FAILED
+};
+
+enum M5StackDetectedPmu : uint8_t {
+  M5STACK_DETECTED_PMU_UNKNOWN = 0,
+  M5STACK_DETECTED_PMU_AXP192,
+  M5STACK_DETECTED_PMU_AXP2101
+};
+
+enum M5StackDetectedImu : uint8_t {
+  M5STACK_DETECTED_IMU_UNKNOWN = 0,
+  M5STACK_DETECTED_IMU_MPU6886,
+  M5STACK_DETECTED_IMU_BMI270
+};
+
+enum M5StackDetectedVariant : uint8_t {
+  M5STACK_DETECTED_VARIANT_UNKNOWN = 0,
+  M5STACK_DETECTED_VARIANT_CORE2_LEGACY,
+  M5STACK_DETECTED_VARIANT_CORE2_V1_1,
+  M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY,
+  M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3
+};
 
 // ===========================================================
 // Phase 10.3.1
@@ -309,6 +350,33 @@ class CoreS3DisplayUsermod : public Usermod {
   unsigned long lastTouchPoll = 0;
   unsigned long lastTouchAction = 0;
   unsigned long touchReleaseCandidate = 0;
+
+  // =========================================================
+  // Phase 10.3.11
+  // Core2-family hardware diagnostic result
+  // =========================================================
+
+  struct HardwareProbeResult {
+    M5StackHardwareProbeState state = M5STACK_HARDWARE_PROBE_NOT_RUN;
+    M5StackDetectedPmu pmu = M5STACK_DETECTED_PMU_UNKNOWN;
+    M5StackDetectedImu imu = M5STACK_DETECTED_IMU_UNKNOWN;
+    M5StackDetectedVariant variant = M5STACK_DETECTED_VARIANT_UNKNOWN;
+
+    bool address34 = false;
+    bool address35 = false;
+    bool address38 = false;
+    bool address40 = false;
+    bool address51 = false;
+    bool address68 = false;
+
+    uint8_t imuChipId = 0;
+  };
+
+  HardwareProbeResult hardwareProbe;
+
+  static constexpr int CORE2_INTERNAL_I2C_SDA = 21;
+  static constexpr int CORE2_INTERNAL_I2C_SCL = 22;
+  static constexpr uint32_t CORE2_INTERNAL_I2C_FREQUENCY = 400000;
 
   // =========================================================
   // Wi-Fi state
@@ -1114,6 +1182,218 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
+  // Phase 10.3.11
+  // Core2-family read-only hardware diagnostics
+  //
+  // CoreS3 intentionally skips these probes. Core2 and Core2 for
+  // AWS share internal I2C on SDA=21 / SCL=22. The probe only
+  // reads address presence and IMU identity registers; it does not
+  // configure PMU, Touch, RTC, secure element, or IMU hardware.
+  // =========================================================
+
+  const char* getHardwareProbeStateName() {
+    switch ( hardwareProbe.state ) {
+      case M5STACK_HARDWARE_PROBE_NOT_REQUIRED:
+        return "NOT REQUIRED";
+
+      case M5STACK_HARDWARE_PROBE_COMPLETE:
+        return "COMPLETE";
+
+      case M5STACK_HARDWARE_PROBE_FAILED:
+        return "FAILED";
+
+      case M5STACK_HARDWARE_PROBE_NOT_RUN:
+      default:
+        return "NOT RUN";
+    }
+  }
+
+  const char* getDetectedPmuName() {
+    switch ( hardwareProbe.pmu ) {
+      case M5STACK_DETECTED_PMU_AXP192:
+        return "AXP192 signature";
+
+      case M5STACK_DETECTED_PMU_AXP2101:
+        return "AXP2101 signature";
+
+      case M5STACK_DETECTED_PMU_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+  const char* getDetectedImuName() {
+    switch ( hardwareProbe.imu ) {
+      case M5STACK_DETECTED_IMU_MPU6886:
+        return "MPU6886";
+
+      case M5STACK_DETECTED_IMU_BMI270:
+        return "BMI270";
+
+      case M5STACK_DETECTED_IMU_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+  const char* getDetectedVariantName() {
+    switch ( hardwareProbe.variant ) {
+      case M5STACK_DETECTED_VARIANT_CORE2_LEGACY:
+        return "Core2 legacy signature";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_V1_1:
+        return "Core2 v1.1 signature";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY:
+        return "Core2 for AWS MPU6886 generation";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3:
+        return "Core2 for AWS v1.3 signature";
+
+      case M5STACK_DETECTED_VARIANT_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+  bool probeI2CAddress( TwoWire& wire, uint8_t address ) {
+    wire.beginTransmission( address );
+
+    return wire.endTransmission() == 0;
+  }
+
+  bool readI2CRegister8( TwoWire& wire, uint8_t address, uint8_t reg, uint8_t& value ) {
+    wire.beginTransmission( address );
+    wire.write( reg );
+
+    if ( wire.endTransmission( false ) != 0 ) {
+      return false;
+    }
+
+    size_t received = wire.requestFrom( address, (size_t)1, true );
+
+    if ( received != 1 || !wire.available() ) {
+      return false;
+    }
+
+    value = (uint8_t)wire.read();
+
+    return true;
+  }
+
+  void classifyCore2HardwareProbe( TwoWire& wire ) {
+    if ( hardwareProbe.address68 ) {
+      uint8_t chipId = 0;
+
+      // BMI270 CHIP_ID register 0x00 returns 0x24.
+      if ( readI2CRegister8( wire, 0x68, 0x00, chipId ) && chipId == 0x24 ) {
+        hardwareProbe.imu = M5STACK_DETECTED_IMU_BMI270;
+        hardwareProbe.imuChipId = chipId;
+      }
+      else {
+        // MPU6886 WHO_AM_I register 0x75 returns 0x19.
+        if ( readI2CRegister8( wire, 0x68, 0x75, chipId ) && chipId == 0x19 ) {
+          hardwareProbe.imu = M5STACK_DETECTED_IMU_MPU6886;
+          hardwareProbe.imuChipId = chipId;
+        }
+      }
+    }
+
+    if ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2_AWS ) {
+      if ( hardwareProbe.address34 ) {
+        // Both documented Core2 for AWS generations use AXP192.
+        hardwareProbe.pmu = M5STACK_DETECTED_PMU_AXP192;
+      }
+
+      if ( hardwareProbe.imu == M5STACK_DETECTED_IMU_BMI270 ) {
+        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3;
+      }
+      else if ( hardwareProbe.imu == M5STACK_DETECTED_IMU_MPU6886 ) {
+        // Official legacy Core2 for AWS documentation identifies MPU6886,
+        // but does not assign the v1.0 / v1.1 name here. Keep it generic.
+        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY;
+      }
+    }
+    else if ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2 ) {
+      if ( hardwareProbe.address34 && hardwareProbe.address40 ) {
+        // Core2 v1.1 signature: AXP2101 + INA3221.
+        hardwareProbe.pmu = M5STACK_DETECTED_PMU_AXP2101;
+        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_V1_1;
+      }
+      else if ( hardwareProbe.address34 ) {
+        hardwareProbe.pmu = M5STACK_DETECTED_PMU_AXP192;
+        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_LEGACY;
+      }
+    }
+  }
+
+  void printCore2HardwareProbeResult() {
+    Serial.printf(
+      "[CoreS3_Display] Hardware probe: %s, Variant=%s, PMU=%s, IMU=%s",
+      getHardwareProbeStateName(),
+      getDetectedVariantName(),
+      getDetectedPmuName(),
+      getDetectedImuName()
+    );
+
+    if ( hardwareProbe.imuChipId > 0 ) {
+      Serial.printf( " (ID=0x%02X)", hardwareProbe.imuChipId );
+    }
+
+    Serial.println();
+
+    Serial.printf(
+      "[CoreS3_Display] Core2 I2C signature: "
+      "34=%s 35=%s 38=%s 40=%s 51=%s 68=%s\n",
+      hardwareProbe.address34 ? "YES" : "NO",
+      hardwareProbe.address35 ? "YES" : "NO",
+      hardwareProbe.address38 ? "YES" : "NO",
+      hardwareProbe.address40 ? "YES" : "NO",
+      hardwareProbe.address51 ? "YES" : "NO",
+      hardwareProbe.address68 ? "YES" : "NO"
+    );
+  }
+
+  void runHardwareDiagnostics() {
+    hardwareProbe = HardwareProbeResult();
+
+    if ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORES3 ) {
+      hardwareProbe.state = M5STACK_HARDWARE_PROBE_NOT_REQUIRED;
+
+      Serial.println( F( "[CoreS3_Display] CoreS3 hardware probe skipped (verified profile)" ) );
+
+      return;
+    }
+
+    TwoWire probeWire( 1 );
+
+    if ( !probeWire.begin( CORE2_INTERNAL_I2C_SDA, CORE2_INTERNAL_I2C_SCL, CORE2_INTERNAL_I2C_FREQUENCY ) ) {
+      hardwareProbe.state = M5STACK_HARDWARE_PROBE_FAILED;
+
+      Serial.println( F( "[CoreS3_Display] ERROR: Core2 diagnostic I2C start failed" ) );
+
+      return;
+    }
+
+    delay( 10 );
+
+    hardwareProbe.address34 = probeI2CAddress( probeWire, 0x34 );
+    hardwareProbe.address35 = probeI2CAddress( probeWire, 0x35 );
+    hardwareProbe.address38 = probeI2CAddress( probeWire, 0x38 );
+    hardwareProbe.address40 = probeI2CAddress( probeWire, 0x40 );
+    hardwareProbe.address51 = probeI2CAddress( probeWire, 0x51 );
+    hardwareProbe.address68 = probeI2CAddress( probeWire, 0x68 );
+
+    classifyCore2HardwareProbe( probeWire );
+
+    probeWire.end();
+
+    hardwareProbe.state = M5STACK_HARDWARE_PROBE_COMPLETE;
+
+    printCore2HardwareProbeResult();
+  }
+
+  // =========================================================
   // Phase 10.3.9
   // Display / Touch hardware access boundary
   //
@@ -1167,7 +1447,7 @@ class CoreS3DisplayUsermod : public Usermod {
   bool initializeDisplayHardware() {
     if ( !isHardwareProfileImplemented() ) {
       Serial.printf(
-        "[CoreS3_Display] Hardware profile not enabled in Phase 10.3.10: %s (%s)\n",
+        "[CoreS3_Display] Hardware profile not enabled in Phase 10.3.11: %s (%s)\n",
         getHardwareProfileName(),
         getHardwareRevisionName()
       );
@@ -6801,7 +7081,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.10 start" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.11 start" ) );
 
     Serial.printf(
       "[CoreS3_Display] " "Hardware: %s, Revision=%s\n",
@@ -6810,6 +7090,8 @@ class CoreS3DisplayUsermod : public Usermod {
     );
 
     Serial.printf( "[CoreS3_Display] " "Settings: " "Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
+
+    runHardwareDiagnostics();
 
     if ( !initializeDisplayHardware() ) {
       return;
@@ -6851,7 +7133,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.10 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.11 setup complete" ) );
 
     Serial.println();
   }
@@ -7003,6 +7285,45 @@ class CoreS3DisplayUsermod : public Usermod {
     JsonArray hardwareRevisionInfo = user.createNestedArray( "M5Stack Hardware Revision" );
 
     hardwareRevisionInfo.add( getHardwareRevisionName() );
+
+    JsonArray hardwareProbeInfo = user.createNestedArray( "M5Stack Hardware Probe" );
+
+    hardwareProbeInfo.add( getHardwareProbeStateName() );
+
+    JsonArray hardwareVariantInfo = user.createNestedArray( "M5Stack Detected Variant" );
+
+    hardwareVariantInfo.add( getDetectedVariantName() );
+
+    JsonArray hardwarePmuInfo = user.createNestedArray( "M5Stack Detected PMU" );
+
+    hardwarePmuInfo.add( getDetectedPmuName() );
+
+    JsonArray hardwareImuInfo = user.createNestedArray( "M5Stack Detected IMU" );
+
+    hardwareImuInfo.add( getDetectedImuName() );
+
+    JsonArray hardwareCore2I2cInfo = user.createNestedArray( "M5Stack Core2 I2C Signature" );
+
+    if ( hardwareProbe.state == M5STACK_HARDWARE_PROBE_COMPLETE ) {
+      char signature[64];
+
+      snprintf(
+        signature,
+        sizeof(signature),
+        "34:%c 35:%c 38:%c 40:%c 51:%c 68:%c",
+        hardwareProbe.address34 ? 'Y' : 'N',
+        hardwareProbe.address35 ? 'Y' : 'N',
+        hardwareProbe.address38 ? 'Y' : 'N',
+        hardwareProbe.address40 ? 'Y' : 'N',
+        hardwareProbe.address51 ? 'Y' : 'N',
+        hardwareProbe.address68 ? 'Y' : 'N'
+      );
+
+      hardwareCore2I2cInfo.add( signature );
+    }
+    else {
+      hardwareCore2I2cInfo.add( "Not probed" );
+    }
 
     JsonArray displayInfo = user.createNestedArray( "CoreS3 Display" );
 
@@ -7241,7 +7562,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
 
-    phaseInfo.add( "10.3.10" );
+    phaseInfo.add( "10.3.11" );
   }
 };
 
