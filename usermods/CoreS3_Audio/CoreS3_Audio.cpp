@@ -2,10 +2,14 @@
 #include <M5GFX.h>
 #include <driver/i2c.h>
 
+// Phase 10.4.2P-V17e diagnostics
+#include <esp_system.h>
+#include <esp_heap_caps.h>
+
 // ===========================================================
 // CoreS3 Audio Usermod
 //
-// Phase 10.4.2
+// Phase 10.4.2P-V17e
 //
 // Purpose
 //   - Access the CoreS3 internal I2C bus through the same
@@ -17,6 +21,7 @@
 //   - Publish codec readiness to WLED Audio Reactive.
 //   - Leave I2S_NUM_1 / PCM / FFT ownership exclusively to Audio Reactive.
 //   - Report codec / integration readiness to Serial and WLED Info.
+//   - Diagnose V17 unexpected resets without changing the audio architecture.
 //
 // This phase intentionally does NOT:
 //   - install or read I2S,
@@ -51,7 +56,15 @@
 //   so after M5GFX initialization it could no longer see the same
 //   internal devices. Audio now uses lgfx::i2c transactions on
 //   I2C_NUM_1 and never calls i2c/Wire begin or release.
+//
+// Phase 10.4.2P-V17e diagnostic change
+//   - Print the previous ESP-IDF reset reason at every boot.
+//   - Print PSRAM / heap state at boot.
+//   - Print a lightweight runtime heartbeat every 10 seconds.
+//   - Do not change the current V17 platform, PSRAM, RMT, I2S,
+//     codec, Display, Touch, or AudioReactive behavior.
 // ===========================================================
+
 static volatile bool coreS3AudioCodecReadyState = false;
 
 extern "C" bool coreS3AudioCodecReady()
@@ -72,7 +85,6 @@ private:
 
   static constexpr uint8_t ES7210_ADDR = 0x40;
   static constexpr uint8_t AXP2101_ADDR = 0x34;
-
   static constexpr int CORES3_I2C_SDA = 12;
   static constexpr int CORES3_I2C_SCL = 11;
   static constexpr i2c_port_t CORES3_INTERNAL_I2C_PORT = I2C_NUM_1;
@@ -83,7 +95,6 @@ private:
   static constexpr int AUDIO_WS_PIN = 33;
   static constexpr int AUDIO_DATA_IN_PIN = 14;
   static constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
-
   static constexpr unsigned long AUDIO_INIT_DELAY_MS = 2500;
   static constexpr unsigned long AUDIO_INIT_RETRY_MS = 1000;
   static constexpr uint8_t AUDIO_INIT_MAX_ATTEMPTS = 5;
@@ -97,7 +108,6 @@ private:
   bool es7210Found = false;
   bool es7210Configured = false;
   bool initializationFinished = false;
-
   uint8_t initAttemptCount = 0;
 
   unsigned long setupStartMs = 0;
@@ -108,6 +118,161 @@ private:
   uint8_t axp2101Reg90 = 0;
   uint8_t axp2101Reg93 = 0;
   uint8_t es7210ProbeReg00 = 0;
+
+  // ---------------------------------------------------------
+  // Phase 10.4.2P-V17e boot / runtime diagnostics
+  // ---------------------------------------------------------
+
+  static constexpr unsigned long DIAG_INTERVAL_MS = 10000;
+  unsigned long lastDiagMs = 0;
+
+  const char* getResetReasonName(esp_reset_reason_t reason) const
+  {
+    switch (reason) {
+      case ESP_RST_UNKNOWN:
+        return "UNKNOWN";
+
+      case ESP_RST_POWERON:
+        return "POWERON";
+
+      case ESP_RST_EXT:
+        return "EXTERNAL";
+
+      case ESP_RST_SW:
+        return "SOFTWARE";
+
+      case ESP_RST_PANIC:
+        return "PANIC";
+
+      case ESP_RST_INT_WDT:
+        return "INTERRUPT_WDT";
+
+      case ESP_RST_TASK_WDT:
+        return "TASK_WDT";
+
+      case ESP_RST_WDT:
+        return "OTHER_WDT";
+
+      case ESP_RST_DEEPSLEEP:
+        return "DEEPSLEEP";
+
+      case ESP_RST_BROWNOUT:
+        return "BROWNOUT";
+
+      case ESP_RST_SDIO:
+        return "SDIO";
+
+      case ESP_RST_USB:
+        return "USB";
+
+      case ESP_RST_JTAG:
+        return "JTAG";
+
+      case ESP_RST_EFUSE:
+        return "EFUSE";
+
+      case ESP_RST_PWR_GLITCH:
+        return "POWER_GLITCH";
+
+      case ESP_RST_CPU_LOCKUP:
+        return "CPU_LOCKUP";
+
+      default:
+        return "OTHER";
+    }
+  }
+
+  void printBootDiagnostics()
+  {
+    const esp_reset_reason_t reason = esp_reset_reason();
+
+    const size_t psramTotal =
+      heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+
+    const size_t psramFree =
+      heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+
+    const size_t psramLargest =
+      heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
+
+    const uint32_t heapFree =
+      esp_get_free_heap_size();
+
+    const uint32_t internalHeapFree =
+      esp_get_free_internal_heap_size();
+
+    const uint32_t minimumHeap =
+      esp_get_minimum_free_heap_size();
+
+    Serial.println();
+    Serial.println(F("============================================================"));
+    Serial.println(F("[CoreS3_DIAG] Phase 10.4.2P-V17e boot diagnostics"));
+
+    Serial.printf(
+      "[CoreS3_DIAG] Reset reason: %d (%s)\n",
+      static_cast<int>(reason),
+      getResetReasonName(reason)
+    );
+
+    Serial.printf(
+      "[CoreS3_DIAG] PSRAM total : %lu bytes (%.2f MB)\n",
+      static_cast<unsigned long>(psramTotal),
+      static_cast<double>(psramTotal) / 1048576.0
+    );
+
+    Serial.printf(
+      "[CoreS3_DIAG] PSRAM free  : %lu bytes (%.2f MB)\n",
+      static_cast<unsigned long>(psramFree),
+      static_cast<double>(psramFree) / 1048576.0
+    );
+
+    Serial.printf(
+      "[CoreS3_DIAG] PSRAM largest block: %lu bytes\n",
+      static_cast<unsigned long>(psramLargest)
+    );
+
+    Serial.printf(
+      "[CoreS3_DIAG] Heap free   : %lu bytes\n",
+      static_cast<unsigned long>(heapFree)
+    );
+
+    Serial.printf(
+      "[CoreS3_DIAG] Internal heap free: %lu bytes\n",
+      static_cast<unsigned long>(internalHeapFree)
+    );
+
+    Serial.printf(
+      "[CoreS3_DIAG] Minimum free heap : %lu bytes\n",
+      static_cast<unsigned long>(minimumHeap)
+    );
+
+    Serial.println(F("============================================================"));
+    Serial.println();
+  }
+
+  void printRuntimeDiagnostics(unsigned long now)
+  {
+    const size_t psramFree =
+      heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+
+    const uint32_t heapFree =
+      esp_get_free_heap_size();
+
+    const uint32_t internalHeapFree =
+      esp_get_free_internal_heap_size();
+
+    const uint32_t minimumHeap =
+      esp_get_minimum_free_heap_size();
+
+    Serial.printf(
+      "[CoreS3_DIAG] Alive=%lus Heap=%lu Internal=%lu MinHeap=%lu PSRAM_Free=%lu\n",
+      now / 1000UL,
+      static_cast<unsigned long>(heapFree),
+      static_cast<unsigned long>(internalHeapFree),
+      static_cast<unsigned long>(minimumHeap),
+      static_cast<unsigned long>(psramFree)
+    );
+  }
 
   // ---------------------------------------------------------
   // CoreS3 internal audio pin reservation
@@ -162,7 +327,7 @@ private:
     }
 
     const managed_pin_type audioPins[] = {
-      { AUDIO_MCLK_PIN, true  }, // ES7210 master clock output
+      { AUDIO_MCLK_PIN, true  },  // ES7210 master clock output
       { AUDIO_DATA_IN_PIN, false } // ES7210 PCM data input
     };
 
@@ -437,6 +602,7 @@ private:
     if (coreS3AudioReactiveSourceReady()) {
       return "READY - AudioReactive";
     }
+
     return "CODEC READY - waiting AudioReactive";
 #else
     return "AUDIOREACTIVE BUILD FLAG MISSING";
@@ -451,7 +617,12 @@ public:
   void setup() override
   {
     Serial.println();
-    Serial.println(F("[CoreS3_Audio] Phase 10.4.2 start"));
+    Serial.println(F("[CoreS3_Audio] Phase 10.4.2P-V17e start"));
+
+    // Diagnostic only: records why the previous boot ended and confirms
+    // that the V17 Quad-PSRAM configuration is active.
+    printBootDiagnostics();
+
     Serial.println(F("[CoreS3_Audio] Built-in microphone / Audio Reactive integration"));
 
     Serial.printf(
@@ -463,9 +634,11 @@ public:
     Serial.println(
       F("[CoreS3_Audio] Internal codec access: M5GFX I2C_NUM_1 GPIO12/GPIO11")
     );
+
     Serial.println(
       F("[CoreS3_Audio] Audio will not reinitialize the shared internal I2C bus")
     );
+
     Serial.println(F("[CoreS3_Audio] Audio hardware initialization is deferred"));
 
     audioPinsReserved = reserveInternalAudioPins();
@@ -477,6 +650,9 @@ public:
 
     setupStartMs = millis();
     lastInitAttemptMs = setupStartMs;
+
+    // Start heartbeat timing from the end of Usermod setup.
+    lastDiagMs = setupStartMs;
   }
 
   // ---------------------------------------------------------
@@ -485,14 +661,23 @@ public:
 
   void loop() override
   {
-    unsigned long now = millis();
+    const unsigned long now = millis();
+
+    // Phase 10.4.2P-V17e runtime heartbeat.
+    // Intentionally executed before the deferred-initialization returns
+    // so a long-running initialization problem remains visible.
+    if (now - lastDiagMs >= DIAG_INTERVAL_MS) {
+      lastDiagMs = now;
+      printRuntimeDiagnostics(now);
+    }
 
     if (!initializationFinished) {
       if (now - setupStartMs < AUDIO_INIT_DELAY_MS) {
         return;
       }
 
-      if (initAttemptCount == 0 || now - lastInitAttemptMs >= AUDIO_INIT_RETRY_MS) {
+      if (initAttemptCount == 0 ||
+          now - lastInitAttemptMs >= AUDIO_INIT_RETRY_MS) {
         lastInitAttemptMs = now;
         attemptInitialization();
       }
@@ -517,7 +702,7 @@ public:
     }
 
     JsonArray phaseInfo = user.createNestedArray("CoreS3 Audio Phase");
-    phaseInfo.add("10.4.2");
+    phaseInfo.add("10.4.2P-V17e");
 
     JsonArray statusInfo = user.createNestedArray("CoreS3 Audio");
     statusInfo.add(getAudioStatusName());
@@ -541,6 +726,7 @@ public:
     }
 
     JsonArray integrationInfo = user.createNestedArray("CoreS3 Audio Integration");
+
 #if defined(WLED_M5STACK_CORES3_AUDIO)
     integrationInfo.add(
       coreS3AudioReactiveSourceReady()
@@ -566,6 +752,7 @@ public:
     }
     else {
       char pmuText[48];
+
       snprintf(
         pmuText,
         sizeof(pmuText),
@@ -573,14 +760,19 @@ public:
         axp2101Reg90,
         axp2101Reg93
       );
+
       pmuInfo.add(pmuText);
     }
 
-    JsonArray pinReservationInfo = user.createNestedArray("CoreS3 Audio Pin Reservation");
+    JsonArray pinReservationInfo =
+      user.createNestedArray("CoreS3 Audio Pin Reservation");
+
     if (audioPinsReserved) {
       pinReservationInfo.add("GPIO0 MCLK / GPIO14 DIN RESERVED (Usermod)");
-    } else {
+    }
+    else {
       char reservationText[80];
+
       snprintf(
         reservationText,
         sizeof(reservationText),
@@ -588,11 +780,41 @@ public:
         PinManager::getPinOwnerName(AUDIO_MCLK_PIN),
         PinManager::getPinOwnerName(AUDIO_DATA_IN_PIN)
       );
+
       pinReservationInfo.add(reservationText);
     }
 
     JsonArray pinInfo = user.createNestedArray("CoreS3 Audio Pins");
     pinInfo.add("FIXED: MCLK0 BCLK34 WS33 DIN14");
+
+    JsonArray diagInfo = user.createNestedArray("CoreS3 V17 Diagnostics");
+
+    char resetText[48];
+    const esp_reset_reason_t resetReason = esp_reset_reason();
+
+    snprintf(
+      resetText,
+      sizeof(resetText),
+      "Reset=%d %s",
+      static_cast<int>(resetReason),
+      getResetReasonName(resetReason)
+    );
+
+    diagInfo.add(resetText);
+
+    char psramText[64];
+    const size_t psramTotal = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    const size_t psramFree = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+
+    snprintf(
+      psramText,
+      sizeof(psramText),
+      "PSRAM=%lu total / %lu free",
+      static_cast<unsigned long>(psramTotal),
+      static_cast<unsigned long>(psramFree)
+    );
+
+    diagInfo.add(psramText);
   }
 };
 
