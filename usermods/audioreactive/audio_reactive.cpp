@@ -336,6 +336,12 @@ constexpr SRate_t SAMPLE_RATE = 22050;        // Base sample rate in Hz - 22Khz 
 // FFT Constants
 constexpr uint16_t samplesFFT = 512;            // Samples in an FFT batch - This value MUST ALWAYS be a power of 2
 constexpr uint16_t samplesFFT_2 = 256;          // meaningfull part of FFT results - only the "lower half" contains useful information.
+
+#if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+static_assert(SAMPLE_RATE == 16000, "CoreS3 FFT calibration requires 16 kHz sampling");
+static_assert(samplesFFT == 512, "CoreS3 FFT calibration requires 512 FFT samples");
+constexpr float CORES3_FFT_BIN_HZ = (float)SAMPLE_RATE / (float)samplesFFT; // 31.25 Hz/bin
+#endif
 // the following are observed values, supported by a bit of "educated guessing"
 //#define FFT_DOWNSCALE 0.65f                             // 20kHz - downscaling factor for FFT results - "Flat-Top" window @20Khz, old freq channels 
 #ifdef FFT_PREFER_EXACT_PEAKS
@@ -603,6 +609,46 @@ void FFTcode(void * parameter)
       fftCalc[14] = fftAddAvg(147,194);   // 2940 - 3900
       fftCalc[15] = fftAddAvg(194,250);   // 3880 - 5000 // avoid the last 5 bins, which are usually inaccurate
 #else
+#if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+      /*
+       * CoreS3 ES7210 mapping calibrated for 16 kHz / 512 samples.
+       *
+       * Bin width = 16000 / 512 = 31.25 Hz.
+       * Bands 0..14 preserve approximately the same physical frequency
+       * regions as WLED's standard 22.05 kHz mapping. Band 15 is
+       * Nyquist-limited and stops at bin 250 (7.8125 kHz), deliberately
+       * avoiding the final five FFT bins.
+       *
+       * This branch changes only CoreS3. All other AudioReactive sources
+       * continue to use the original WLED 22.05 kHz mapping below.
+       */
+      if (useBandPassFilter) {
+        // preserve the standard >~100 Hz band-pass behavior
+        fftCalc[ 0] = 0.8f * fftAddAvg(4,6);        // 125 - 188 Hz
+        fftCalc[ 1] = 0.9f * fftAddAvg(6,7);        // 188 - 219 Hz
+        fftCalc[ 2] = fftAddAvg(7,8);               // 219 - 250 Hz
+        fftCalc[ 3] = fftAddAvg(8,10);              // 250 - 313 Hz
+        fftCalc[15] = fftAddAvg(227,250) * 0.75f;   // 7094 - 7813 Hz, Nyquist-limited
+      } else {
+        fftCalc[ 0] = fftAddAvg(1,3);               //   31 -   94 Hz  sub-bass
+        fftCalc[ 1] = fftAddAvg(3,4);               //   94 -  125 Hz  bass
+        fftCalc[ 2] = fftAddAvg(4,7);               //  125 -  219 Hz  bass
+        fftCalc[ 3] = fftAddAvg(7,10);              //  219 -  313 Hz  bass + midrange
+        fftCalc[15] = fftAddAvg(227,250) * 0.70f;   // 7094 - 7813 Hz, Nyquist-limited
+      }
+
+      fftCalc[ 4] = fftAddAvg(10,14);               //  313 -  438 Hz  midrange
+      fftCalc[ 5] = fftAddAvg(14,18);               //  438 -  563 Hz  midrange
+      fftCalc[ 6] = fftAddAvg(18,26);               //  563 -  813 Hz  midrange
+      fftCalc[ 7] = fftAddAvg(26,36);               //  813 - 1125 Hz  midrange; 1 kHz centered
+      fftCalc[ 8] = fftAddAvg(36,45);               // 1125 - 1406 Hz  midrange
+      fftCalc[ 9] = fftAddAvg(45,61);               // 1406 - 1906 Hz  midrange
+      fftCalc[10] = fftAddAvg(61,77);               // 1906 - 2406 Hz  midrange + high mid
+      fftCalc[11] = fftAddAvg(77,96);               // 2406 - 3000 Hz  high mid
+      fftCalc[12] = fftAddAvg(96,119);              // 3000 - 3719 Hz  high mid
+      fftCalc[13] = fftAddAvg(119,143);             // 3719 - 4469 Hz  high mid
+      fftCalc[14] = fftAddAvg(143,227) * 0.88f;     // 4469 - 7094 Hz  high mid + high
+#else
       /* new mapping, optimized for 22050 Hz by softhack007 */
       // bins frequency  range
       if (useBandPassFilter) {
@@ -632,6 +678,7 @@ void FFTcode(void * parameter)
       fftCalc[12] = fftAddAvg(70,86);               // 16 3015 - 3704 high mid
       fftCalc[13] = fftAddAvg(86,104);              // 18 3704 - 4479 high mid
       fftCalc[14] = fftAddAvg(104,165) * 0.88f;     // 61 4479 - 7106 high mid + high  -- with slight damping
+#endif
 #endif
     } else {  // noise gate closed - just decay old values
       for (int i=0; i < NUM_GEQ_CHANNELS; i++) {
@@ -2057,6 +2104,16 @@ class AudioReactive : public Usermod {
         } else {
           infoArr.add(F("suspended"));
         }
+
+      #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+        if (dmType == 7) {
+          infoArr = user.createNestedArray(F("CoreS3 FFT"));
+          infoArr.add(F("16kHz / 512 samples / 31.25Hz bin"));
+
+          infoArr = user.createNestedArray(F("CoreS3 FFT Mapping"));
+          infoArr.add(F("16 bands calibrated / 7.81kHz max"));
+        }
+      #endif
 
         // AGC or manual Gain
         if ((soundAgc==0) && (disableSoundProcessing == false) && !(audioSyncEnabled & 0x02)) {

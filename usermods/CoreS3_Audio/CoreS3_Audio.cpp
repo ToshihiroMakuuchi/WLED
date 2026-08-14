@@ -5,7 +5,7 @@
 // ===========================================================
 // CoreS3 Audio Usermod
 //
-// Phase 10.4.1b
+// Phase 10.4.2
 //
 // Purpose
 //   - Access the CoreS3 internal I2C bus through the same
@@ -26,7 +26,7 @@
 //   - modify CoreS3 power rails,
 //   - reinitialize or take ownership of the internal I2C bus.
 //
-// Audio ownership in Phase 10.4.1b:
+// Audio ownership in Phase 10.4.2:
 //   CoreS3_Audio : fixed-pin reservation + ES7210 + I2C diagnostics
 //                  + codec-ready signal
 //   AudioReactive: I2S_NUM_1 + PCM + AGC + FFT + audio effects
@@ -45,7 +45,7 @@
 // The ES7210 register configuration and CoreS3 audio pin mapping
 // follow the M5Stack M5Unified CoreS3 microphone implementation.
 //
-// Phase 10.4.1b change
+// Phase 10.4.2 change
 //   CoreS3 Display/Touch uses M5GFX internal I2C_NUM_1 on GPIO12/11.
 //   The original Phase 10.4.0 Audio probe used Arduino Wire (I2C0),
 //   so after M5GFX initialization it could no longer see the same
@@ -89,7 +89,7 @@ private:
   static constexpr uint8_t AUDIO_INIT_MAX_ATTEMPTS = 5;
 
   // ---------------------------------------------------------
-  // Phase 10.4.1b runtime state
+  // Phase 10.4.2 runtime state
   // ---------------------------------------------------------
 
   bool coreS3PinsValid = false;
@@ -338,7 +338,7 @@ private:
 
     coreS3PinsValid = true;
 
-    // Read-only PMU diagnostics. Phase 10.4.1b deliberately does not
+    // Read-only PMU diagnostics. Phase 10.4.2 deliberately does not
     // change the ES7210 power rail; Power ownership remains separate.
     // Reading AXP2101 register 0x90 simultaneously verifies that the
     // shared M5GFX I2C_NUM_1 bus is reachable.
@@ -451,7 +451,7 @@ public:
   void setup() override
   {
     Serial.println();
-    Serial.println(F("[CoreS3_Audio] Phase 10.4.1b start"));
+    Serial.println(F("[CoreS3_Audio] Phase 10.4.2 start"));
     Serial.println(F("[CoreS3_Audio] Built-in microphone / Audio Reactive integration"));
 
     Serial.printf(
@@ -517,7 +517,7 @@ public:
     }
 
     JsonArray phaseInfo = user.createNestedArray("CoreS3 Audio Phase");
-    phaseInfo.add("10.4.1b");
+    phaseInfo.add("10.4.2");
 
     JsonArray statusInfo = user.createNestedArray("CoreS3 Audio");
     statusInfo.add(getAudioStatusName());
