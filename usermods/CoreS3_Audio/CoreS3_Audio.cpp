@@ -5,13 +5,15 @@
 // ===========================================================
 // CoreS3 Audio Usermod
 //
-// Phase 10.4.1a
+// Phase 10.4.1b
 //
 // Purpose
 //   - Access the CoreS3 internal I2C bus through the same
 //     M5GFX I2C_NUM_1 owner used by Display / Touch.
 //   - Detect the CoreS3 AXP2101 and ES7210 on that shared bus.
 //   - Configure and verify the built-in ES7210 dual microphones.
+//   - Reserve CoreS3 internal audio GPIO0 (MCLK) and GPIO14 (DIN)
+//     in WLED PinManager so they cannot be assigned to other features.
 //   - Publish codec readiness to WLED Audio Reactive.
 //   - Leave I2S_NUM_1 / PCM / FFT ownership exclusively to Audio Reactive.
 //   - Report codec / integration readiness to Serial and WLED Info.
@@ -24,8 +26,9 @@
 //   - modify CoreS3 power rails,
 //   - reinitialize or take ownership of the internal I2C bus.
 //
-// Audio ownership in Phase 10.4.1a:
-//   CoreS3_Audio : ES7210 + I2C diagnostics + codec-ready signal
+// Audio ownership in Phase 10.4.1b:
+//   CoreS3_Audio : fixed-pin reservation + ES7210 + I2C diagnostics
+//                  + codec-ready signal
 //   AudioReactive: I2S_NUM_1 + PCM + AGC + FFT + audio effects
 //
 // CoreS3 internal audio hardware
@@ -42,7 +45,7 @@
 // The ES7210 register configuration and CoreS3 audio pin mapping
 // follow the M5Stack M5Unified CoreS3 microphone implementation.
 //
-// Phase 10.4.1a change
+// Phase 10.4.1b change
 //   CoreS3 Display/Touch uses M5GFX internal I2C_NUM_1 on GPIO12/11.
 //   The original Phase 10.4.0 Audio probe used Arduino Wire (I2C0),
 //   so after M5GFX initialization it could no longer see the same
@@ -86,10 +89,11 @@ private:
   static constexpr uint8_t AUDIO_INIT_MAX_ATTEMPTS = 5;
 
   // ---------------------------------------------------------
-  // Phase 10.4.1a runtime state
+  // Phase 10.4.1b runtime state
   // ---------------------------------------------------------
 
   bool coreS3PinsValid = false;
+  bool audioPinsReserved = false;
   bool es7210Found = false;
   bool es7210Configured = false;
   bool initializationFinished = false;
@@ -104,6 +108,75 @@ private:
   uint8_t axp2101Reg90 = 0;
   uint8_t axp2101Reg93 = 0;
   uint8_t es7210ProbeReg00 = 0;
+
+  // ---------------------------------------------------------
+  // CoreS3 internal audio pin reservation
+  //
+  // GPIO0  = ES7210 MCLK (output)
+  // GPIO14 = ES7210 DIN  (input)
+  //
+  // GPIO33/34 are already unavailable to WLED on this CoreS3 build
+  // and appear as "System" in Pin Info, so only GPIO0/14 need an
+  // explicit PinManager reservation.
+  //
+  // PinOwner::UM_Audioreactive is used intentionally so WLED Pin Info
+  // reports these as Usermod-owned and all normal pin selectors treat
+  // them as unavailable.
+  // ---------------------------------------------------------
+
+  void neutralizePersistedGpio0Button()
+  {
+    if (PinManager::getPinOwner(AUDIO_MCLK_PIN) == PinOwner::Button) {
+      PinManager::deallocatePin(AUDIO_MCLK_PIN, PinOwner::Button);
+    }
+
+    for (auto& button : buttons) {
+      if (button.pin == AUDIO_MCLK_PIN) {
+        button.pin = -1;
+        button.type = BTN_TYPE_NONE;
+        button.pressedBefore = false;
+        button.longPressed = false;
+        button.pressedTime = 0;
+        button.waitTime = 0;
+      }
+    }
+  }
+
+  bool reserveInternalAudioPins()
+  {
+    neutralizePersistedGpio0Button();
+
+    if (PinManager::isPinAllocated(AUDIO_MCLK_PIN, PinOwner::UM_Audioreactive) &&
+        PinManager::isPinAllocated(AUDIO_DATA_IN_PIN, PinOwner::UM_Audioreactive)) {
+      return true;
+    }
+
+    if (PinManager::isPinAllocated(AUDIO_MCLK_PIN) ||
+        PinManager::isPinAllocated(AUDIO_DATA_IN_PIN)) {
+      Serial.printf(
+        "[CoreS3_Audio] ERROR: internal audio pin conflict MCLK0=%s DIN14=%s\n",
+        PinManager::getPinOwnerName(AUDIO_MCLK_PIN),
+        PinManager::getPinOwnerName(AUDIO_DATA_IN_PIN)
+      );
+      return false;
+    }
+
+    const managed_pin_type audioPins[] = {
+      { AUDIO_MCLK_PIN, true  }, // ES7210 master clock output
+      { AUDIO_DATA_IN_PIN, false } // ES7210 PCM data input
+    };
+
+    if (!PinManager::allocateMultiplePins(
+          audioPins,
+          sizeof(audioPins) / sizeof(audioPins[0]),
+          PinOwner::UM_Audioreactive
+        )) {
+      Serial.println(F("[CoreS3_Audio] ERROR: failed to reserve GPIO0/GPIO14 for internal audio"));
+      return false;
+    }
+
+    return true;
+  }
 
   // ---------------------------------------------------------
   // Shared CoreS3 internal I2C helpers
@@ -237,6 +310,12 @@ private:
 
   void attemptInitialization()
   {
+    if (!audioPinsReserved) {
+      Serial.println(F("[CoreS3_Audio] ERROR: audio pin reservation unavailable; codec initialization blocked"));
+      initializationFinished = true;
+      return;
+    }
+
     initAttemptCount++;
 
     Serial.printf(
@@ -259,7 +338,7 @@ private:
 
     coreS3PinsValid = true;
 
-    // Read-only PMU diagnostics. Phase 10.4.1a deliberately does not
+    // Read-only PMU diagnostics. Phase 10.4.1b deliberately does not
     // change the ES7210 power rail; Power ownership remains separate.
     // Reading AXP2101 register 0x90 simultaneously verifies that the
     // shared M5GFX I2C_NUM_1 bus is reachable.
@@ -338,6 +417,10 @@ private:
       return "INITIALIZING";
     }
 
+    if (!audioPinsReserved) {
+      return "AUDIO PIN RESERVATION ERROR";
+    }
+
     if (!coreS3PinsValid) {
       return "I2C PIN ERROR";
     }
@@ -368,7 +451,7 @@ public:
   void setup() override
   {
     Serial.println();
-    Serial.println(F("[CoreS3_Audio] Phase 10.4.1a start"));
+    Serial.println(F("[CoreS3_Audio] Phase 10.4.1b start"));
     Serial.println(F("[CoreS3_Audio] Built-in microphone / Audio Reactive integration"));
 
     Serial.printf(
@@ -384,6 +467,13 @@ public:
       F("[CoreS3_Audio] Audio will not reinitialize the shared internal I2C bus")
     );
     Serial.println(F("[CoreS3_Audio] Audio hardware initialization is deferred"));
+
+    audioPinsReserved = reserveInternalAudioPins();
+
+    Serial.printf(
+      "[CoreS3_Audio] Internal audio pin reservation: %s (GPIO0=MCLK GPIO14=DIN)\n",
+      audioPinsReserved ? "READY" : "FAILED"
+    );
 
     setupStartMs = millis();
     lastInitAttemptMs = setupStartMs;
@@ -427,7 +517,7 @@ public:
     }
 
     JsonArray phaseInfo = user.createNestedArray("CoreS3 Audio Phase");
-    phaseInfo.add("10.4.1a");
+    phaseInfo.add("10.4.1b");
 
     JsonArray statusInfo = user.createNestedArray("CoreS3 Audio");
     statusInfo.add(getAudioStatusName());
@@ -484,6 +574,21 @@ public:
         axp2101Reg93
       );
       pmuInfo.add(pmuText);
+    }
+
+    JsonArray pinReservationInfo = user.createNestedArray("CoreS3 Audio Pin Reservation");
+    if (audioPinsReserved) {
+      pinReservationInfo.add("GPIO0 MCLK / GPIO14 DIN RESERVED (Usermod)");
+    } else {
+      char reservationText[80];
+      snprintf(
+        reservationText,
+        sizeof(reservationText),
+        "FAILED: GPIO0=%s GPIO14=%s",
+        PinManager::getPinOwnerName(AUDIO_MCLK_PIN),
+        PinManager::getPinOwnerName(AUDIO_DATA_IN_PIN)
+      );
+      pinReservationInfo.add(reservationText);
     }
 
     JsonArray pinInfo = user.createNestedArray("CoreS3 Audio Pins");
