@@ -201,6 +201,46 @@ static FFTsampleType* windowFFT = nullptr;
 
 // use audio source class (ESP32 specific)
 #include "audio_source.h"
+#if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+extern "C" bool coreS3AudioCodecReady();
+
+static constexpr int8_t CORES3_AUDIO_SD_PIN   = 14;
+static constexpr int8_t CORES3_AUDIO_WS_PIN   = 33;
+static constexpr int8_t CORES3_AUDIO_BCLK_PIN = 34;
+static constexpr int8_t CORES3_AUDIO_MCLK_PIN = 0;
+
+static void coreS3ApplyFixedAudioPins(
+  int8_t& sdPin,
+  int8_t& wsPin,
+  int8_t& bclkPin,
+  int8_t& mclkPin
+) {
+  sdPin   = CORES3_AUDIO_SD_PIN;
+  wsPin   = CORES3_AUDIO_WS_PIN;
+  bclkPin = CORES3_AUDIO_BCLK_PIN;
+  mclkPin = CORES3_AUDIO_MCLK_PIN;
+}
+
+static void coreS3ReleaseMclkButtonOwnership()
+{
+  // GPIO0 is the CoreS3 ES7210 MCLK.
+  if (PinManager::getPinOwner(CORES3_AUDIO_MCLK_PIN) == PinOwner::Button) {
+    PinManager::deallocatePin(CORES3_AUDIO_MCLK_PIN, PinOwner::Button);
+  }
+
+  // Also neutralize any persisted/default WLED button configuration on GPIO0.
+  for (auto& button : buttons) {
+    if (button.pin == CORES3_AUDIO_MCLK_PIN) {
+      button.pin = -1;
+      button.type = BTN_TYPE_NONE;
+      button.pressedBefore = false;
+      button.longPressed = false;
+      button.pressedTime = 0;
+      button.waitTime = 0;
+    }
+  }
+}
+#endif
 constexpr i2s_port_t I2S_PORT = I2S_NUM_0;       // I2S port to use (do not change !)
 constexpr int BLOCK_SIZE = 128;                  // I2S buffer size (samples)
 
@@ -239,6 +279,12 @@ const float agcSampleSmooth[AGC_NUM_PRESETS]  = {  1/12.f,   1/6.f,  1/16.f}; //
 // AGC presets end
 
 static AudioSource *audioSource = nullptr;
+#if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+extern "C" bool coreS3AudioReactiveSourceReady()
+{
+  return audioSource && audioSource->isInitialized();
+}
+#endif
 static bool useBandPassFilter = false;                    // if true, enables a hard cutoff bandpass filter. Applies after FFT.
 static bool useMicFilter = false;                         // if true, enables a IIR bandpass filter 80Hz-20Khz to remove noise. Applies before FFT.
 ////////////////////
@@ -270,11 +316,19 @@ static float   fftResultMax[NUM_GEQ_CHANNELS] = {0.0f};               // A table
 #endif
 
 // audio source parameters and constant
+#if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+constexpr SRate_t SAMPLE_RATE = 16000;        // CoreS3 ES7210 verified Phase 10.4.0a sample rate
+#else
 constexpr SRate_t SAMPLE_RATE = 22050;        // Base sample rate in Hz - 22Khz is a standard rate. Physical sample time -> 23ms
+#endif
 //constexpr SRate_t SAMPLE_RATE = 16000;        // 16kHz - use if FFTtask takes more than 20ms. Physical sample time -> 32ms
 //constexpr SRate_t SAMPLE_RATE = 20480;        // Base sample rate in Hz - 20Khz is experimental.    Physical sample time -> 25ms
 //constexpr SRate_t SAMPLE_RATE = 10240;        // Base sample rate in Hz - previous default.         Physical sample time -> 50ms
+#if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+#define FFT_MIN_CYCLE 30                      // CoreS3: 16kHz / 512 samples ~= 32ms physical window
+#else
 #define FFT_MIN_CYCLE 21                      // minimum time before FFT task is repeated. Use with 22Khz sampling
+#endif
 //#define FFT_MIN_CYCLE 30                      // Use with 16Khz sampling
 //#define FFT_MIN_CYCLE 23                      // minimum time before FFT task is repeated. Use with 20Khz sampling
 //#define FFT_MIN_CYCLE 46                      // minimum time before FFT task is repeated. Use with 10Khz sampling
@@ -829,6 +883,12 @@ class AudioReactive : public Usermod {
     int8_t mclkPin = I2S_PIN_NO_CHANGE;  /* ESP32: only -1, 0, 1, 3 allowed*/
     #else
     int8_t mclkPin = MCLK_PIN;
+    #endif
+    #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+    static constexpr uint8_t CORES3_I2S_INIT_MAX_ATTEMPTS = 5;
+    static constexpr unsigned long CORES3_I2S_INIT_RETRY_MS = 1000;
+    uint8_t coreS3I2sInitAttempts = 0;
+    unsigned long coreS3LastI2sInitAttemptMs = 0;
     #endif
 #endif
 
@@ -1414,9 +1474,14 @@ class AudioReactive : public Usermod {
 
 #ifdef ARDUINO_ARCH_ESP32
 
-      // Reset I2S peripheral for good measure
-      i2s_driver_uninstall(I2S_NUM_0);   // E (696) I2S: i2s_driver_uninstall(2006): I2S port 0 has not installed
-      #if !defined(CONFIG_IDF_TARGET_ESP32C3) && (ESP_IDF_VERSION_MAJOR < 5)
+      // Reset the selected I2S peripheral for good measure.
+      #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+      if (dmType == 7) i2s_driver_uninstall(I2S_NUM_1);
+      else             i2s_driver_uninstall(I2S_NUM_0);
+      #else
+      i2s_driver_uninstall(I2S_NUM_0);
+      #endif
+      #if !defined(WLED_M5STACK_CORES3_AUDIO) && !defined(CONFIG_IDF_TARGET_ESP32C3) && (ESP_IDF_VERSION_MAJOR < 5)
         delay(100);
         periph_module_reset(PERIPH_I2S0_MODULE);   // not possible on -C3, neither on esp-idf V5
       #endif
@@ -1477,6 +1542,23 @@ class AudioReactive : public Usermod {
           delay(100);
           if (audioSource) audioSource->initialize(i2swsPin, i2ssdPin, i2sckPin, mclkPin);
           break;
+        #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+        case 7:
+          DEBUGSR_PRINTLN(F("AR: M5Stack CoreS3 ES7210 built-in dual microphone"));
+          coreS3ApplyFixedAudioPins(i2ssdPin, i2swsPin, i2sckPin, mclkPin);
+          coreS3ReleaseMclkButtonOwnership();
+          audioSource = new CoreS3ES7210Source(SAMPLE_RATE, BLOCK_SIZE);
+          useMicFilter = true;
+          coreS3I2sInitAttempts = 0;
+          coreS3LastI2sInitAttemptMs = 0;
+
+          if (audioSource && coreS3AudioCodecReady()) {
+            coreS3I2sInitAttempts = 1;
+            coreS3LastI2sInitAttemptMs = millis();
+            audioSource->initialize();
+          }
+          break;
+        #endif
 
       #if defined(CONFIG_IDF_TARGET_ESP32) && (ESP_IDF_VERSION_MAJOR < 5)  // legacy ADC driver is not available any more in esp-idf V5.x.y
         // ADC over I2S is only possible on "classic" ESP32
@@ -1507,12 +1589,21 @@ class AudioReactive : public Usermod {
       delay(250); // give microphone enough time to initialise
 
       if (!audioSource && (dmType != SR_DMTYPE_NETWORK_ONLY)) enabled = false;// audio failed to initialise
+
+      bool coreS3SourcePending = false;
+      #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+      coreS3SourcePending = (dmType == 7) && audioSource && !audioSource->isInitialized();
+      #endif
 #endif
-      if (enabled) onUpdateBegin(false);                 // create FFT task, and initialize network
+      #ifdef ARDUINO_ARCH_ESP32
+      if (enabled && !coreS3SourcePending) onUpdateBegin(false);       // create FFT task when input is ready
+      #else
+      if (enabled) onUpdateBegin(false);
+      #endif
 
 
 #ifdef ARDUINO_ARCH_ESP32
-      if (audioSource && FFT_Task == nullptr) enabled = false;          // FFT task creation failed
+      if (audioSource && FFT_Task == nullptr && !coreS3SourcePending) enabled = false; // FFT task creation failed
       if((!audioSource) || (!audioSource->isInitialized())) {  // audio source failed to initialize. Still stay "enabled", as there might be input arriving via UDP Sound Sync 
 #ifdef WLED_DEBUG
         #define AR_INIT_DEBUG_PRINT DEBUG_PRINTLN
@@ -1528,7 +1619,11 @@ class AudioReactive : public Usermod {
         disableSoundProcessing = true;
       }
 #endif
+      #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+      if (enabled && !coreS3SourcePending) disableSoundProcessing = false;
+      #else
       if (enabled) disableSoundProcessing = false;       // all good - enable audio processing
+      #endif
       if (enabled) connectUDPSoundSync();
       if (enabled && addPalettes) createAudioPalettes();
       initDone = true;
@@ -1569,6 +1664,39 @@ class AudioReactive : public Usermod {
     void loop() override
     {
       static unsigned long lastUMRun = millis();
+
+#if defined(ARDUINO_ARCH_ESP32) && defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+      if (enabled && dmType == 7 && audioSource && !audioSource->isInitialized()
+          && coreS3AudioCodecReady()
+          && coreS3I2sInitAttempts < CORES3_I2S_INIT_MAX_ATTEMPTS
+          && (coreS3I2sInitAttempts == 0
+              || millis() - coreS3LastI2sInitAttemptMs >= CORES3_I2S_INIT_RETRY_MS)) {
+
+        coreS3ApplyFixedAudioPins(i2ssdPin, i2swsPin, i2sckPin, mclkPin);
+        coreS3ReleaseMclkButtonOwnership();
+
+        coreS3I2sInitAttempts++;
+        coreS3LastI2sInitAttemptMs = millis();
+
+        DEBUGSR_PRINTF(
+          "AR: CoreS3 ES7210 I2S1 init attempt %u/%u.\n",
+          coreS3I2sInitAttempts,
+          CORES3_I2S_INIT_MAX_ATTEMPTS
+        );
+
+        audioSource->initialize();
+
+        if (audioSource->isInitialized()) {
+          DEBUGSR_PRINTLN(F("AR: CoreS3 ES7210 I2S1 source READY."));
+          if (FFT_Task == nullptr) onUpdateBegin(false);
+          disableSoundProcessing = false;
+          lastUMRun = millis();
+        } else {
+          DEBUGSR_PRINTLN(F("AR: CoreS3 ES7210 I2S1 source initialization FAILED."));
+          disableSoundProcessing = true;
+        }
+      }
+#endif
 
       if (!enabled) {
         disableSoundProcessing = true;   // keep processing suspended (FFT task)
@@ -1888,6 +2016,9 @@ class AudioReactive : public Usermod {
               infoArr.add(F("ADC analog"));
             } else {
               if (dmType == 5) infoArr.add(F("PDM digital")); // dmType 5 => generic PDM microphone
+              #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+              else if (dmType == 7) infoArr.add(F("CoreS3 ES7210 / I2S1"));
+              #endif
               else infoArr.add(F("I2S digital"));
             }
             // input level or "silence"
@@ -1900,8 +2031,22 @@ class AudioReactive : public Usermod {
             }
           } else {
             // error during audio source setup
-            infoArr.add(F("not initialized"));
-            infoArr.add(F(" - check pin settings"));
+          #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+            if (dmType == 7) {
+              infoArr.add(F("CoreS3 ES7210 / I2S1"));
+              if (!coreS3AudioCodecReady()) {
+                infoArr.add(F(" - waiting codec"));
+              } else if (coreS3I2sInitAttempts >= CORES3_I2S_INIT_MAX_ATTEMPTS) {
+                infoArr.add(F(" - init failed"));
+              } else {
+                infoArr.add(F(" - initializing"));
+              }
+            } else
+          #endif
+            {
+              infoArr.add(F("not initialized"));
+              infoArr.add(F(" - check pin settings"));
+            }
           }
         }
 
@@ -2064,11 +2209,17 @@ class AudioReactive : public Usermod {
 
       JsonObject dmic = top.createNestedObject(FPSTR(_digitalmic));
       dmic["type"] = dmType;
-      JsonArray pinArray = dmic.createNestedArray("pin");
-      pinArray.add(i2ssdPin);
-      pinArray.add(i2swsPin);
-      pinArray.add(i2sckPin);
-      pinArray.add(mclkPin);
+
+    #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+      if (dmType != 7)
+    #endif
+      {
+        JsonArray pinArray = dmic.createNestedArray("pin");
+        pinArray.add(i2ssdPin);
+        pinArray.add(i2swsPin);
+        pinArray.add(i2sckPin);
+        pinArray.add(mclkPin);
+      }
 
       JsonObject cfg = top.createNestedObject(FPSTR(_config));
       cfg[F("squelch")] = soundSquelch;
@@ -2137,10 +2288,17 @@ class AudioReactive : public Usermod {
       if (dmType == 5) dmType = SR_DMTYPE;   // MCU does not support PDM
     #endif
 
-      configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["pin"][0], i2ssdPin);
-      configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["pin"][1], i2swsPin);
-      configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["pin"][2], i2sckPin);
-      configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["pin"][3], mclkPin);
+    #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+      if (dmType == 7) {
+        coreS3ApplyFixedAudioPins(i2ssdPin, i2swsPin, i2sckPin, mclkPin);
+      } else
+    #endif
+      {
+        configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["pin"][0], i2ssdPin);
+        configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["pin"][1], i2swsPin);
+        configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["pin"][2], i2sckPin);
+        configComplete &= getJsonValue(top[FPSTR(_digitalmic)]["pin"][3], mclkPin);
+      }
 
       configComplete &= getJsonValue(top[FPSTR(_config)][F("squelch")], soundSquelch);
       configComplete &= getJsonValue(top[FPSTR(_config)][F("gain")],    sampleGain);
@@ -2190,6 +2348,9 @@ class AudioReactive : public Usermod {
       uiScript.print(F("addOption(dd,'Generic PDM',5);"));
     #endif
     uiScript.print(F("addOption(dd,'ES8388',6);"));
+    #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+      uiScript.print(F("addOption(dd,'M5Stack CoreS3 ES7210',7);"));
+    #endif
       uiScript.print(F("addOption(dd,'None - network receive only',"));
       uiScript.print(SR_DMTYPE_NETWORK_ONLY);
       uiScript.print(F(");"));
@@ -2221,15 +2382,25 @@ class AudioReactive : public Usermod {
 #endif
       uiScript.print(F("addOption(dd,'Receive',2);"));
 #ifdef ARDUINO_ARCH_ESP32
-      uiScript.print(F("addInfo(ux+':digitalmic:type',1,'<i>requires reboot!</i>');"));  // 0 is field type, 1 is actual field
-      uiScript.print(F("addInfo(uxp,0,'<i>sd/data/dout</i>','I2S SD');"));
-      uiScript.print(F("addInfo(uxp,1,'<i>ws/clk/lrck</i>','I2S WS');"));
-      uiScript.print(F("addInfo(uxp,2,'<i>sck/bclk</i>','I2S SCK');"));
-      #if defined(CONFIG_IDF_TARGET_ESP32)
-        uiScript.print(F("addInfo(uxp,3,'<i>only use -1, 0, 1 or 3</i>','I2S MCLK');"));
-      #else
-        uiScript.print(F("addInfo(uxp,3,'<i>master clock</i>','I2S MCLK');"));
-      #endif
+    #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
+      if (dmType == 7) {
+        uiScript.print(F(
+          "addInfo(ux+':digitalmic:type',1,"
+          "'<i>fixed internal pins: DIN14 / WS33 / BCLK34 / MCLK0; requires reboot!</i>');"
+        ));
+      } else
+    #endif
+      {
+        uiScript.print(F("addInfo(ux+':digitalmic:type',1,'<i>requires reboot!</i>');"));  // 0 is field type, 1 is actual field
+        uiScript.print(F("addInfo(uxp,0,'<i>sd/data/dout</i>','I2S SD');"));
+        uiScript.print(F("addInfo(uxp,1,'<i>ws/clk/lrck</i>','I2S WS');"));
+        uiScript.print(F("addInfo(uxp,2,'<i>sck/bclk</i>','I2S SCK');"));
+        #if defined(CONFIG_IDF_TARGET_ESP32)
+          uiScript.print(F("addInfo(uxp,3,'<i>only use -1, 0, 1 or 3</i>','I2S MCLK');"));
+        #else
+          uiScript.print(F("addInfo(uxp,3,'<i>master clock</i>','I2S MCLK');"));
+        #endif
+      }
 #endif
     }
 

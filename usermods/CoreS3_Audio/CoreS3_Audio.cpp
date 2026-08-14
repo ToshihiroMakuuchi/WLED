@@ -1,31 +1,32 @@
 #include "wled.h"
 #include <M5GFX.h>
 #include <driver/i2c.h>
-#include <math.h>
-#include <driver/i2s.h>
-#include <esp_err.h>
 
 // ===========================================================
 // CoreS3 Audio Usermod
 //
-// Phase 10.4.0a
+// Phase 10.4.1a
 //
 // Purpose
 //   - Access the CoreS3 internal I2C bus through the same
 //     M5GFX I2C_NUM_1 owner used by Display / Touch.
 //   - Detect the CoreS3 AXP2101 and ES7210 on that shared bus.
-//   - Configure the built-in dual microphones when ES7210 is powered.
-//   - Capture stereo PCM from I2S_NUM_1.
-//   - Calculate simple Peak / RMS diagnostic levels.
-//   - Report microphone activity to Serial and WLED Info.
+//   - Configure and verify the built-in ES7210 dual microphones.
+//   - Publish codec readiness to WLED Audio Reactive.
+//   - Leave I2S_NUM_1 / PCM / FFT ownership exclusively to Audio Reactive.
+//   - Report codec / integration readiness to Serial and WLED Info.
 //
 // This phase intentionally does NOT:
-//   - feed samples into WLED Audio Reactive,
-//   - run FFT,
+//   - install or read I2S,
+//   - run FFT itself,
 //   - change LED state,
 //   - modify CoreS3 Display / Touch behavior,
 //   - modify CoreS3 power rails,
 //   - reinitialize or take ownership of the internal I2C bus.
+//
+// Audio ownership in Phase 10.4.1a:
+//   CoreS3_Audio : ES7210 + I2C diagnostics + codec-ready signal
+//   AudioReactive: I2S_NUM_1 + PCM + AGC + FFT + audio effects
 //
 // CoreS3 internal audio hardware
 //   ES7210 I2C : 0x40
@@ -41,13 +42,24 @@
 // The ES7210 register configuration and CoreS3 audio pin mapping
 // follow the M5Stack M5Unified CoreS3 microphone implementation.
 //
-// Phase 10.4.0a change
+// Phase 10.4.1a change
 //   CoreS3 Display/Touch uses M5GFX internal I2C_NUM_1 on GPIO12/11.
 //   The original Phase 10.4.0 Audio probe used Arduino Wire (I2C0),
 //   so after M5GFX initialization it could no longer see the same
 //   internal devices. Audio now uses lgfx::i2c transactions on
 //   I2C_NUM_1 and never calls i2c/Wire begin or release.
 // ===========================================================
+static volatile bool coreS3AudioCodecReadyState = false;
+
+extern "C" bool coreS3AudioCodecReady()
+{
+  return coreS3AudioCodecReadyState;
+}
+
+#if defined(WLED_M5STACK_CORES3_AUDIO)
+extern "C" bool coreS3AudioReactiveSourceReady();
+#endif
+
 class CoreS3AudioUsermod : public Usermod
 {
 private:
@@ -63,65 +75,35 @@ private:
   static constexpr i2c_port_t CORES3_INTERNAL_I2C_PORT = I2C_NUM_1;
   static constexpr uint32_t CORES3_INTERNAL_I2C_FREQUENCY = 400000;
 
-  static constexpr i2s_port_t AUDIO_I2S_PORT = I2S_NUM_1;
-
   static constexpr int AUDIO_MCLK_PIN = 0;
   static constexpr int AUDIO_BCLK_PIN = 34;
   static constexpr int AUDIO_WS_PIN = 33;
   static constexpr int AUDIO_DATA_IN_PIN = 14;
-
   static constexpr uint32_t AUDIO_SAMPLE_RATE = 16000;
-
-  static constexpr int AUDIO_DMA_BUFFER_COUNT = 8;
-  static constexpr int AUDIO_DMA_BUFFER_FRAMES = 128;
-
-  // 256 stereo frames = 512 x int16_t = 1024 bytes.
-  static constexpr size_t AUDIO_READ_FRAMES = 256;
-  static constexpr size_t AUDIO_CHANNEL_COUNT = 2;
-  static constexpr size_t AUDIO_READ_SAMPLES = AUDIO_READ_FRAMES * AUDIO_CHANNEL_COUNT;
 
   static constexpr unsigned long AUDIO_INIT_DELAY_MS = 2500;
   static constexpr unsigned long AUDIO_INIT_RETRY_MS = 1000;
   static constexpr uint8_t AUDIO_INIT_MAX_ATTEMPTS = 5;
-  static constexpr unsigned long AUDIO_SERIAL_REPORT_MS = 500;
 
   // ---------------------------------------------------------
-  // Phase 10.4.0a runtime state
+  // Phase 10.4.1a runtime state
   // ---------------------------------------------------------
 
   bool coreS3PinsValid = false;
   bool es7210Found = false;
   bool es7210Configured = false;
-  bool i2sAttempted = false;
-  bool i2sInstalled = false;
-  bool audioReady = false;
   bool initializationFinished = false;
 
   uint8_t initAttemptCount = 0;
 
   unsigned long setupStartMs = 0;
   unsigned long lastInitAttemptMs = 0;
-  unsigned long lastSerialReportMs = 0;
-
-  esp_err_t lastI2sError = ESP_OK;
-  float actualSampleRate = 0.0f;
 
   bool axp2101Found = false;
   bool axp2101RegistersRead = false;
   uint8_t axp2101Reg90 = 0;
   uint8_t axp2101Reg93 = 0;
   uint8_t es7210ProbeReg00 = 0;
-
-  int16_t sampleBuffer[AUDIO_READ_SAMPLES];
-
-  uint16_t latestPeakLeft = 0;
-  uint16_t latestPeakRight = 0;
-  uint16_t latestRmsLeft = 0;
-  uint16_t latestRmsRight = 0;
-  uint16_t latestRmsCombined = 0;
-
-  uint32_t audioBlocksReceived = 0;
-  uint32_t audioReadErrors = 0;
 
   // ---------------------------------------------------------
   // Shared CoreS3 internal I2C helpers
@@ -245,110 +227,6 @@ private:
   }
 
   // ---------------------------------------------------------
-  // I2S_NUM_1 setup
-  //
-  // Important safety behavior:
-  // If I2S_NUM_1 is already owned by another subsystem, this
-  // usermod reports the conflict and DOES NOT uninstall it.
-  // ---------------------------------------------------------
-
-  bool initializeI2S()
-  {
-    i2s_config_t config = {};
-
-    config.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
-    config.sample_rate = AUDIO_SAMPLE_RATE;
-    config.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
-    config.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
-    config.communication_format = (i2s_comm_format_t)I2S_COMM_FORMAT_STAND_I2S;
-    config.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
-    config.dma_buf_count = AUDIO_DMA_BUFFER_COUNT;
-    config.dma_buf_len = AUDIO_DMA_BUFFER_FRAMES;
-    config.use_apll = false;
-    config.tx_desc_auto_clear = false;
-    config.fixed_mclk = 0;
-    config.mclk_multiple = I2S_MCLK_MULTIPLE_256;
-    config.bits_per_chan = I2S_BITS_PER_CHAN_16BIT;
-
-    i2sAttempted = true;
-
-    lastI2sError = i2s_driver_install(AUDIO_I2S_PORT, &config, 0, nullptr);
-
-    if (lastI2sError != ESP_OK) {
-      Serial.printf(
-        "[CoreS3_Audio] I2S_NUM_1 install failed: %s (%d)\n",
-        esp_err_to_name(lastI2sError),
-        (int)lastI2sError
-      );
-
-      return false;
-    }
-
-    i2sInstalled = true;
-
-    i2s_pin_config_t pinConfig = {};
-
-    pinConfig.mck_io_num = AUDIO_MCLK_PIN;
-    pinConfig.bck_io_num = AUDIO_BCLK_PIN;
-    pinConfig.ws_io_num = AUDIO_WS_PIN;
-    pinConfig.data_out_num = I2S_PIN_NO_CHANGE;
-    pinConfig.data_in_num = AUDIO_DATA_IN_PIN;
-
-    lastI2sError = i2s_set_pin(AUDIO_I2S_PORT, &pinConfig);
-
-    if (lastI2sError != ESP_OK) {
-      Serial.printf(
-        "[CoreS3_Audio] I2S pin setup failed: %s (%d)\n",
-        esp_err_to_name(lastI2sError),
-        (int)lastI2sError
-      );
-
-      i2s_driver_uninstall(AUDIO_I2S_PORT);
-      i2sInstalled = false;
-
-      return false;
-    }
-
-    lastI2sError = i2s_set_clk(
-      AUDIO_I2S_PORT,
-      AUDIO_SAMPLE_RATE,
-      I2S_BITS_PER_SAMPLE_16BIT,
-      I2S_CHANNEL_STEREO
-    );
-
-    if (lastI2sError != ESP_OK) {
-      Serial.printf(
-        "[CoreS3_Audio] I2S clock setup failed: %s (%d)\n",
-        esp_err_to_name(lastI2sError),
-        (int)lastI2sError
-      );
-
-      i2s_driver_uninstall(AUDIO_I2S_PORT);
-      i2sInstalled = false;
-
-      return false;
-    }
-
-    actualSampleRate = i2s_get_clk(AUDIO_I2S_PORT);
-
-    Serial.printf(
-      "[CoreS3_Audio] I2S_NUM_1 ready: requested=%lu Hz actual=%.1f Hz\n",
-      (unsigned long)AUDIO_SAMPLE_RATE,
-      actualSampleRate
-    );
-
-    Serial.printf(
-      "[CoreS3_Audio] I2S pins: MCLK=%d BCLK=%d WS=%d DATA=%d\n",
-      AUDIO_MCLK_PIN,
-      AUDIO_BCLK_PIN,
-      AUDIO_WS_PIN,
-      AUDIO_DATA_IN_PIN
-    );
-
-    return true;
-  }
-
-  // ---------------------------------------------------------
   // Deferred initialization
   //
   // Audio initialization is delayed until all WLED usermods have
@@ -381,7 +259,7 @@ private:
 
     coreS3PinsValid = true;
 
-    // Read-only PMU diagnostics. Phase 10.4.0a deliberately does not
+    // Read-only PMU diagnostics. Phase 10.4.1a deliberately does not
     // change the ES7210 power rail; Power ownership remains separate.
     // Reading AXP2101 register 0x90 simultaneously verifies that the
     // shared M5GFX I2C_NUM_1 bus is reachable.
@@ -447,163 +325,39 @@ private:
       return;
     }
 
-    if (!initializeI2S()) {
-      initializationFinished = true;
-      return;
-    }
-
-    audioReady = true;
+    coreS3AudioCodecReadyState = true;
     initializationFinished = true;
-    lastSerialReportMs = millis();
 
-    Serial.println(F("[CoreS3_Audio] Built-in dual microphone capture READY"));
-    Serial.println(F("[CoreS3_Audio] Phase 10.4.0a diagnostic capture active"));
-  }
-
-  // ---------------------------------------------------------
-  // PCM level calculation
-  // ---------------------------------------------------------
-
-  void processAudioBlock(const int16_t* samples, size_t sampleCount)
-  {
-    if (samples == nullptr || sampleCount < 2) {
-      return;
-    }
-
-    size_t frameCount = sampleCount / AUDIO_CHANNEL_COUNT;
-
-    if (frameCount == 0) {
-      return;
-    }
-
-    // Remove block DC offset before RMS / Peak calculation.
-    int64_t sumLeft = 0;
-    int64_t sumRight = 0;
-
-    for (size_t frame = 0; frame < frameCount; frame++) {
-      sumLeft += samples[(frame * 2)];
-      sumRight += samples[(frame * 2) + 1];
-    }
-
-    int32_t meanLeft = (int32_t)(sumLeft / (int64_t)frameCount);
-    int32_t meanRight = (int32_t)(sumRight / (int64_t)frameCount);
-
-    uint32_t peakLeft = 0;
-    uint32_t peakRight = 0;
-
-    uint64_t squareSumLeft = 0;
-    uint64_t squareSumRight = 0;
-
-    for (size_t frame = 0; frame < frameCount; frame++) {
-      int32_t left = (int32_t)samples[(frame * 2)] - meanLeft;
-      int32_t right = (int32_t)samples[(frame * 2) + 1] - meanRight;
-
-      uint32_t absLeft = (uint32_t)(left < 0 ? -left : left);
-      uint32_t absRight = (uint32_t)(right < 0 ? -right : right);
-
-      if (absLeft > peakLeft) {
-        peakLeft = absLeft;
-      }
-
-      if (absRight > peakRight) {
-        peakRight = absRight;
-      }
-
-      squareSumLeft += (uint64_t)((int64_t)left * (int64_t)left);
-      squareSumRight += (uint64_t)((int64_t)right * (int64_t)right);
-    }
-
-    double rmsLeft = sqrt((double)squareSumLeft / (double)frameCount);
-    double rmsRight = sqrt((double)squareSumRight / (double)frameCount);
-    double rmsCombined = sqrt(
-      (double)(squareSumLeft + squareSumRight) /
-      (double)(frameCount * AUDIO_CHANNEL_COUNT)
-    );
-
-    latestPeakLeft = (uint16_t)constrain((int)peakLeft, 0, 32768);
-    latestPeakRight = (uint16_t)constrain((int)peakRight, 0, 32768);
-    latestRmsLeft = (uint16_t)constrain((int)lround(rmsLeft), 0, 32768);
-    latestRmsRight = (uint16_t)constrain((int)lround(rmsRight), 0, 32768);
-    latestRmsCombined = (uint16_t)constrain((int)lround(rmsCombined), 0, 32768);
-
-    audioBlocksReceived++;
-  }
-
-  void serviceAudioCapture()
-  {
-    if (!audioReady || !i2sInstalled) {
-      return;
-    }
-
-    size_t bytesRead = 0;
-
-    esp_err_t result = i2s_read(
-      AUDIO_I2S_PORT,
-      sampleBuffer,
-      sizeof(sampleBuffer),
-      &bytesRead,
-      0
-    );
-
-    if (result != ESP_OK) {
-      if (result != ESP_ERR_TIMEOUT) {
-        audioReadErrors++;
-        lastI2sError = result;
-      }
-      return;
-    }
-
-    if (bytesRead < (sizeof(int16_t) * AUDIO_CHANNEL_COUNT)) {
-      return;
-    }
-
-    size_t samplesRead = bytesRead / sizeof(int16_t);
-    samplesRead -= samplesRead % AUDIO_CHANNEL_COUNT;
-
-    processAudioBlock(sampleBuffer, samplesRead);
-  }
-
-  void reportAudioLevel()
-  {
-    if (!audioReady) {
-      return;
-    }
-
-    Serial.printf(
-      "[CoreS3_Audio] PCM RMS=%u  L=%u R=%u  Peak L=%u R=%u  Blocks=%lu Errors=%lu\n",
-      latestRmsCombined,
-      latestRmsLeft,
-      latestRmsRight,
-      latestPeakLeft,
-      latestPeakRight,
-      (unsigned long)audioBlocksReceived,
-      (unsigned long)audioReadErrors
-    );
+    Serial.println(F("[CoreS3_Audio] ES7210 READY"));
+    Serial.println(F("[CoreS3_Audio] Waiting for AudioReactive to claim I2S_NUM_1"));
   }
 
   const char* getAudioStatusName() const
   {
-    if (audioReady) {
-      return "READY - PCM diagnostic capture";
+    if (!initializationFinished) {
+      return "INITIALIZING";
     }
 
-    if (!coreS3PinsValid && initializationFinished) {
+    if (!coreS3PinsValid) {
       return "I2C PIN ERROR";
     }
 
-    if (initializationFinished && !es7210Found) {
+    if (!es7210Found) {
       return "ES7210 NOT FOUND";
     }
 
-    if (initializationFinished && !es7210Configured) {
+    if (!es7210Configured) {
       return "ES7210 CONFIG FAILED";
     }
 
-    if (initializationFinished && !i2sInstalled) {
-      return "I2S INIT FAILED";
+#if defined(WLED_M5STACK_CORES3_AUDIO)
+    if (coreS3AudioReactiveSourceReady()) {
+      return "READY - AudioReactive";
     }
-
-    return "INITIALIZING";
+    return "CODEC READY - waiting AudioReactive";
+#else
+    return "AUDIOREACTIVE BUILD FLAG MISSING";
+#endif
   }
 
 public:
@@ -614,8 +368,8 @@ public:
   void setup() override
   {
     Serial.println();
-    Serial.println(F("[CoreS3_Audio] Phase 10.4.0a start"));
-    Serial.println(F("[CoreS3_Audio] Built-in microphone foundation"));
+    Serial.println(F("[CoreS3_Audio] Phase 10.4.1a start"));
+    Serial.println(F("[CoreS3_Audio] Built-in microphone / Audio Reactive integration"));
 
     Serial.printf(
       "[CoreS3_Audio] WLED I2C pins: SDA=%d SCL=%d\n",
@@ -656,16 +410,8 @@ public:
       return;
     }
 
-    if (!audioReady) {
-      return;
-    }
-
-    serviceAudioCapture();
-
-    if (now - lastSerialReportMs >= AUDIO_SERIAL_REPORT_MS) {
-      lastSerialReportMs = now;
-      reportAudioLevel();
-    }
+    // No periodic PCM work here.
+    // Audio Reactive owns I2S1 sampling and FFT processing.
   }
 
   // ---------------------------------------------------------
@@ -681,7 +427,7 @@ public:
     }
 
     JsonArray phaseInfo = user.createNestedArray("CoreS3 Audio Phase");
-    phaseInfo.add("10.4.0a");
+    phaseInfo.add("10.4.1a");
 
     JsonArray statusInfo = user.createNestedArray("CoreS3 Audio");
     statusInfo.add(getAudioStatusName());
@@ -704,70 +450,21 @@ public:
       codecInfo.add("Found / configured / verified on I2C1");
     }
 
+    JsonArray integrationInfo = user.createNestedArray("CoreS3 Audio Integration");
+#if defined(WLED_M5STACK_CORES3_AUDIO)
+    integrationInfo.add(
+      coreS3AudioReactiveSourceReady()
+        ? "AudioReactive source READY"
+        : (coreS3AudioCodecReadyState
+            ? "Codec ready / waiting I2S1 source"
+            : "Waiting for ES7210 codec")
+    );
+#else
+    integrationInfo.add("AudioReactive CoreS3 build flag missing");
+#endif
+
     JsonArray i2sInfo = user.createNestedArray("CoreS3 Audio I2S");
-
-    if (i2sInstalled) {
-      char i2sText[64];
-      snprintf(
-        i2sText,
-        sizeof(i2sText),
-        "I2S1 Stereo 16bit %luHz",
-        (unsigned long)AUDIO_SAMPLE_RATE
-      );
-      i2sInfo.add(i2sText);
-    }
-    else if (i2sAttempted) {
-      char errorText[64];
-      snprintf(
-        errorText,
-        sizeof(errorText),
-        "Not ready: %s (%d)",
-        esp_err_to_name(lastI2sError),
-        (int)lastI2sError
-      );
-      i2sInfo.add(errorText);
-    }
-    else if (initializationFinished) {
-      i2sInfo.add("Not attempted");
-    }
-    else {
-      i2sInfo.add("Waiting");
-    }
-
-    JsonArray levelInfo = user.createNestedArray("CoreS3 Mic RMS");
-
-    if (audioReady) {
-      char levelText[64];
-      snprintf(
-        levelText,
-        sizeof(levelText),
-        "%u (L:%u R:%u)",
-        latestRmsCombined,
-        latestRmsLeft,
-        latestRmsRight
-      );
-      levelInfo.add(levelText);
-    }
-    else {
-      levelInfo.add("No PCM yet");
-    }
-
-    JsonArray peakInfo = user.createNestedArray("CoreS3 Mic Peak");
-
-    if (audioReady) {
-      char peakText[48];
-      snprintf(
-        peakText,
-        sizeof(peakText),
-        "L:%u R:%u",
-        latestPeakLeft,
-        latestPeakRight
-      );
-      peakInfo.add(peakText);
-    }
-    else {
-      peakInfo.add("No PCM yet");
-    }
+    i2sInfo.add("AudioReactive owner: I2S1 Stereo 16bit 16000Hz");
 
     JsonArray pmuInfo = user.createNestedArray("CoreS3 Audio PMU");
 
@@ -790,7 +487,7 @@ public:
     }
 
     JsonArray pinInfo = user.createNestedArray("CoreS3 Audio Pins");
-    pinInfo.add("MCLK0 BCLK34 WS33 DIN14");
+    pinInfo.add("FIXED: MCLK0 BCLK34 WS33 DIN14");
   }
 };
 
