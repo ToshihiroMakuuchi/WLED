@@ -1,6 +1,22 @@
 #include "wled.h"
 #include <Wire.h>
 
+// ===========================================================
+// M5Stack CoreS3 Power Usermod
+//
+// Responsibilities
+//   - Verify the CoreS3 internal I2C pin assignment.
+//   - Detect the AW9523B I/O expander and AXP2101 PMU.
+//   - Apply the CoreS3 AW9523B configuration used for external power.
+//   - Enable BOOST_EN followed by BUS_EN for the external 5V ports.
+//   - Preserve unrelated AW9523B output bits.
+//   - Verify the resulting register state and report it to WLED Info.
+//
+// This usermod owns only CoreS3 external 5V power enablement.
+// It does not manage Display, Touch, audio codec configuration,
+// LED data output, or periodic power recovery.
+// ===========================================================
+
 class CoreS3PowerUsermod : public Usermod
 {
 private:
@@ -211,7 +227,7 @@ public:
   void setup() override
   {
     Serial.println();
-    Serial.println(F("[CoreS3_Power] Power Enable test start"));
+    Serial.println(F("[CoreS3_Power] Initialization start"));
 
     Serial.printf(
       "[CoreS3_Power] I2C SDA=%d SCL=%d\n",
@@ -286,13 +302,12 @@ public:
       p1After
     );
 
-    Serial.println(F("[CoreS3_Power] Power Enable test end"));
+    Serial.println(F("[CoreS3_Power] Initialization complete"));
     Serial.println();
   }
 
   // ------------------------------------------------------------
-  // Required by WLED Usermod base class.
-  // No periodic recovery yet.
+  // No periodic work is required after initialization.
   // ------------------------------------------------------------
   void loop() override
   {

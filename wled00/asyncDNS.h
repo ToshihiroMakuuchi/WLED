@@ -3,22 +3,20 @@
   asyncDNS.h - wrapper class for asynchronous DNS lookups using lwIP
   by @dedehai, C++ improvements & hardening by @willmmiles
 
-  M5Stack CoreS3 / WLED V17 compatibility patch
-  Phase 10.4.2P-V17i-DNS
-
-  ESP-IDF 5.x change:
-  -------------------
+  ESP-IDF 5.x TCP/IP task safety
+  ------------------------------
   dns_gethostbyname() is a lwIP raw API. On ESP-IDF 5.x, calling it
-  directly from the Arduino/WLED loop task can trigger:
+  directly from the Arduino/WLED loop task can trigger the lwIP assertion:
 
     assert failed: udp_new_ip_type ...
     (Required to lock TCPIP core functionality!)
 
-  For ESP32 + ESP-IDF >= 5, this patched implementation schedules the
-  actual dns_gethostbyname() call into the lwIP TCP/IP task by using
-  tcpip_callback().
+  For ESP32 builds using ESP-IDF 5.x or newer, DNS startup is scheduled
+  into the lwIP TCP/IP task with tcpip_callback() before calling
+  dns_gethostbyname().
 
-  ESP8266 and ESP32/ESP-IDF 4.x retain WLED's original behavior.
+  ESP8266 and ESP32 builds using ESP-IDF 4.x retain the original
+  asynchronous callback path.
 */
 
 #include <Arduino.h>

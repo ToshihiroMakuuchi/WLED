@@ -3,33 +3,33 @@
 #include <driver/i2c.h>
 
 // ===========================================================
-// CoreS3 Audio Usermod
+// M5Stack CoreS3 Audio Usermod
 //
-// Phase 10.4.4b
-//
-// Purpose
-//   - Access the CoreS3 internal I2C bus through the same
-//     M5GFX I2C_NUM_1 owner used by Display / Touch.
-//   - Detect the CoreS3 AXP2101 and ES7210 on that shared bus.
+// Responsibilities
+//   - Access the CoreS3 internal I2C bus through the M5GFX
+//     I2C_NUM_1 owner shared with Display / Touch.
+//   - Detect the AXP2101 PMU and ES7210 audio codec.
 //   - Configure and verify the built-in ES7210 dual microphones.
-//   - Reserve CoreS3 internal audio GPIO0 (MCLK) and GPIO14 (DIN)
-//     in WLED PinManager so they cannot be assigned to other features.
-//   - Publish codec readiness to WLED Audio Reactive.
-//   - Leave I2S_NUM_1 / PCM / FFT ownership exclusively to Audio Reactive.
-//   - Report codec / integration readiness to Serial and WLED Info.
+//   - Reserve the fixed internal audio pins used by WLED.
+//   - Publish codec readiness to the AudioReactive usermod.
+//   - Report hardware and integration status to WLED Info.
 //
-// This phase intentionally does NOT:
-//   - install or read I2S,
-//   - run FFT itself,
-//   - change LED state,
-//   - modify CoreS3 Display / Touch behavior,
-//   - modify CoreS3 power rails,
-//   - reinitialize or take ownership of the internal I2C bus.
+// Ownership
+//   CoreS3_Audio
+//     - GPIO0 / GPIO14 reservation
+//     - ES7210 configuration
+//     - shared internal I2C access
+//     - codec-ready signal
 //
-// Audio ownership in the stable design:
-//   CoreS3_Audio : fixed-pin reservation + ES7210 + I2C diagnostics
-//                  + codec-ready signal
-//   AudioReactive: I2S_NUM_1 + PCM + AGC + FFT + audio effects
+//   AudioReactive
+//     - I2S_NUM_1
+//     - PCM sampling
+//     - AGC / FFT
+//     - audio-reactive effects
+//
+// This usermod intentionally does not install or read I2S, run FFT,
+// change LED state, modify Display / Touch behavior, change power rails,
+// or reinitialize the CoreS3 internal I2C bus.
 //
 // CoreS3 internal audio hardware
 //   ES7210 I2C : 0x40
@@ -42,21 +42,13 @@
 //   I2S Port   : I2S_NUM_1
 //   Channels   : Stereo (MIC1 / MIC2)
 //
-// The ES7210 register configuration and CoreS3 audio pin mapping
-// follow the M5Stack M5Unified CoreS3 microphone implementation.
+// M5GFX owns the CoreS3 internal I2C bus after Display initialization.
+// Audio therefore uses lgfx::i2c transactions on I2C_NUM_1 and never
+// calls Wire.begin(), i2c_driver_install(), lgfx::i2c::init(), or
+// release() on that shared bus.
 //
-// Phase 10.4.2 change
-//   CoreS3 Display/Touch uses M5GFX internal I2C_NUM_1 on GPIO12/11.
-//   The original Phase 10.4.0 Audio probe used Arduino Wire (I2C0),
-//   so after M5GFX initialization it could no longer see the same
-//   internal devices. Audio now uses lgfx::i2c transactions on
-//   I2C_NUM_1 and never calls i2c/Wire begin or release.
-//
-// Phase 10.4.4b stabilization
-//   - Preserve the hardware-verified V17 AudioReactive behavior.
-//   - Remove the temporary reset / heap / PSRAM heartbeat diagnostics.
-//   - Keep persistent codec / integration status on the WLED Info page.
-//   - No Display, Touch, LED, I2S, FFT, or ES7210 behavior is changed.
+// The ES7210 register configuration and pin mapping follow the
+// M5Stack/M5Unified CoreS3 microphone implementation.
 // ===========================================================
 
 static volatile bool coreS3AudioCodecReadyState = false;
@@ -94,7 +86,7 @@ private:
   static constexpr uint8_t AUDIO_INIT_MAX_ATTEMPTS = 5;
 
   // ---------------------------------------------------------
-  // Phase 10.4.2 runtime state
+  // Runtime state
   // ---------------------------------------------------------
 
   bool coreS3PinsValid = false;
@@ -342,10 +334,9 @@ private:
 
     coreS3PinsValid = true;
 
-    // Read-only PMU diagnostics. Phase 10.4.2 deliberately does not
-    // change the ES7210 power rail; Power ownership remains separate.
-    // Reading AXP2101 register 0x90 simultaneously verifies that the
-    // shared M5GFX I2C_NUM_1 bus is reachable.
+    // Read-only PMU diagnostics. Power-rail ownership remains
+    // separate from this usermod. Reading AXP2101 register 0x90 also
+    // verifies that the shared M5GFX I2C_NUM_1 bus is reachable.
     axp2101RegistersRead = false;
     axp2101Found = readRegister(AXP2101_ADDR, 0x90, axp2101Reg90);
 
@@ -456,7 +447,7 @@ public:
   void setup() override
   {
     Serial.println();
-    Serial.println(F("[CoreS3_Audio] Phase 10.4.4b start"));
+    Serial.println(F("[CoreS3_Audio] Initialization start"));
 
     Serial.println(F("[CoreS3_Audio] Built-in microphone / Audio Reactive integration"));
 
@@ -515,7 +506,7 @@ public:
   }
 
   // ---------------------------------------------------------
-  // WLED Info diagnostics
+  // WLED Info status
   // ---------------------------------------------------------
 
   void addToJsonInfo(JsonObject& root) override
@@ -525,9 +516,6 @@ public:
     if (user.isNull()) {
       user = root.createNestedObject("u");
     }
-
-    JsonArray phaseInfo = user.createNestedArray("CoreS3 Audio Phase");
-    phaseInfo.add("10.4.2P-V17e");
 
     JsonArray statusInfo = user.createNestedArray("CoreS3 Audio");
     statusInfo.add(getAudioStatusName());
