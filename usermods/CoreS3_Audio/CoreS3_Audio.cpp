@@ -2,14 +2,10 @@
 #include <M5GFX.h>
 #include <driver/i2c.h>
 
-// Phase 10.4.2P-V17e diagnostics
-#include <esp_system.h>
-#include <esp_heap_caps.h>
-
 // ===========================================================
 // CoreS3 Audio Usermod
 //
-// Phase 10.4.2P-V17e
+// Phase 10.4.4b
 //
 // Purpose
 //   - Access the CoreS3 internal I2C bus through the same
@@ -21,7 +17,6 @@
 //   - Publish codec readiness to WLED Audio Reactive.
 //   - Leave I2S_NUM_1 / PCM / FFT ownership exclusively to Audio Reactive.
 //   - Report codec / integration readiness to Serial and WLED Info.
-//   - Diagnose V17 unexpected resets without changing the audio architecture.
 //
 // This phase intentionally does NOT:
 //   - install or read I2S,
@@ -31,7 +26,7 @@
 //   - modify CoreS3 power rails,
 //   - reinitialize or take ownership of the internal I2C bus.
 //
-// Audio ownership in Phase 10.4.2:
+// Audio ownership in the stable design:
 //   CoreS3_Audio : fixed-pin reservation + ES7210 + I2C diagnostics
 //                  + codec-ready signal
 //   AudioReactive: I2S_NUM_1 + PCM + AGC + FFT + audio effects
@@ -57,12 +52,11 @@
 //   internal devices. Audio now uses lgfx::i2c transactions on
 //   I2C_NUM_1 and never calls i2c/Wire begin or release.
 //
-// Phase 10.4.2P-V17e diagnostic change
-//   - Print the previous ESP-IDF reset reason at every boot.
-//   - Print PSRAM / heap state at boot.
-//   - Print a lightweight runtime heartbeat every 10 seconds.
-//   - Do not change the current V17 platform, PSRAM, RMT, I2S,
-//     codec, Display, Touch, or AudioReactive behavior.
+// Phase 10.4.4b stabilization
+//   - Preserve the hardware-verified V17 AudioReactive behavior.
+//   - Remove the temporary reset / heap / PSRAM heartbeat diagnostics.
+//   - Keep persistent codec / integration status on the WLED Info page.
+//   - No Display, Touch, LED, I2S, FFT, or ES7210 behavior is changed.
 // ===========================================================
 
 static volatile bool coreS3AudioCodecReadyState = false;
@@ -118,161 +112,6 @@ private:
   uint8_t axp2101Reg90 = 0;
   uint8_t axp2101Reg93 = 0;
   uint8_t es7210ProbeReg00 = 0;
-
-  // ---------------------------------------------------------
-  // Phase 10.4.2P-V17e boot / runtime diagnostics
-  // ---------------------------------------------------------
-
-  static constexpr unsigned long DIAG_INTERVAL_MS = 10000;
-  unsigned long lastDiagMs = 0;
-
-  const char* getResetReasonName(esp_reset_reason_t reason) const
-  {
-    switch (reason) {
-      case ESP_RST_UNKNOWN:
-        return "UNKNOWN";
-
-      case ESP_RST_POWERON:
-        return "POWERON";
-
-      case ESP_RST_EXT:
-        return "EXTERNAL";
-
-      case ESP_RST_SW:
-        return "SOFTWARE";
-
-      case ESP_RST_PANIC:
-        return "PANIC";
-
-      case ESP_RST_INT_WDT:
-        return "INTERRUPT_WDT";
-
-      case ESP_RST_TASK_WDT:
-        return "TASK_WDT";
-
-      case ESP_RST_WDT:
-        return "OTHER_WDT";
-
-      case ESP_RST_DEEPSLEEP:
-        return "DEEPSLEEP";
-
-      case ESP_RST_BROWNOUT:
-        return "BROWNOUT";
-
-      case ESP_RST_SDIO:
-        return "SDIO";
-
-      case ESP_RST_USB:
-        return "USB";
-
-      case ESP_RST_JTAG:
-        return "JTAG";
-
-      case ESP_RST_EFUSE:
-        return "EFUSE";
-
-      case ESP_RST_PWR_GLITCH:
-        return "POWER_GLITCH";
-
-      case ESP_RST_CPU_LOCKUP:
-        return "CPU_LOCKUP";
-
-      default:
-        return "OTHER";
-    }
-  }
-
-  void printBootDiagnostics()
-  {
-    const esp_reset_reason_t reason = esp_reset_reason();
-
-    const size_t psramTotal =
-      heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-
-    const size_t psramFree =
-      heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-
-    const size_t psramLargest =
-      heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
-
-    const uint32_t heapFree =
-      esp_get_free_heap_size();
-
-    const uint32_t internalHeapFree =
-      esp_get_free_internal_heap_size();
-
-    const uint32_t minimumHeap =
-      esp_get_minimum_free_heap_size();
-
-    Serial.println();
-    Serial.println(F("============================================================"));
-    Serial.println(F("[CoreS3_DIAG] Phase 10.4.2P-V17e boot diagnostics"));
-
-    Serial.printf(
-      "[CoreS3_DIAG] Reset reason: %d (%s)\n",
-      static_cast<int>(reason),
-      getResetReasonName(reason)
-    );
-
-    Serial.printf(
-      "[CoreS3_DIAG] PSRAM total : %lu bytes (%.2f MB)\n",
-      static_cast<unsigned long>(psramTotal),
-      static_cast<double>(psramTotal) / 1048576.0
-    );
-
-    Serial.printf(
-      "[CoreS3_DIAG] PSRAM free  : %lu bytes (%.2f MB)\n",
-      static_cast<unsigned long>(psramFree),
-      static_cast<double>(psramFree) / 1048576.0
-    );
-
-    Serial.printf(
-      "[CoreS3_DIAG] PSRAM largest block: %lu bytes\n",
-      static_cast<unsigned long>(psramLargest)
-    );
-
-    Serial.printf(
-      "[CoreS3_DIAG] Heap free   : %lu bytes\n",
-      static_cast<unsigned long>(heapFree)
-    );
-
-    Serial.printf(
-      "[CoreS3_DIAG] Internal heap free: %lu bytes\n",
-      static_cast<unsigned long>(internalHeapFree)
-    );
-
-    Serial.printf(
-      "[CoreS3_DIAG] Minimum free heap : %lu bytes\n",
-      static_cast<unsigned long>(minimumHeap)
-    );
-
-    Serial.println(F("============================================================"));
-    Serial.println();
-  }
-
-  void printRuntimeDiagnostics(unsigned long now)
-  {
-    const size_t psramFree =
-      heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-
-    const uint32_t heapFree =
-      esp_get_free_heap_size();
-
-    const uint32_t internalHeapFree =
-      esp_get_free_internal_heap_size();
-
-    const uint32_t minimumHeap =
-      esp_get_minimum_free_heap_size();
-
-    Serial.printf(
-      "[CoreS3_DIAG] Alive=%lus Heap=%lu Internal=%lu MinHeap=%lu PSRAM_Free=%lu\n",
-      now / 1000UL,
-      static_cast<unsigned long>(heapFree),
-      static_cast<unsigned long>(internalHeapFree),
-      static_cast<unsigned long>(minimumHeap),
-      static_cast<unsigned long>(psramFree)
-    );
-  }
 
   // ---------------------------------------------------------
   // CoreS3 internal audio pin reservation
@@ -617,11 +456,7 @@ public:
   void setup() override
   {
     Serial.println();
-    Serial.println(F("[CoreS3_Audio] Phase 10.4.2P-V17e start"));
-
-    // Diagnostic only: records why the previous boot ended and confirms
-    // that the V17 Quad-PSRAM configuration is active.
-    printBootDiagnostics();
+    Serial.println(F("[CoreS3_Audio] Phase 10.4.4b start"));
 
     Serial.println(F("[CoreS3_Audio] Built-in microphone / Audio Reactive integration"));
 
@@ -651,8 +486,6 @@ public:
     setupStartMs = millis();
     lastInitAttemptMs = setupStartMs;
 
-    // Start heartbeat timing from the end of Usermod setup.
-    lastDiagMs = setupStartMs;
   }
 
   // ---------------------------------------------------------
@@ -662,14 +495,6 @@ public:
   void loop() override
   {
     const unsigned long now = millis();
-
-    // Phase 10.4.2P-V17e runtime heartbeat.
-    // Intentionally executed before the deferred-initialization returns
-    // so a long-running initialization problem remains visible.
-    if (now - lastDiagMs >= DIAG_INTERVAL_MS) {
-      lastDiagMs = now;
-      printRuntimeDiagnostics(now);
-    }
 
     if (!initializationFinished) {
       if (now - setupStartMs < AUDIO_INIT_DELAY_MS) {
@@ -787,34 +612,6 @@ public:
     JsonArray pinInfo = user.createNestedArray("CoreS3 Audio Pins");
     pinInfo.add("FIXED: MCLK0 BCLK34 WS33 DIN14");
 
-    JsonArray diagInfo = user.createNestedArray("CoreS3 V17 Diagnostics");
-
-    char resetText[48];
-    const esp_reset_reason_t resetReason = esp_reset_reason();
-
-    snprintf(
-      resetText,
-      sizeof(resetText),
-      "Reset=%d %s",
-      static_cast<int>(resetReason),
-      getResetReasonName(resetReason)
-    );
-
-    diagInfo.add(resetText);
-
-    char psramText[64];
-    const size_t psramTotal = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-    const size_t psramFree = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-
-    snprintf(
-      psramText,
-      sizeof(psramText),
-      "PSRAM=%lu total / %lu free",
-      static_cast<unsigned long>(psramTotal),
-      static_cast<unsigned long>(psramFree)
-    );
-
-    diagInfo.add(psramText);
   }
 };
 

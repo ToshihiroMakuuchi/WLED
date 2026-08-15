@@ -1523,8 +1523,12 @@ class AudioReactive : public Usermod {
 
       // Reset the selected I2S peripheral for good measure.
       #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
-      if (dmType == 7) i2s_driver_uninstall(I2S_NUM_1);
-      else             i2s_driver_uninstall(I2S_NUM_0);
+      if (dmType == 7) {
+        // CoreS3 I2S1 is deferred and has no driver to uninstall at boot.
+        // CoreS3ES7210Source becomes the sole owner after ES7210 is READY.
+      } else {
+        i2s_driver_uninstall(I2S_NUM_0);
+      }
       #else
       i2s_driver_uninstall(I2S_NUM_0);
       #endif
