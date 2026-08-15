@@ -6,214 +6,52 @@
 #include "CoreS3_WLED_Logo.h"
 
 // ===========================================================
-// CoreS3 Display Usermod
+// M5Stack Display Controller Usermod
 //
-// Phase 10.3.13
+// Current verified runtime
+//   - M5Stack CoreS3
+//   - 320 x 240 display
+//   - Touch input
+//   - LCD brightness control
 //
-// MAIN
-//   Power
-//   Brightness
-//   Effect Prev / Detail / Next
-//   Color
-//   Preset
+// Prepared hardware profiles
+//   - M5Stack Core2
+//   - M5Stack Core2 for AWS
 //
-// COLOR
-//   Hue
-//   Saturation
+// The Core2-family profiles remain diagnostic-only until their
+// Display / Touch / Power paths are implemented and verified on
+// real hardware.
 //
-// EFFECT
-//   Speed
-//   Intensity
-//   Palette
+// Responsibilities
+//   - WLED power / brightness control
+//   - Effect and palette navigation
+//   - Color hue / saturation control
+//   - Preset navigation and management
+//   - Boot-preset selection
+//   - Startup animation
+//   - Display sleep / wake
+//   - Runtime synchronization with WLED state
 //
-// PRESET
-//   Previous / Next saved preset
-//   Missing preset IDs are skipped
-//   Presets wrap at first / last
-//   Preset is applied immediately
+// Architecture
+//   UI and WLED-state logic are kept separate from the thin
+//   Display / Touch / brightness hardware-access boundary so the
+//   same controller behavior can later be reused by Core2-family
+//   hardware profiles.
 //
-// Phase 9.2.1
-//   Palette visible button size unchanged
-//   Expanded invisible touch area
-//
-// Phase 10.1
-//   MAIN Color / Preset visible sizes unchanged
-//   Expanded invisible touch areas
-//
-//   PRESET Prev / Next visible sizes unchanged
-//   Expanded invisible touch areas
-//
-// Phase 10.1.1
-//   Saved Preset IDs / names are cached in RAM.
-//   Arrow operation no longer scans IDs 1..250.
-//   Cache is rebuilt in the background.
-//   presetsModifiedTime is used to detect changes.
-//
-// Phase 10.2.1
-//   Preset MANAGE entry added to PRESET screen.
-//   Current WLED state can be saved as a new Preset.
-//   Lowest unused Preset ID is selected from RAM cache.
-//   New Preset name is generated as "CoreS3 Preset <ID>".
-//   Saving requires a 1 second hold confirmation.
-//   WLED standard asynchronous savePreset() is used.
-//   Phase 10.1.1 Preset cache behavior is preserved.
-//
-// Phase 10.2.2
-//   Existing Presets can be overwritten from CoreS3.
-//   OVERWRITE target is selected from the RAM Preset cache.
-//   Target selection never applies the Preset, so the current
-//   WLED state remains unchanged until it is saved.
-//   Existing Preset names are preserved.
-//   Overwrite requires a 1 second hold confirmation.
-//   Phase 10.2.1 SAVE NEW behavior is preserved.
-//
-// Phase 10.2.3
-//   Existing Presets can be deleted from CoreS3.
-//   DELETE target is selected from the RAM Preset cache.
-//   Target selection never applies the Preset.
-//   Delete requires a 1 second hold confirmation.
-//   WLED standard deletePreset() is used.
-//   Deletion is verified after the Preset cache rebuild.
-//   Deleting the active Preset keeps the current LED state
-//   and changes the active Preset indication to Custom State.
-//   Phase 10.2.1 / 10.2.2 behavior is preserved.
-//
-// Phase 10.2.4
-//   Preset cache verification messages are simplified.
-//   Internal ID scan progress is no longer shown on the LCD.
-//   SAVE NEW / OVERWRITE / DELETE show meaningful
-//   verification messages instead of "x / 250" scan values.
-//   Preset management logic is unchanged.
-//
-// Phase 10.3.0
-//   Formatting-only source normalization.
-//   Existing functions, state machines, touch behavior,
-//   WLED operations, timings, coordinates, and UI behavior
-//   are intentionally unchanged from Phase 10.2.4.
-//
-// Phase 10.3.1
-//   Low-risk structural cleanup.
-//   Touch hit areas are grouped into fixed rectangle data.
-//   Repeated hit-test bodies use one rectangle helper.
-//   Common page header drawing is shared by Preset/Color pages.
-//   Touch state machines, timings, WLED operations, coordinates,
-//   and visible UI behavior remain unchanged.
-//
-// Phase 10.3.2
-//   Touch processing is divided into Press / Hold / Release
-//   helper functions.
-//   Touch polling order, hit-test conditions, target selection,
-//   long-press/repeat timing, release confirmation, and actions
-//   are preserved from the hardware-verified Phase 10.3.1.
-//
-// Phase 10.3.3
-//   Boot Preset Management is added to PRESET MANAGE.
-//   Saved Presets can be selected as the WLED boot Preset
-//   without applying or changing the current LED state.
-//   NONE disables boot Preset loading.
-//   Setting requires a 1 second hold confirmation and is
-//   persisted through WLED's standard configuration writer.
-//   Deleting the configured boot Preset from CoreS3 clears
-//   the boot Preset setting after deletion is verified.
-//
-// Phase 10.3.4
-//   Long-press and repeat timing state is consolidated.
-//   Brightness / Effect / Hue / Saturation / Speed /
-//   Intensity / Palette / Preset share one timing-state type.
-//   Existing timing constants, repeat actions, touch areas,
-//   release behavior, WLED operations, and UI are unchanged.
-//
-// Phase 10.3.5
-//   Repeated numeric control drawing is consolidated.
-//   Brightness / Hue / Saturation / Speed / Intensity keep
-//   their existing wrapper functions and exact coordinates.
-//   Touch areas, value logic, long-press/repeat behavior,
-//   WLED operations, and visible UI are unchanged.
-//
-// Phase 10.3.6
-//   Touch-pair hit handling is consolidated in Hold processing.
-//   The TouchHitState snapshot is reused instead of repeating
-//   rectangle hit tests for paired controls.
-//   Press acquisition, release actions, coordinates, timings,
-//   WLED operations, Preset behavior, and visible UI are unchanged.
-//
-// Phase 10.3.7
-//   Touch Release action selection and execution are separated.
-//   One release-action enum replaces parallel execute flags.
-//   Pressed-visual release and Back navigation are isolated helpers.
-//   Release confirmation, action conditions, action order semantics,
-//   coordinates, timings, WLED operations, and visible UI are unchanged.
-//
-// Phase 10.3.8
-//   Runtime display synchronization is split by page.
-//   MAIN / COLOR / EFFECT / PRESET update logic is moved out of loop().
-//   The helpers remain hardware-neutral so the UI/WLED state logic can
-//   be reused when Core2 / Core2 for AWS support is added later.
-//   Update order, 250 ms polling, Wi-Fi handling, touch suppression,
-//   WLED state reads, cache updates, and visible UI are unchanged.
-//
-// Phase 10.3.9
-//   Display lifecycle, Touch sampling, and LCD brightness writes
-//   are routed through a thin hardware-access boundary.
-//   This prepares later Core2 / Core2 for AWS support without
-//   changing the current CoreS3 UI, timings, coordinates, Touch
-//   behavior, WLED operations, or runtime synchronization.
-//
-// Phase 10.3.10
-//   A compile-time M5Stack hardware profile is introduced.
-//   CoreS3 / Core2 / Core2 for AWS model identities and optional
-//   hardware revision metadata now have one explicit boundary.
-//   Only the CoreS3 profile is enabled in this phase; Core2 family
-//   profiles are prepared but intentionally blocked until their
-//   display/power behavior is implemented and hardware-tested.
-//   The active CoreS3 profile keeps the exact Phase 10.3.9 UI,
-//   Touch, brightness, timings, WLED operations, and synchronization.
-//
-// Phase 10.3.11
-//   Read-only Core2-family hardware diagnostics are added behind
-//   the hardware-profile boundary. The diagnostic probe uses the
-//   official Core2 internal I2C pins and classifies PMU/IMU/variant
-//   signatures without enabling Core2 display or power control yet.
-//   CoreS3 skips the probe entirely, preserving its hardware-tested
-//   I2C ownership, UI, Touch, brightness, WLED operations, and runtime.
-//
-// Phase 10.3.12
-//   Core2-family profiles can now enter an explicit diagnostic-only
-//   runtime selected at build time. In this mode only the read-only
-//   I2C hardware probe runs; Display, Touch sampling, LCD brightness,
-//   Power initialization, UI drawing, and WLED control from the LCD
-//   remain intentionally disabled until the detected hardware is known.
-//   Core2-family profiles require an explicit diagnostic-only build flag,
-//   preventing accidental use of unfinished hardware initialization.
-//   CoreS3 remains the default and keeps the exact Phase 10.3.11 runtime.
-//
-// Phase 10.3.13
-//   Core2 porting preparation is frozen behind an explicit hardware
-//   capability boundary before CoreS3 feature development resumes.
-//   Display runtime, Touch sampling, LCD brightness writes, and Core2
-//   diagnostic probing now have separate compile-time capability flags.
-//   CoreS3 remains the only verified active Display runtime. Core2 and
-//   Core2 for AWS remain diagnostic-only and cannot enter UI/Power runtime.
-//   The existing CoreS3_Display class/config key is intentionally retained
-//   for configuration compatibility while future hardware ports reuse the
-//   hardware-neutral UI/WLED logic. No CoreS3 runtime behavior is changed.
-//
-// Common
-//   Startup animation
-//   Auto suspend
-//   Touch wake
-//   Configurable LCD settings
+// Compatibility
+//   The existing "CoreS3_Display" configuration key and usermod
+//   class identity are intentionally retained so existing CoreS3
+//   settings continue to load without migration.
 // ===========================================================
 
 static const char CORES3_DISPLAY_CONFIG_NAME[] PROGMEM = "CoreS3_Display";
 
 // ===========================================================
-// Phase 10.3.10
 // Compile-time M5Stack hardware profile
 //
 // The default remains CoreS3 so existing builds do not need any
 // new PlatformIO flags. Core2 / Core2 for AWS values are reserved
-// for the following hardware-port phases. Hardware revision can be
+// for later hardware ports. Hardware revision can be
 // left UNKNOWN until a board marking or hardware probe identifies it.
 // ===========================================================
 
@@ -234,8 +72,7 @@ static const char CORES3_DISPLAY_CONFIG_NAME[] PROGMEM = "CoreS3_Display";
   #define WLED_M5STACK_DISPLAY_REVISION WLED_M5STACK_DISPLAY_REVISION_UNKNOWN
 #endif
 
-// Phase 10.3.12 / 10.3.13
-// Core2 / Core2 for AWS profiles remain diagnostic-only in this phase.
+// Core2 / Core2 for AWS profiles remain diagnostic-only.
 // An explicit opt-in flag is required so unfinished Display/Power
 // initialization can never be selected accidentally.
 #ifndef WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY
@@ -265,7 +102,7 @@ static_assert(
 static_assert(
   WLED_M5STACK_DISPLAY_PROFILE == WLED_M5STACK_DISPLAY_PROFILE_CORES3 ||
   WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY == 1,
-  "Core2-family profiles require WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY=1 in Phase 10.3.13"
+  "Core2-family profiles require WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY=1"
 );
 
 static_assert(
@@ -299,7 +136,6 @@ static constexpr bool ACTIVE_M5STACK_CORE2_DIAGNOSTIC_ONLY =
   ( WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY == 1 );
 
 // ===========================================================
-// Phase 10.3.13
 // Hardware port capability boundary
 //
 // These flags define the only hardware-dependent runtime features
@@ -322,7 +158,6 @@ static constexpr bool ACTIVE_M5STACK_CORE2_DIAGNOSTIC_PROBE_ENABLED =
     ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2_AWS );
 
 // ===========================================================
-// Phase 10.3.11
 // Core2-family read-only hardware diagnostic classifications
 // ===========================================================
 
@@ -354,10 +189,9 @@ enum M5StackDetectedVariant : uint8_t {
 };
 
 // ===========================================================
-// Phase 10.3.1
 // Fixed touch rectangles
 //
-// These values are identical to the Phase 10.3.0 hit areas.
+// These values preserve the hardware-verified touch hit areas.
 // Only their representation is consolidated here.
 // ===========================================================
 
@@ -427,7 +261,6 @@ class CoreS3DisplayUsermod : public Usermod {
   unsigned long touchReleaseCandidate = 0;
 
   // =========================================================
-  // Phase 10.3.11
   // Core2-family hardware diagnostic result
   // =========================================================
 
@@ -484,7 +317,6 @@ class CoreS3DisplayUsermod : public Usermod {
   bool lastPrimaryColorValid = false;
 
   // =========================================================
-  // Phase 10.1
   // Preset state
   // =========================================================
 
@@ -503,7 +335,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr unsigned long PRESET_APPLY_PENDING_MS = 1500;
 
   // =========================================================
-  // Phase 10.1.1
   // Preset RAM cache
   //
   // WLED Preset names are limited to 32 characters.
@@ -539,7 +370,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr unsigned long PRESET_CACHE_SCAN_INTERVAL_MS = 5;
 
   // =========================================================
-  // Phase 8.4
   // Persistent Display Settings
   // =========================================================
 
@@ -619,7 +449,6 @@ class CoreS3DisplayUsermod : public Usermod {
   ScreenPage currentPage = SCREEN_MAIN;
 
   // =========================================================
-  // Phase 10.2.3
   // Preset sub pages
   // =========================================================
 
@@ -629,7 +458,6 @@ class CoreS3DisplayUsermod : public Usermod {
   PresetSubPage presetSubPage = PRESET_SUBPAGE_NAV;
 
   // =========================================================
-  // Phase 10.2.1
   // New Preset save operation
   // =========================================================
 
@@ -650,7 +478,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr unsigned long PRESET_SAVE_RESULT_HOLD_MS = 900;
 
   // =========================================================
-  // Phase 10.2.2
   // Existing Preset overwrite selection
   // =========================================================
 
@@ -660,7 +487,6 @@ class CoreS3DisplayUsermod : public Usermod {
   bool presetSaveOperationIsOverwrite = false;
 
   // =========================================================
-  // Phase 10.2.3
   // Existing Preset delete selection / operation
   // =========================================================
 
@@ -678,7 +504,6 @@ class CoreS3DisplayUsermod : public Usermod {
   unsigned long presetDeleteResultStartMs = 0;
 
   // =========================================================
-  // Phase 10.3.3
   // Boot Preset selection / operation
   // =========================================================
 
@@ -732,7 +557,6 @@ class CoreS3DisplayUsermod : public Usermod {
   TouchTarget touchTarget = TOUCH_TARGET_NONE;
 
   // =========================================================
-  // Phase 10.3.2
   // Touch hit state
   //
   // A single hit-test snapshot is built for each active touch
@@ -866,7 +690,6 @@ class CoreS3DisplayUsermod : public Usermod {
   bool presetBootHoldButtonVisualPressed = false;
 
   // =========================================================
-  // Phase 10.3.4
   // Shared long press / repeat timing state
   // =========================================================
 
@@ -946,7 +769,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t EFFECT_DETAIL_H = 34;
 
   // =========================================================
-  // Phase 10.1
   // MAIN bottom visible buttons
   // =========================================================
 
@@ -998,7 +820,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PALETTE_BUTTON_Y = 198;
 
   // =========================================================
-  // Phase 10.1
   // PRESET screen layout
   // =========================================================
 
@@ -1010,7 +831,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_NAV_BUTTON_Y = 198;
 
   // =========================================================
-  // Phase 10.2.1
   // PRESET MANAGE button on navigation screen
   // =========================================================
 
@@ -1020,7 +840,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_MANAGE_BUTTON_H = 34;
 
   // =========================================================
-  // Phase 10.2.1
   // PRESET MANAGE screen
   // =========================================================
 
@@ -1030,7 +849,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_SAVE_NEW_BUTTON_H = 34;
 
   // =========================================================
-  // Phase 10.2.2
   // PRESET MANAGE OVERWRITE button
   // =========================================================
 
@@ -1040,7 +858,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_OVERWRITE_BUTTON_H = 34;
 
   // =========================================================
-  // Phase 10.2.3
   // PRESET MANAGE DELETE button
   // =========================================================
 
@@ -1050,7 +867,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_DELETE_BUTTON_H = 34;
 
   // =========================================================
-  // Phase 10.3.3
   // PRESET MANAGE BOOT PRESET button
   // =========================================================
 
@@ -1060,7 +876,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_BOOT_BUTTON_H = 34;
 
   // =========================================================
-  // Phase 10.2.1
   // PRESET SAVE confirmation screen
   // =========================================================
 
@@ -1070,7 +885,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_SAVE_HOLD_BUTTON_H = 44;
 
   // =========================================================
-  // Phase 10.2.2
   // PRESET OVERWRITE selection / confirmation screen
   // =========================================================
 
@@ -1082,7 +896,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_OVERWRITE_HOLD_BUTTON_H = 40;
 
   // =========================================================
-  // Phase 10.2.3
   // PRESET DELETE selection / confirmation screen
   // =========================================================
 
@@ -1094,7 +907,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr int16_t PRESET_DELETE_HOLD_BUTTON_H = 40;
 
   // =========================================================
-  // Phase 10.3.3
   // PRESET BOOT selection / confirmation screen
   // =========================================================
 
@@ -1187,7 +999,6 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr unsigned long PRESET_REPEAT_MS = 600;
 
   // =========================================================
-  // Phase 10.3.4
   // Shared long press / repeat timing helpers
   // =========================================================
 
@@ -1257,7 +1068,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.11 / 10.3.12
   // Core2-family read-only hardware diagnostics
   //
   // CoreS3 intentionally skips these probes. Core2 and Core2 for
@@ -1519,7 +1329,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.9
   // Display / Touch hardware access boundary
   //
   // CoreS3 behavior is intentionally unchanged here.
@@ -1564,7 +1373,7 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   uint8_t getHardwareDisplayRotation() {
-    // CoreS3 Phase 10.3.9 behavior is rotation 1.
+    // The hardware-verified CoreS3 display rotation is 1.
     // Future profiles can select their rotation here after hardware test.
     return 1;
   }
@@ -1572,7 +1381,7 @@ class CoreS3DisplayUsermod : public Usermod {
   bool initializeDisplayHardware() {
     if ( !isHardwareDisplayRuntimeEnabled() ) {
       Serial.printf(
-        "[CoreS3_Display] Hardware profile not enabled for Display in Phase 10.3.13: %s (%s)\n",
+        "[CoreS3_Display] Hardware profile not enabled for Display runtime: %s (%s)\n",
         getHardwareProfileName(),
         getHardwareRevisionName()
       );
@@ -1675,7 +1484,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.1.1
   // Preset cache rebuild start
   // =========================================================
 
@@ -1698,7 +1506,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.1.1
   // Preset cache rebuild complete
   // =========================================================
 
@@ -1777,7 +1584,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.1.1
   // Background Preset cache service
   // =========================================================
 
@@ -3103,7 +2909,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.1
   // Common centered text / standard page header helpers
   // =========================================================
 
@@ -3222,7 +3027,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.5
   // Shared numeric control drawing
   // =========================================================
 
@@ -3556,7 +3360,6 @@ class CoreS3DisplayUsermod : public Usermod {
     display.setTextDatum( textdatum_t::middle_center );
 
     // -------------------------------------------------------
-    // Phase 10.2.4
     // Internal Preset ID scan number is intentionally hidden.
     // -------------------------------------------------------
 
@@ -4075,7 +3878,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.2.4
   // SAVE NEW / OVERWRITE operation status
   //
   // Internal 1..250 cache scan position is intentionally
@@ -4381,7 +4183,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.2.4
   // DELETE operation status
   //
   // Internal cache scan position is not displayed.
@@ -5510,7 +5311,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.6
   // Shared paired-touch helpers
   // =========================================================
 
@@ -5535,7 +5335,6 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   // =========================================================
-  // Phase 10.3.2
   // Build one touch hit-test snapshot
   // =========================================================
 
@@ -5638,7 +5437,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.2
   // Touch Press
   //
   // Starts a new gesture and acquires its TouchTarget.
@@ -5928,7 +5726,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.2
   // Touch Hold
   //
   // Preserves pressed visuals, long-press and repeat behavior.
@@ -6371,7 +6168,6 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
   // =========================================================
-  // Phase 10.3.7
   // Touch Release action state
   //
   // Only one TouchTarget can own a gesture, so release-time
@@ -6879,7 +6675,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.7
   // Touch Release
   //
   // Release confirmation is unchanged. Action selection,
@@ -6929,7 +6724,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.2
   // Touch dispatcher
   //
   // Poll touch once, then route the same state through
@@ -6986,7 +6780,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Phase 10.3.8
   // Page-specific runtime display synchronization
   //
   // These helpers contain only UI/WLED state synchronization.
@@ -7214,7 +7007,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.13 start" ) );
+    Serial.println( F( "[CoreS3_Display] Initialization start" ) );
 
     Serial.printf(
       "[CoreS3_Display] " "Hardware: %s, Revision=%s, Runtime=%s\n",
@@ -7283,7 +7076,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     initDone = true;
 
-    Serial.println( F( "[CoreS3_Display] " "Phase 10.3.13 setup complete" ) );
+    Serial.println( F( "[CoreS3_Display] Initialization complete" ) );
 
     Serial.println();
   }
@@ -7623,7 +7416,6 @@ class CoreS3DisplayUsermod : public Usermod {
     }
     else if ( presetCacheBuilding ) {
       // -----------------------------------------------------
-      // Phase 10.2.4
       // Do not expose the internal 1..250 scan position.
       // -----------------------------------------------------
 
@@ -7735,9 +7527,6 @@ class CoreS3DisplayUsermod : public Usermod {
       fadeInfo.add( fadeText );
     }
 
-    JsonArray phaseInfo = user.createNestedArray( "CoreS3 Display Phase" );
-
-    phaseInfo.add( "10.3.13" );
   }
 };
 

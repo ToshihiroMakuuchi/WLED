@@ -201,6 +201,18 @@ static FFTsampleType* windowFFT = nullptr;
 
 // use audio source class (ESP32 specific)
 #include "audio_source.h"
+
+// -----------------------------------------------------------------------------
+// M5Stack CoreS3 built-in ES7210 microphone integration
+//
+// Board-specific responsibilities in this file are limited to:
+//   - fixed internal audio pin selection
+//   - GPIO0 button ownership release for MCLK
+//   - deferred I2S source startup after codec readiness
+//   - CoreS3-specific sample rate / FFT mapping
+//
+// ES7210 codec configuration itself remains owned by CoreS3_Audio.
+// -----------------------------------------------------------------------------
 #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
 extern "C" bool coreS3AudioCodecReady();
 
@@ -317,7 +329,7 @@ static float   fftResultMax[NUM_GEQ_CHANNELS] = {0.0f};               // A table
 
 // audio source parameters and constant
 #if defined(WLED_M5STACK_CORES3_AUDIO) && defined(CONFIG_IDF_TARGET_ESP32S3)
-constexpr SRate_t SAMPLE_RATE = 16000;        // CoreS3 ES7210 verified Phase 10.4.0a sample rate
+constexpr SRate_t SAMPLE_RATE = 16000;        // Hardware-verified CoreS3 ES7210 sample rate
 #else
 constexpr SRate_t SAMPLE_RATE = 22050;        // Base sample rate in Hz - 22Khz is a standard rate. Physical sample time -> 23ms
 #endif

@@ -425,7 +425,7 @@ class I2SSource : public AudioSource {
  * the codec-ready signal is published, then becomes the sole owner of
  * I2S_NUM_1 for PCM sampling.
  *
- * Verified CoreS3 audio path (Phase 10.4.0a):
+ * Hardware-verified CoreS3 audio path:
  *   MCLK GPIO0
  *   BCLK GPIO34
  *   WS   GPIO33
