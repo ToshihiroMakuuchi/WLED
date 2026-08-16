@@ -59,17 +59,25 @@
     if ( currentPage == SCREEN_EFFECT ) {
       hit.insideBack = M5StackDisplayTouchHelpers::isBackButtonTouched( touchX, touchY );
 
-      hit.insideSpeedDown = M5StackDisplayTouchHelpers::isSpeedDownTouched( touchX, touchY );
+      const uint8_t effectMode = getCurrentEffectMode();
 
-      hit.insideSpeedUp = M5StackDisplayTouchHelpers::isSpeedUpTouched( touchX, touchY );
+      if ( isEffectSpeedControlVisible( effectMode ) ) {
+        hit.insideSpeedDown = M5StackDisplayTouchHelpers::isSpeedDownTouched( touchX, touchY );
 
-      hit.insideIntensityDown = M5StackDisplayTouchHelpers::isIntensityDownTouched( touchX, touchY );
+        hit.insideSpeedUp = M5StackDisplayTouchHelpers::isSpeedUpTouched( touchX, touchY );
+      }
 
-      hit.insideIntensityUp = M5StackDisplayTouchHelpers::isIntensityUpTouched( touchX, touchY );
+      if ( isEffectIntensityControlVisible( effectMode ) ) {
+        hit.insideIntensityDown = M5StackDisplayTouchHelpers::isIntensityDownTouched( touchX, touchY );
 
-      hit.insidePalettePrev = M5StackDisplayTouchHelpers::isPalettePrevTouched( touchX, touchY );
+        hit.insideIntensityUp = M5StackDisplayTouchHelpers::isIntensityUpTouched( touchX, touchY );
+      }
 
-      hit.insidePaletteNext = M5StackDisplayTouchHelpers::isPaletteNextTouched( touchX, touchY );
+      if ( isEffectPaletteControlVisible( effectMode ) ) {
+        hit.insidePalettePrev = M5StackDisplayTouchHelpers::isPalettePrevTouched( touchX, touchY );
+
+        hit.insidePaletteNext = M5StackDisplayTouchHelpers::isPaletteNextTouched( touchX, touchY );
+      }
     }
 
     if ( currentPage == SCREEN_PRESET ) {

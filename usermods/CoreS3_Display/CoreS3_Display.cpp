@@ -2709,6 +2709,221 @@ class CoreS3DisplayUsermod : public Usermod {
     }
   }
 
+  bool getEffectMetadataSection(
+    uint8_t effectMode,
+    uint8_t sectionIndex,
+    const char*& sectionStart,
+    const char*& sectionEnd
+  ) {
+    sectionStart = nullptr;
+    sectionEnd = nullptr;
+
+    const char* modeData = strip.getModeData( effectMode );
+
+    if ( modeData == nullptr ) {
+      return false;
+    }
+
+    const char* metadataStart = strchr( modeData, '@' );
+
+    if ( metadataStart == nullptr ) {
+      return false;
+    }
+
+    sectionStart = metadataStart + 1;
+
+    for ( uint8_t section = 0; section < sectionIndex; section++ ) {
+      const char* separator = strchr( sectionStart, ';' );
+
+      if ( separator == nullptr ) {
+        sectionStart = nullptr;
+        return false;
+      }
+
+      sectionStart = separator + 1;
+    }
+
+    sectionEnd = strchr( sectionStart, ';' );
+
+    if ( sectionEnd == nullptr ) {
+      sectionEnd = sectionStart + strlen( sectionStart );
+    }
+
+    return true;
+  }
+
+  void copyEffectMetadataLabel(
+    const char* fieldStart,
+    const char* fieldEnd,
+    const char* defaultLabel,
+    char* label,
+    size_t labelSize
+  ) {
+    if ( label == nullptr || labelSize == 0 ) {
+      return;
+    }
+
+    label[0] = '\0';
+
+    if ( fieldStart == nullptr || fieldEnd == nullptr || fieldStart >= fieldEnd ) {
+      return;
+    }
+
+    if ( fieldEnd - fieldStart == 1 && *fieldStart == '!' ) {
+      strncpy( label, defaultLabel, labelSize - 1 );
+      label[ labelSize - 1 ] = '\0';
+      return;
+    }
+
+    size_t copyLength = (size_t)( fieldEnd - fieldStart );
+
+    if ( copyLength >= labelSize ) {
+      copyLength = labelSize - 1;
+    }
+
+    memcpy( label, fieldStart, copyLength );
+    label[ copyLength ] = '\0';
+  }
+
+  bool getEffectSliderMetadata(
+    uint8_t effectMode,
+    uint8_t sliderIndex,
+    const char* defaultLabel,
+    char* label,
+    size_t labelSize
+  ) {
+    if ( label == nullptr || labelSize == 0 ) {
+      return false;
+    }
+
+    label[0] = '\0';
+
+    const char* sectionStart = nullptr;
+    const char* sectionEnd = nullptr;
+
+    if ( !getEffectMetadataSection( effectMode, 0, sectionStart, sectionEnd ) ) {
+      // WLED metadata fallback: missing parameter section means the
+      // standard Speed + Intensity sliders are available.
+      if ( sliderIndex <= 1 ) {
+        strncpy( label, defaultLabel, labelSize - 1 );
+        label[ labelSize - 1 ] = '\0';
+        return true;
+      }
+
+      return false;
+    }
+
+    const char* fieldStart = sectionStart;
+
+    for ( uint8_t fieldIndex = 0; fieldIndex < sliderIndex; fieldIndex++ ) {
+      const char* comma = nullptr;
+
+      for ( const char* cursor = fieldStart; cursor < sectionEnd; cursor++ ) {
+        if ( *cursor == ',' ) {
+          comma = cursor;
+          break;
+        }
+      }
+
+      if ( comma == nullptr ) {
+        // Explicit metadata section exists but this field is missing.
+        // WLED treats a missing/empty label as a disabled control.
+        return false;
+      }
+
+      fieldStart = comma + 1;
+    }
+
+    const char* fieldEnd = sectionEnd;
+
+    for ( const char* cursor = fieldStart; cursor < sectionEnd; cursor++ ) {
+      if ( *cursor == ',' ) {
+        fieldEnd = cursor;
+        break;
+      }
+    }
+
+    if ( fieldStart >= fieldEnd ) {
+      return false;
+    }
+
+    copyEffectMetadataLabel(
+      fieldStart,
+      fieldEnd,
+      defaultLabel,
+      label,
+      labelSize
+    );
+
+    // Keep labels compact for the 320 px CoreS3 display.
+    if ( strlen(label) > 24 ) {
+      label[24] = '\0';
+    }
+
+    return label[0] != '\0';
+  }
+
+  bool getEffectSpeedControlMetadata(
+    uint8_t effectMode,
+    char* label,
+    size_t labelSize
+  ) {
+    return getEffectSliderMetadata(
+      effectMode,
+      0,
+      "Speed",
+      label,
+      labelSize
+    );
+  }
+
+  bool getEffectIntensityControlMetadata(
+    uint8_t effectMode,
+    char* label,
+    size_t labelSize
+  ) {
+    return getEffectSliderMetadata(
+      effectMode,
+      1,
+      "Intensity",
+      label,
+      labelSize
+    );
+  }
+
+  bool isEffectSpeedControlVisible( uint8_t effectMode ) {
+    char label[32];
+
+    return getEffectSpeedControlMetadata(
+      effectMode,
+      label,
+      sizeof(label)
+    );
+  }
+
+  bool isEffectIntensityControlVisible( uint8_t effectMode ) {
+    char label[32];
+
+    return getEffectIntensityControlMetadata(
+      effectMode,
+      label,
+      sizeof(label)
+    );
+  }
+
+  bool isEffectPaletteControlVisible( uint8_t effectMode ) {
+    const char* sectionStart = nullptr;
+    const char* sectionEnd = nullptr;
+
+    if ( !getEffectMetadataSection( effectMode, 2, sectionStart, sectionEnd ) ) {
+      // WLED metadata fallback: missing Palette section means enabled.
+      return true;
+    }
+
+    // Explicit empty Palette section means this Effect does not use palettes.
+    return sectionStart < sectionEnd;
+  }
+
   void getEffectName( uint8_t effectMode, char* effectName, size_t effectNameSize ) {
     if ( effectName == nullptr || effectNameSize == 0 ) {
       return;
@@ -2931,23 +3146,41 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void drawSpeed( uint8_t speedValue, M5StackTouchTarget pressedTarget = M5STACK_TOUCH_TARGET_NONE ) {
+    char label[32];
+
+    if ( !getEffectSpeedControlMetadata( getCurrentEffectMode(), label, sizeof(label) ) ) {
+      display.fillRect( 0, 62, screenWidth, 58, TFT_BLACK );
+      return;
+    }
+
     char valueText[8];
 
     snprintf( valueText, sizeof(valueText), "%u", speedValue );
 
-    drawNumericControl( 62, 58, "Speed", 70, SPEED_BUTTON_Y, 99, valueText, pressedTarget, M5STACK_TOUCH_TARGET_SPEED_DOWN, M5STACK_TOUCH_TARGET_SPEED_UP );
+    drawNumericControl( 62, 58, label, 70, SPEED_BUTTON_Y, 99, valueText, pressedTarget, M5STACK_TOUCH_TARGET_SPEED_DOWN, M5STACK_TOUCH_TARGET_SPEED_UP );
   }
 
   void drawIntensity( uint8_t intensityValue, M5StackTouchTarget pressedTarget = M5STACK_TOUCH_TARGET_NONE ) {
+    char label[32];
+
+    if ( !getEffectIntensityControlMetadata( getCurrentEffectMode(), label, sizeof(label) ) ) {
+      display.fillRect( 0, 120, screenWidth, 60, TFT_BLACK );
+      return;
+    }
+
     char valueText[8];
 
     snprintf( valueText, sizeof(valueText), "%u", intensityValue );
 
-    drawNumericControl( 120, 60, "Intensity", 128, INTENSITY_BUTTON_Y, 157, valueText, pressedTarget, M5STACK_TOUCH_TARGET_INTENSITY_DOWN, M5STACK_TOUCH_TARGET_INTENSITY_UP );
+    drawNumericControl( 120, 60, label, 128, INTENSITY_BUTTON_Y, 157, valueText, pressedTarget, M5STACK_TOUCH_TARGET_INTENSITY_DOWN, M5STACK_TOUCH_TARGET_INTENSITY_UP );
   }
 
   void drawPalette( uint8_t paletteId, M5StackTouchTarget pressedTarget = M5STACK_TOUCH_TARGET_NONE ) {
     display.fillRect( 0, 180, screenWidth, 60, TFT_BLACK );
+
+    if ( !isEffectPaletteControlVisible( getCurrentEffectMode() ) ) {
+      return;
+    }
 
     display.setTextDatum( textdatum_t::middle_center );
 
