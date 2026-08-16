@@ -5,6 +5,7 @@
 #include "M5StackDisplayHardwareBackend.h"
 #include "M5StackDisplayUI.h"
 #include "M5StackDisplayTouchState.h"
+#include "M5StackDisplayTouchHelpers.h"
 
 #include "CoreS3_WLED_Logo.h"
 
@@ -590,32 +591,8 @@ class CoreS3DisplayUsermod : public Usermod {
   // Shared long press / repeat timing helpers
   // =========================================================
 
-  void resetRepeatTouch( M5StackRepeatTouchState& state ) {
-    state.pressStart = 0;
-    state.lastRepeat = 0;
-    state.longPressActive = false;
-  }
 
-  void beginRepeatTouch( M5StackRepeatTouchState& state, unsigned long now ) {
-    state.pressStart = now;
-    state.lastRepeat = now;
-    state.longPressActive = false;
-  }
 
-  bool serviceRepeatTouch( M5StackRepeatTouchState& state, unsigned long now, unsigned long longPressMs, unsigned long repeatMs ) {
-    if ( !state.longPressActive && now - state.pressStart >= longPressMs ) {
-      state.longPressActive = true;
-      state.lastRepeat = now;
-      return true;
-    }
-
-    if ( state.longPressActive && now - state.lastRepeat >= repeatMs ) {
-      state.lastRepeat = now;
-      return true;
-    }
-
-    return false;
-  }
 
   // =========================================================
   // Normal LCD brightness
@@ -3835,46 +3812,6 @@ class CoreS3DisplayUsermod : public Usermod {
     lastLedState = bri > 0 ? 1 : 0;
   }
 
-  bool pointInsideRect( int16_t px, int16_t py, const M5StackTouchRect& rect ) {
-    return ( px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + rect.h );
-  }
-
-  bool isPowerButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_POWER ); }
-  bool isBrightnessDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BRIGHTNESS_DOWN ); }
-  bool isBrightnessUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BRIGHTNESS_UP ); }
-  bool isEffectPrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_EFFECT_PREV ); }
-  bool isEffectDetailTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_EFFECT_DETAIL ); }
-  bool isEffectNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_EFFECT_NEXT ); }
-  bool isColorButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_COLOR_OPEN ); }
-  bool isPresetOpenButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_OPEN ); }
-  bool isBackButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BACK ); }
-  bool isHueDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_HUE_DOWN ); }
-  bool isHueUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_HUE_UP ); }
-  bool isSaturationDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_SATURATION_DOWN ); }
-  bool isSaturationUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_SATURATION_UP ); }
-  bool isSpeedDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_SPEED_DOWN ); }
-  bool isSpeedUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_SPEED_UP ); }
-  bool isIntensityDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_INTENSITY_DOWN ); }
-  bool isIntensityUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_INTENSITY_UP ); }
-  bool isPalettePrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PALETTE_PREV ); }
-  bool isPaletteNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PALETTE_NEXT ); }
-  bool isPresetPrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_PREV ); }
-  bool isPresetNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_NEXT ); }
-  bool isPresetManageTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_MANAGE ); }
-  bool isPresetSaveNewTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_SAVE_NEW ); }
-  bool isPresetSaveHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_SAVE_HOLD ); }
-  bool isPresetOverwriteOpenTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_OVERWRITE_OPEN ); }
-  bool isPresetOverwritePrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_OVERWRITE_PREV ); }
-  bool isPresetOverwriteNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_OVERWRITE_NEXT ); }
-  bool isPresetOverwriteHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_OVERWRITE_HOLD ); }
-  bool isPresetDeleteOpenTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_DELETE_OPEN ); }
-  bool isPresetDeletePrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_DELETE_PREV ); }
-  bool isPresetDeleteNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_DELETE_NEXT ); }
-  bool isPresetDeleteHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_DELETE_HOLD ); }
-  bool isPresetBootOpenTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BOOT_OPEN ); }
-  bool isPresetBootPrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BOOT_PREV ); }
-  bool isPresetBootNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BOOT_NEXT ); }
-  bool isPresetBootHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BOOT_HOLD ); }
 
   void beginHueEdit() {
     uint32_t currentColor = getPrimaryColor();
@@ -4017,14 +3954,14 @@ class CoreS3DisplayUsermod : public Usermod {
     touchState.presetBootNavButtonVisualPressed = false;
     touchState.presetBootHoldButtonVisualPressed = false;
 
-    resetRepeatTouch( touchState.brightnessRepeatState );
-    resetRepeatTouch( touchState.effectRepeatState );
-    resetRepeatTouch( touchState.hueRepeatState );
-    resetRepeatTouch( touchState.saturationRepeatState );
-    resetRepeatTouch( touchState.speedRepeatState );
-    resetRepeatTouch( touchState.intensityRepeatState );
-    resetRepeatTouch( touchState.paletteRepeatState );
-    resetRepeatTouch( touchState.presetRepeatState );
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.brightnessRepeatState );
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.effectRepeatState );
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.hueRepeatState );
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.saturationRepeatState );
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.speedRepeatState );
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.intensityRepeatState );
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.paletteRepeatState );
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.presetRepeatState );
 
     hueEditValid = false;
 
@@ -4619,9 +4556,6 @@ class CoreS3DisplayUsermod : public Usermod {
   // Shared paired-touch helpers
   // =========================================================
 
-  bool isTouchTargetPair( M5StackTouchTarget target, M5StackTouchTarget firstTarget, M5StackTouchTarget secondTarget ) {
-    return target == firstTarget || target == secondTarget;
-  }
 
   bool isSelectedTouchPairInside( M5StackTouchTarget firstTarget, bool firstInside, M5StackTouchTarget secondTarget, bool secondInside ) {
     if ( touchState.touchTarget == firstTarget ) {
@@ -4646,94 +4580,94 @@ class CoreS3DisplayUsermod : public Usermod {
   M5StackTouchHitState buildTouchHitState( int16_t touchX, int16_t touchY ) {
     M5StackTouchHitState hit;
 
-    hit.insidePower = isPowerButtonTouched( touchX, touchY );
+    hit.insidePower = M5StackDisplayTouchHelpers::isPowerButtonTouched( touchX, touchY );
 
     if ( currentPage == SCREEN_MAIN ) {
-      hit.insideBrightnessDown = isBrightnessDownTouched( touchX, touchY );
+      hit.insideBrightnessDown = M5StackDisplayTouchHelpers::isBrightnessDownTouched( touchX, touchY );
 
-      hit.insideBrightnessUp = isBrightnessUpTouched( touchX, touchY );
+      hit.insideBrightnessUp = M5StackDisplayTouchHelpers::isBrightnessUpTouched( touchX, touchY );
 
-      hit.insideEffectPrev = isEffectPrevTouched( touchX, touchY );
+      hit.insideEffectPrev = M5StackDisplayTouchHelpers::isEffectPrevTouched( touchX, touchY );
 
-      hit.insideEffectDetail = isEffectDetailTouched( touchX, touchY );
+      hit.insideEffectDetail = M5StackDisplayTouchHelpers::isEffectDetailTouched( touchX, touchY );
 
-      hit.insideEffectNext = isEffectNextTouched( touchX, touchY );
+      hit.insideEffectNext = M5StackDisplayTouchHelpers::isEffectNextTouched( touchX, touchY );
 
-      hit.insideColor = isColorButtonTouched( touchX, touchY );
+      hit.insideColor = M5StackDisplayTouchHelpers::isColorButtonTouched( touchX, touchY );
 
-      hit.insidePresetOpen = isPresetOpenButtonTouched( touchX, touchY );
+      hit.insidePresetOpen = M5StackDisplayTouchHelpers::isPresetOpenButtonTouched( touchX, touchY );
     }
 
     if ( currentPage == SCREEN_COLOR ) {
-      hit.insideBack = isBackButtonTouched( touchX, touchY );
+      hit.insideBack = M5StackDisplayTouchHelpers::isBackButtonTouched( touchX, touchY );
 
-      hit.insideHueDown = isHueDownTouched( touchX, touchY );
+      hit.insideHueDown = M5StackDisplayTouchHelpers::isHueDownTouched( touchX, touchY );
 
-      hit.insideHueUp = isHueUpTouched( touchX, touchY );
+      hit.insideHueUp = M5StackDisplayTouchHelpers::isHueUpTouched( touchX, touchY );
 
-      hit.insideSaturationDown = isSaturationDownTouched( touchX, touchY );
+      hit.insideSaturationDown = M5StackDisplayTouchHelpers::isSaturationDownTouched( touchX, touchY );
 
-      hit.insideSaturationUp = isSaturationUpTouched( touchX, touchY );
+      hit.insideSaturationUp = M5StackDisplayTouchHelpers::isSaturationUpTouched( touchX, touchY );
     }
 
     if ( currentPage == SCREEN_EFFECT ) {
-      hit.insideBack = isBackButtonTouched( touchX, touchY );
+      hit.insideBack = M5StackDisplayTouchHelpers::isBackButtonTouched( touchX, touchY );
 
-      hit.insideSpeedDown = isSpeedDownTouched( touchX, touchY );
+      hit.insideSpeedDown = M5StackDisplayTouchHelpers::isSpeedDownTouched( touchX, touchY );
 
-      hit.insideSpeedUp = isSpeedUpTouched( touchX, touchY );
+      hit.insideSpeedUp = M5StackDisplayTouchHelpers::isSpeedUpTouched( touchX, touchY );
 
-      hit.insideIntensityDown = isIntensityDownTouched( touchX, touchY );
+      hit.insideIntensityDown = M5StackDisplayTouchHelpers::isIntensityDownTouched( touchX, touchY );
 
-      hit.insideIntensityUp = isIntensityUpTouched( touchX, touchY );
+      hit.insideIntensityUp = M5StackDisplayTouchHelpers::isIntensityUpTouched( touchX, touchY );
 
-      hit.insidePalettePrev = isPalettePrevTouched( touchX, touchY );
+      hit.insidePalettePrev = M5StackDisplayTouchHelpers::isPalettePrevTouched( touchX, touchY );
 
-      hit.insidePaletteNext = isPaletteNextTouched( touchX, touchY );
+      hit.insidePaletteNext = M5StackDisplayTouchHelpers::isPaletteNextTouched( touchX, touchY );
     }
 
     if ( currentPage == SCREEN_PRESET ) {
-      hit.insideBack = isBackButtonTouched( touchX, touchY );
+      hit.insideBack = M5StackDisplayTouchHelpers::isBackButtonTouched( touchX, touchY );
 
       if ( presetSubPage == PRESET_SUBPAGE_NAV ) {
-        hit.insidePresetPrev = isPresetPrevTouched( touchX, touchY );
+        hit.insidePresetPrev = M5StackDisplayTouchHelpers::isPresetPrevTouched( touchX, touchY );
 
-        hit.insidePresetNext = isPresetNextTouched( touchX, touchY );
+        hit.insidePresetNext = M5StackDisplayTouchHelpers::isPresetNextTouched( touchX, touchY );
 
-        hit.insidePresetManage = ( presetCacheReady && !presetCacheBuilding && pendingPresetId == 0 && isPresetManageTouched( touchX, touchY ) );
+        hit.insidePresetManage = ( presetCacheReady && !presetCacheBuilding && pendingPresetId == 0 && M5StackDisplayTouchHelpers::isPresetManageTouched( touchX, touchY ) );
       }
       else if ( presetSubPage == PRESET_SUBPAGE_MANAGE ) {
-        hit.insidePresetSaveNew = ( findFirstFreePresetId() > 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetSaveNewTouched( touchX, touchY ) );
+        hit.insidePresetSaveNew = ( findFirstFreePresetId() > 0 && pendingPresetId == 0 && !presetNeedsSaving() && M5StackDisplayTouchHelpers::isPresetSaveNewTouched( touchX, touchY ) );
 
-        hit.insidePresetOverwriteOpen = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetOverwriteOpenTouched( touchX, touchY ) );
+        hit.insidePresetOverwriteOpen = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && pendingPresetId == 0 && !presetNeedsSaving() && M5StackDisplayTouchHelpers::isPresetOverwriteOpenTouched( touchX, touchY ) );
 
-        hit.insidePresetDeleteOpen = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetDeleteOpenTouched( touchX, touchY ) );
+        hit.insidePresetDeleteOpen = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && pendingPresetId == 0 && !presetNeedsSaving() && M5StackDisplayTouchHelpers::isPresetDeleteOpenTouched( touchX, touchY ) );
 
-        hit.insidePresetBootOpen = ( presetCacheReady && !presetCacheBuilding && pendingPresetId == 0 && !presetNeedsSaving() && isPresetBootOpenTouched( touchX, touchY ) );
+        hit.insidePresetBootOpen = ( presetCacheReady && !presetCacheBuilding && pendingPresetId == 0 && !presetNeedsSaving() && M5StackDisplayTouchHelpers::isPresetBootOpenTouched( touchX, touchY ) );
       }
       else if ( presetSubPage == PRESET_SUBPAGE_SAVE ) {
-        hit.insidePresetSaveHold = ( presetSaveOperationState == PRESET_SAVE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetSaveCandidateId > 0 && findPresetCacheIndex( presetSaveCandidateId ) < 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetSaveHoldTouched( touchX, touchY ) );
+        hit.insidePresetSaveHold = ( presetSaveOperationState == PRESET_SAVE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetSaveCandidateId > 0 && findPresetCacheIndex( presetSaveCandidateId ) < 0 && pendingPresetId == 0 && !presetNeedsSaving() && M5StackDisplayTouchHelpers::isPresetSaveHoldTouched( touchX, touchY ) );
       }
       else if ( presetSubPage == PRESET_SUBPAGE_OVERWRITE ) {
-        hit.insidePresetOverwritePrev = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetOverwritePrevTouched( touchX, touchY ) );
+        hit.insidePresetOverwritePrev = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && M5StackDisplayTouchHelpers::isPresetOverwritePrevTouched( touchX, touchY ) );
 
-        hit.insidePresetOverwriteNext = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetOverwriteNextTouched( touchX, touchY ) );
+        hit.insidePresetOverwriteNext = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && M5StackDisplayTouchHelpers::isPresetOverwriteNextTouched( touchX, touchY ) );
 
-        hit.insidePresetOverwriteHold = ( presetSaveOperationState == PRESET_SAVE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetOverwriteTargetId > 0 && findPresetCacheIndex( presetOverwriteTargetId ) >= 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetOverwriteHoldTouched( touchX, touchY ) );
+        hit.insidePresetOverwriteHold = ( presetSaveOperationState == PRESET_SAVE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetOverwriteTargetId > 0 && findPresetCacheIndex( presetOverwriteTargetId ) >= 0 && pendingPresetId == 0 && !presetNeedsSaving() && M5StackDisplayTouchHelpers::isPresetOverwriteHoldTouched( touchX, touchY ) );
       }
       else if ( presetSubPage == PRESET_SUBPAGE_DELETE ) {
-        hit.insidePresetDeletePrev = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetDeletePrevTouched( touchX, touchY ) );
+        hit.insidePresetDeletePrev = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && M5StackDisplayTouchHelpers::isPresetDeletePrevTouched( touchX, touchY ) );
 
-        hit.insidePresetDeleteNext = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetDeleteNextTouched( touchX, touchY ) );
+        hit.insidePresetDeleteNext = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && M5StackDisplayTouchHelpers::isPresetDeleteNextTouched( touchX, touchY ) );
 
-        hit.insidePresetDeleteHold = ( presetDeleteOperationState == PRESET_DELETE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetDeleteTargetId > 0 && findPresetCacheIndex( presetDeleteTargetId ) >= 0 && pendingPresetId == 0 && !presetNeedsSaving() && isPresetDeleteHoldTouched( touchX, touchY ) );
+        hit.insidePresetDeleteHold = ( presetDeleteOperationState == PRESET_DELETE_OP_IDLE && presetCacheReady && !presetCacheBuilding && presetDeleteTargetId > 0 && findPresetCacheIndex( presetDeleteTargetId ) >= 0 && pendingPresetId == 0 && !presetNeedsSaving() && M5StackDisplayTouchHelpers::isPresetDeleteHoldTouched( touchX, touchY ) );
       }
       else if ( presetSubPage == PRESET_SUBPAGE_BOOT ) {
-        hit.insidePresetBootPrev = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetBootPrevTouched( touchX, touchY ) );
+        hit.insidePresetBootPrev = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && M5StackDisplayTouchHelpers::isPresetBootPrevTouched( touchX, touchY ) );
 
-        hit.insidePresetBootNext = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && isPresetBootNextTouched( touchX, touchY ) );
+        hit.insidePresetBootNext = ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 && M5StackDisplayTouchHelpers::isPresetBootNextTouched( touchX, touchY ) );
 
-        hit.insidePresetBootHold = ( presetBootOperationState == PRESET_BOOT_OP_IDLE && presetCacheReady && !presetCacheBuilding && pendingPresetId == 0 && !presetNeedsSaving() && isPresetBootTargetValid() && !isPresetBootTargetCurrent() && isPresetBootHoldTouched( touchX, touchY ) );
+        hit.insidePresetBootHold = ( presetBootOperationState == PRESET_BOOT_OP_IDLE && presetCacheReady && !presetCacheBuilding && pendingPresetId == 0 && !presetNeedsSaving() && isPresetBootTargetValid() && !isPresetBootTargetCurrent() && M5StackDisplayTouchHelpers::isPresetBootHoldTouched( touchX, touchY ) );
       }
     }
 
@@ -4753,14 +4687,14 @@ class CoreS3DisplayUsermod : public Usermod {
 
       touchState.touchTarget = M5STACK_TOUCH_TARGET_NONE;
 
-      resetRepeatTouch( touchState.brightnessRepeatState );
-      resetRepeatTouch( touchState.effectRepeatState );
-      resetRepeatTouch( touchState.hueRepeatState );
-      resetRepeatTouch( touchState.saturationRepeatState );
-      resetRepeatTouch( touchState.speedRepeatState );
-      resetRepeatTouch( touchState.intensityRepeatState );
-      resetRepeatTouch( touchState.paletteRepeatState );
-      resetRepeatTouch( touchState.presetRepeatState );
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.brightnessRepeatState );
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.effectRepeatState );
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.hueRepeatState );
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.saturationRepeatState );
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.speedRepeatState );
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.intensityRepeatState );
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.paletteRepeatState );
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.presetRepeatState );
 
       presetSaveHoldStartTime = 0;
 
@@ -4780,21 +4714,21 @@ class CoreS3DisplayUsermod : public Usermod {
 
           touchState.lastTouchInsideBrightness = true;
 
-          beginRepeatTouch( touchState.brightnessRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.brightnessRepeatState, now );
         }
         else if (hit.insideBrightnessUp) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_BRIGHTNESS_UP;
 
           touchState.lastTouchInsideBrightness = true;
 
-          beginRepeatTouch( touchState.brightnessRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.brightnessRepeatState, now );
         }
         else if (hit.insideEffectPrev) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_EFFECT_PREV;
 
           touchState.lastTouchInsideEffect = true;
 
-          beginRepeatTouch( touchState.effectRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.effectRepeatState, now );
         }
         else if (hit.insideEffectDetail) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_EFFECT_DETAIL;
@@ -4806,7 +4740,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           touchState.lastTouchInsideEffect = true;
 
-          beginRepeatTouch( touchState.effectRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.effectRepeatState, now );
         }
         else if (hit.insideColor) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_COLOR_OPEN;
@@ -4831,7 +4765,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           touchState.lastTouchInsideHue = true;
 
-          beginRepeatTouch( touchState.hueRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.hueRepeatState, now );
 
           beginHueEdit();
         }
@@ -4840,7 +4774,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           touchState.lastTouchInsideHue = true;
 
-          beginRepeatTouch( touchState.hueRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.hueRepeatState, now );
 
           beginHueEdit();
         }
@@ -4849,7 +4783,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           touchState.lastTouchInsideSaturation = true;
 
-          beginRepeatTouch( touchState.saturationRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.saturationRepeatState, now );
 
           beginSaturationEdit();
         }
@@ -4858,7 +4792,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
           touchState.lastTouchInsideSaturation = true;
 
-          beginRepeatTouch( touchState.saturationRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.saturationRepeatState, now );
 
           beginSaturationEdit();
         }
@@ -4875,42 +4809,42 @@ class CoreS3DisplayUsermod : public Usermod {
 
           touchState.lastTouchInsideSpeed = true;
 
-          beginRepeatTouch( touchState.speedRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.speedRepeatState, now );
         }
         else if (hit.insideSpeedUp) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_SPEED_UP;
 
           touchState.lastTouchInsideSpeed = true;
 
-          beginRepeatTouch( touchState.speedRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.speedRepeatState, now );
         }
         else if (hit.insideIntensityDown) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_INTENSITY_DOWN;
 
           touchState.lastTouchInsideIntensity = true;
 
-          beginRepeatTouch( touchState.intensityRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.intensityRepeatState, now );
         }
         else if (hit.insideIntensityUp) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_INTENSITY_UP;
 
           touchState.lastTouchInsideIntensity = true;
 
-          beginRepeatTouch( touchState.intensityRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.intensityRepeatState, now );
         }
         else if (hit.insidePalettePrev) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_PALETTE_PREV;
 
           touchState.lastTouchInsidePalette = true;
 
-          beginRepeatTouch( touchState.paletteRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.paletteRepeatState, now );
         }
         else if (hit.insidePaletteNext) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_PALETTE_NEXT;
 
           touchState.lastTouchInsidePalette = true;
 
-          beginRepeatTouch( touchState.paletteRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.paletteRepeatState, now );
         }
       }
 
@@ -4925,14 +4859,14 @@ class CoreS3DisplayUsermod : public Usermod {
 
           touchState.lastTouchInsidePresetNav = true;
 
-          beginRepeatTouch( touchState.presetRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.presetRepeatState, now );
         }
         else if ( presetSubPage == PRESET_SUBPAGE_NAV && hit.insidePresetNext ) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_PRESET_NEXT;
 
           touchState.lastTouchInsidePresetNav = true;
 
-          beginRepeatTouch( touchState.presetRepeatState, now );
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.presetRepeatState, now );
         }
         else if ( presetSubPage == PRESET_SUBPAGE_NAV && hit.insidePresetManage ) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_PRESET_MANAGE;
@@ -5047,7 +4981,7 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_BRIGHTNESS_DOWN, M5STACK_TOUCH_TARGET_BRIGHTNESS_UP ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_BRIGHTNESS_DOWN, M5STACK_TOUCH_TARGET_BRIGHTNESS_UP ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_BRIGHTNESS_DOWN, hit.insideBrightnessDown, M5STACK_TOUCH_TARGET_BRIGHTNESS_UP, hit.insideBrightnessUp );
 
       touchState.lastTouchInsideBrightness = insideSelectedButton;
@@ -5062,14 +4996,14 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( serviceRepeatTouch( touchState.brightnessRepeatState, now, BRI_LONG_PRESS_MS, BRI_REPEAT_MS ) ) {
+      if ( M5StackDisplayTouchHelpers::serviceRepeatTouch( touchState.brightnessRepeatState, now, BRI_LONG_PRESS_MS, BRI_REPEAT_MS ) ) {
         brightnessLongPressStep( touchState.touchTarget );
       }
 
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_EFFECT_PREV, M5STACK_TOUCH_TARGET_EFFECT_NEXT ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_EFFECT_PREV, M5STACK_TOUCH_TARGET_EFFECT_NEXT ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_EFFECT_PREV, hit.insideEffectPrev, M5STACK_TOUCH_TARGET_EFFECT_NEXT, hit.insideEffectNext );
 
       touchState.lastTouchInsideEffect = insideSelectedButton;
@@ -5084,7 +5018,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( serviceRepeatTouch( touchState.effectRepeatState, now, EFFECT_LONG_PRESS_MS, EFFECT_REPEAT_MS ) ) {
+      if ( M5StackDisplayTouchHelpers::serviceRepeatTouch( touchState.effectRepeatState, now, EFFECT_LONG_PRESS_MS, EFFECT_REPEAT_MS ) ) {
         effectLongPressStep( touchState.touchTarget );
       }
 
@@ -5133,7 +5067,7 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_HUE_DOWN, M5STACK_TOUCH_TARGET_HUE_UP ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_HUE_DOWN, M5STACK_TOUCH_TARGET_HUE_UP ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_HUE_DOWN, hit.insideHueDown, M5STACK_TOUCH_TARGET_HUE_UP, hit.insideHueUp );
 
       touchState.lastTouchInsideHue = insideSelectedButton;
@@ -5148,14 +5082,14 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( serviceRepeatTouch( touchState.hueRepeatState, now, HUE_LONG_PRESS_MS, HUE_REPEAT_MS ) ) {
+      if ( M5StackDisplayTouchHelpers::serviceRepeatTouch( touchState.hueRepeatState, now, HUE_LONG_PRESS_MS, HUE_REPEAT_MS ) ) {
         hueLongPressStep( touchState.touchTarget );
       }
 
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_SATURATION_DOWN, M5STACK_TOUCH_TARGET_SATURATION_UP ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_SATURATION_DOWN, M5STACK_TOUCH_TARGET_SATURATION_UP ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_SATURATION_DOWN, hit.insideSaturationDown, M5STACK_TOUCH_TARGET_SATURATION_UP, hit.insideSaturationUp );
 
       touchState.lastTouchInsideSaturation = insideSelectedButton;
@@ -5170,14 +5104,14 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( serviceRepeatTouch( touchState.saturationRepeatState, now, SATURATION_LONG_PRESS_MS, SATURATION_REPEAT_MS ) ) {
+      if ( M5StackDisplayTouchHelpers::serviceRepeatTouch( touchState.saturationRepeatState, now, SATURATION_LONG_PRESS_MS, SATURATION_REPEAT_MS ) ) {
         saturationLongPressStep( touchState.touchTarget );
       }
 
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_SPEED_DOWN, M5STACK_TOUCH_TARGET_SPEED_UP ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_SPEED_DOWN, M5STACK_TOUCH_TARGET_SPEED_UP ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_SPEED_DOWN, hit.insideSpeedDown, M5STACK_TOUCH_TARGET_SPEED_UP, hit.insideSpeedUp );
 
       touchState.lastTouchInsideSpeed = insideSelectedButton;
@@ -5192,14 +5126,14 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( serviceRepeatTouch( touchState.speedRepeatState, now, SPEED_LONG_PRESS_MS, SPEED_REPEAT_MS ) ) {
+      if ( M5StackDisplayTouchHelpers::serviceRepeatTouch( touchState.speedRepeatState, now, SPEED_LONG_PRESS_MS, SPEED_REPEAT_MS ) ) {
         speedLongPressStep( touchState.touchTarget );
       }
 
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_INTENSITY_DOWN, M5STACK_TOUCH_TARGET_INTENSITY_UP ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_INTENSITY_DOWN, M5STACK_TOUCH_TARGET_INTENSITY_UP ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_INTENSITY_DOWN, hit.insideIntensityDown, M5STACK_TOUCH_TARGET_INTENSITY_UP, hit.insideIntensityUp );
 
       touchState.lastTouchInsideIntensity = insideSelectedButton;
@@ -5214,14 +5148,14 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( serviceRepeatTouch( touchState.intensityRepeatState, now, INTENSITY_LONG_PRESS_MS, INTENSITY_REPEAT_MS ) ) {
+      if ( M5StackDisplayTouchHelpers::serviceRepeatTouch( touchState.intensityRepeatState, now, INTENSITY_LONG_PRESS_MS, INTENSITY_REPEAT_MS ) ) {
         intensityLongPressStep( touchState.touchTarget );
       }
 
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PALETTE_PREV, M5STACK_TOUCH_TARGET_PALETTE_NEXT ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PALETTE_PREV, M5STACK_TOUCH_TARGET_PALETTE_NEXT ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_PALETTE_PREV, hit.insidePalettePrev, M5STACK_TOUCH_TARGET_PALETTE_NEXT, hit.insidePaletteNext );
 
       touchState.lastTouchInsidePalette = insideSelectedButton;
@@ -5236,14 +5170,14 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( serviceRepeatTouch( touchState.paletteRepeatState, now, PALETTE_LONG_PRESS_MS, PALETTE_REPEAT_MS ) ) {
+      if ( M5StackDisplayTouchHelpers::serviceRepeatTouch( touchState.paletteRepeatState, now, PALETTE_LONG_PRESS_MS, PALETTE_REPEAT_MS ) ) {
         paletteLongPressStep( touchState.touchTarget );
       }
 
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PRESET_PREV, M5STACK_TOUCH_TARGET_PRESET_NEXT ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PRESET_PREV, M5STACK_TOUCH_TARGET_PRESET_NEXT ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_PRESET_PREV, hit.insidePresetPrev, M5STACK_TOUCH_TARGET_PRESET_NEXT, hit.insidePresetNext );
 
       touchState.lastTouchInsidePresetNav = insideSelectedButton;
@@ -5258,7 +5192,7 @@ class CoreS3DisplayUsermod : public Usermod {
         return;
       }
 
-      if ( serviceRepeatTouch( touchState.presetRepeatState, now, PRESET_LONG_PRESS_MS, PRESET_REPEAT_MS ) ) {
+      if ( M5StackDisplayTouchHelpers::serviceRepeatTouch( touchState.presetRepeatState, now, PRESET_LONG_PRESS_MS, PRESET_REPEAT_MS ) ) {
         presetLongPressStep( touchState.touchTarget );
       }
 
@@ -5323,7 +5257,7 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PRESET_OVERWRITE_PREV, M5STACK_TOUCH_TARGET_PRESET_OVERWRITE_NEXT ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PRESET_OVERWRITE_PREV, M5STACK_TOUCH_TARGET_PRESET_OVERWRITE_NEXT ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_PRESET_OVERWRITE_PREV, hit.insidePresetOverwritePrev, M5STACK_TOUCH_TARGET_PRESET_OVERWRITE_NEXT, hit.insidePresetOverwriteNext );
 
       touchState.lastTouchInsidePresetOverwriteNav = insideSelectedButton;
@@ -5375,7 +5309,7 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PRESET_DELETE_PREV, M5STACK_TOUCH_TARGET_PRESET_DELETE_NEXT ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PRESET_DELETE_PREV, M5STACK_TOUCH_TARGET_PRESET_DELETE_NEXT ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_PRESET_DELETE_PREV, hit.insidePresetDeletePrev, M5STACK_TOUCH_TARGET_PRESET_DELETE_NEXT, hit.insidePresetDeleteNext );
 
       touchState.lastTouchInsidePresetDeleteNav = insideSelectedButton;
@@ -5427,7 +5361,7 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    if ( isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PRESET_BOOT_PREV, M5STACK_TOUCH_TARGET_PRESET_BOOT_NEXT ) ) {
+    if ( M5StackDisplayTouchHelpers::isTouchTargetPair( touchState.touchTarget, M5STACK_TOUCH_TARGET_PRESET_BOOT_PREV, M5STACK_TOUCH_TARGET_PRESET_BOOT_NEXT ) ) {
       bool insideSelectedButton = isSelectedTouchPairInside( M5STACK_TOUCH_TARGET_PRESET_BOOT_PREV, hit.insidePresetBootPrev, M5STACK_TOUCH_TARGET_PRESET_BOOT_NEXT, hit.insidePresetBootNext );
 
       touchState.lastTouchInsidePresetBootNav = insideSelectedButton;
