@@ -2457,32 +2457,38 @@ class CoreS3DisplayUsermod : public Usermod {
   void drawStartupConnectingStatus() {
     display.fillRect( 0, 125, screenWidth, 100, TFT_BLACK );
 
-    char dots[5];
-
-    dots[0] = '\0';
-
-    for ( uint8_t i = 0; i < startupDotCount; i++ ) {
-      strcat( dots, "." );
-    }
-
-    char statusText[32];
-
-    snprintf( statusText, sizeof(statusText), "Wi-Fi Connecting%s", dots );
-
     display.setTextDatum( textdatum_t::middle_center );
-
     display.setTextColor( TFT_WHITE, TFT_BLACK );
-
     display.setTextSize( 2 );
 
-    display.drawString( statusText, screenWidth / 2, 153 );
+    // Reserve the width of all three dots from the beginning so the
+    // "Wi-Fi Connecting" label never shifts while the dots animate.
+    const char* label = "Wi-Fi Connecting";
+    const int16_t labelWidth = display.textWidth( label );
+    const int16_t dotWidth = display.textWidth( "." );
+    const int16_t reservedDotsWidth = dotWidth * 3;
+
+    const int16_t labelCenterX =
+      ( screenWidth / 2 ) - ( reservedDotsWidth / 2 );
+
+    display.drawString( label, labelCenterX, 153 );
+
+    const int16_t labelRight =
+      labelCenterX + ( labelWidth / 2 );
+
+    for ( uint8_t i = 0; i < startupDotCount && i < 3; i++ ) {
+      const int16_t dotCenterX =
+        labelRight + ( dotWidth / 2 ) + ( i * dotWidth );
+
+      display.drawString( ".", dotCenterX, 153 );
+    }
 
     display.setTextSize( 1 );
-
     display.setTextColor( TFT_DARKGREY, TFT_BLACK );
 
     display.drawString( "Starting WLED...", screenWidth / 2, 185 );
   }
+
 
   void drawStartupConnectedStatus( const String& ipAddress ) {
     display.fillRect( 0, 125, screenWidth, 100, TFT_BLACK );
