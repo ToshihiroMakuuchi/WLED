@@ -106,6 +106,20 @@ class CoreS3DisplayUsermod : public Usermod {
   int lastPresetValue = -1;
   int lastBootPresetValue = -1;
 
+  // CoreS3 UI navigation position.
+  //
+  // This intentionally differs from WLED currentPreset:
+  // - currentPreset = WLED's currently active Preset
+  // - presetNavigationCursorId = last Preset selected/browsed by this UI
+  //
+  // When currentPreset becomes 0 (Custom State) after Color/Effect changes,
+  // the cursor remains on the last useful Preset position.
+  uint8_t presetNavigationCursorId = 0;
+
+  // Last non/zero WLED currentPreset value observed by the cursor sync logic.
+  // This is runtime-only UI state and is not persisted to Flash.
+  uint8_t lastObservedCurrentPreset = 0;
+
   uint8_t pendingPresetId = 0;
   String pendingPresetName = "";
 
@@ -795,6 +809,10 @@ class CoreS3DisplayUsermod : public Usermod {
 
     presetNoEntries = ( presetCacheCount == 0 );
 
+    normalizePresetNavigationCursor();
+
+    syncPresetNavigationCursorFromCurrentPreset();
+
     Serial.printf( "[CoreS3_Display] " "Preset cache ready: %u preset(s)\n", (unsigned)presetCacheCount );
 
     if ( presetsModifiedTime != presetCacheSourceModifiedTime ) {
@@ -993,7 +1011,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
     return true;
   }
-
   bool preparePresetOverwriteTarget() {
     presetOverwriteTargetId = 0;
 
@@ -1003,9 +1020,13 @@ class CoreS3DisplayUsermod : public Usermod {
       return false;
     }
 
-    int currentIndex = findPresetCacheIndex( currentPreset );
+    uint8_t basePresetId = getPresetManagementBaseId();
 
-    uint16_t targetIndex = ( currentIndex >= 0 ) ? (uint16_t)currentIndex : 0;
+    int targetIndex = findPresetCacheIndex( basePresetId );
+
+    if ( targetIndex < 0 ) {
+      targetIndex = 0;
+    }
 
     presetOverwriteTargetId = presetCache[ targetIndex ].id;
 
@@ -1033,7 +1054,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
     return true;
   }
-
   bool preparePresetDeleteTarget() {
     presetDeleteTargetId = 0;
 
@@ -1043,9 +1063,13 @@ class CoreS3DisplayUsermod : public Usermod {
       return false;
     }
 
-    int currentIndex = findPresetCacheIndex( currentPreset );
+    uint8_t basePresetId = getPresetManagementBaseId();
 
-    uint16_t targetIndex = ( currentIndex >= 0 ) ? (uint16_t)currentIndex : 0;
+    int targetIndex = findPresetCacheIndex( basePresetId );
+
+    if ( targetIndex < 0 ) {
+      targetIndex = 0;
+    }
 
     presetDeleteTargetId = presetCache[ targetIndex ].id;
 
@@ -1073,13 +1097,23 @@ class CoreS3DisplayUsermod : public Usermod {
 
     return true;
   }
-
   bool preparePresetBootTarget() {
     presetBootTargetId = 0;
     presetBootTargetName = "NONE";
 
     if ( !presetCacheReady || presetCacheBuilding ) {
       return false;
+    }
+
+    if ( isPresetNavigationCursorValid() ) {
+      String cursorName;
+
+      if ( getCachedPresetName( presetNavigationCursorId, cursorName ) ) {
+        presetBootTargetId = presetNavigationCursorId;
+        presetBootTargetName = cursorName;
+
+        return true;
+      }
     }
 
     if ( currentPreset > 0 ) {
@@ -1368,6 +1402,12 @@ class CoreS3DisplayUsermod : public Usermod {
 
       if (presetVerified) {
         presetSaveOperationState = PRESET_SAVE_OP_SUCCESS;
+
+        presetNavigationCursorId = presetSaveCandidateId;
+
+        // The save operation intentionally changes the CoreS3 navigation
+        // position without necessarily changing WLED's active Preset.
+        lastObservedCurrentPreset = currentPreset;
 
         Serial.printf( "[CoreS3_Display] " "%s verified: %u (%s)\n", presetSaveOperationIsOverwrite ? "Preset overwrite" : "Preset save", presetSaveCandidateId, presetSaveCandidateName.c_str() );
       }
@@ -1793,7 +1833,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
     return true;
   }
-
   uint8_t getDisplayedPresetId() {
     if ( pendingPresetId > 0 ) {
       if ( millis() - pendingPresetRequestMs < PRESET_APPLY_PENDING_MS ) {
@@ -1801,7 +1840,20 @@ class CoreS3DisplayUsermod : public Usermod {
       }
     }
 
-    return currentPreset;
+    if ( isPresetNavigationCursorValid() ) {
+      return presetNavigationCursorId;
+    }
+
+    if (
+      currentPreset > 0 &&
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      findPresetCacheIndex( currentPreset ) >= 0
+    ) {
+      return currentPreset;
+    }
+
+    return 0;
   }
 
   void redrawCurrentPageForWake() {
@@ -2125,12 +2177,116 @@ class CoreS3DisplayUsermod : public Usermod {
     return presetCache[ newIndex ].id;
   }
 
+  bool isPresetNavigationCursorValid() {
+    return (
+      presetNavigationCursorId > 0 &&
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      findPresetCacheIndex( presetNavigationCursorId ) >= 0
+    );
+  }
+
+  void normalizePresetNavigationCursor() {
+    if ( !presetCacheReady || presetCacheBuilding ) {
+      return;
+    }
+
+    if ( presetCacheCount == 0 ) {
+      presetNavigationCursorId = 0;
+      return;
+    }
+
+    if ( isPresetNavigationCursorValid() ) {
+      return;
+    }
+
+    if ( presetNavigationCursorId == 0 ) {
+      if ( currentPreset > 0 && findPresetCacheIndex( currentPreset ) >= 0 ) {
+        presetNavigationCursorId = currentPreset;
+      }
+
+      return;
+    }
+
+    const uint8_t previousCursor = presetNavigationCursorId;
+
+    // If the cursor Preset was deleted, prefer the next higher saved ID.
+    // If there is no higher ID, fall back to the final saved Preset.
+    for ( uint16_t index = 0; index < presetCacheCount; index++ ) {
+      if ( presetCache[ index ].id > previousCursor ) {
+        presetNavigationCursorId = presetCache[ index ].id;
+        return;
+      }
+    }
+
+    presetNavigationCursorId = presetCache[ presetCacheCount - 1 ].id;
+  }
+
+  void syncPresetNavigationCursorFromCurrentPreset() {
+    if ( currentPreset == lastObservedCurrentPreset ) {
+      return;
+    }
+
+    if ( currentPreset == 0 ) {
+      // WLED entered Custom State. Keep the CoreS3 navigation cursor where
+      // the user last selected a Preset.
+      lastObservedCurrentPreset = 0;
+      return;
+    }
+
+    if ( !presetCacheReady || presetCacheBuilding ) {
+      // Retry once the cache is available. Do not mark this value observed yet.
+      return;
+    }
+
+    if ( findPresetCacheIndex( currentPreset ) < 0 ) {
+      // Retry if the Preset cache is in transition.
+      return;
+    }
+
+    presetNavigationCursorId = currentPreset;
+    lastObservedCurrentPreset = currentPreset;
+  }
+
+  uint8_t getPresetManagementBaseId() {
+    if ( isPresetNavigationCursorValid() ) {
+      return presetNavigationCursorId;
+    }
+
+    if (
+      currentPreset > 0 &&
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      findPresetCacheIndex( currentPreset ) >= 0
+    ) {
+      return currentPreset;
+    }
+
+    if ( presetCacheReady && !presetCacheBuilding && presetCacheCount > 0 ) {
+      return presetCache[ 0 ].id;
+    }
+
+    return 0;
+  }
   uint8_t getPresetNavigationBaseId() {
     if ( pendingPresetId > 0 && millis() - pendingPresetRequestMs < PRESET_APPLY_PENDING_MS ) {
       return pendingPresetId;
     }
 
-    return currentPreset;
+    if ( isPresetNavigationCursorValid() ) {
+      return presetNavigationCursorId;
+    }
+
+    if (
+      currentPreset > 0 &&
+      presetCacheReady &&
+      !presetCacheBuilding &&
+      findPresetCacheIndex( currentPreset ) >= 0
+    ) {
+      return currentPreset;
+    }
+
+    return 0;
   }
 
   uint8_t getHueFromColor( uint32_t color ) {
@@ -3215,6 +3371,10 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void drawPresetScreen() {
+    syncPresetNavigationCursorFromCurrentPreset();
+
+    normalizePresetNavigationCursor();
+
     display.fillScreen( TFT_BLACK );
 
     currentPage = SCREEN_PRESET;
@@ -4571,6 +4731,11 @@ class CoreS3DisplayUsermod : public Usermod {
 
     presetNoEntries = false;
 
+    // Remember the CoreS3 navigation position immediately. This keeps the
+    // selected Preset as the UI starting point even if WLED later enters
+    // Custom State after a Color/Effect adjustment.
+    presetNavigationCursorId = newPreset;
+
     pendingPresetId = newPreset;
 
     pendingPresetName = presetName;
@@ -5140,6 +5305,11 @@ class CoreS3DisplayUsermod : public Usermod {
     servicePresetDeleteOperation();
 
     servicePresetBootOperation();
+
+    // Follow a Preset explicitly selected from the WLED Web UI.
+    // A transition to currentPreset == 0 intentionally does not erase the
+    // CoreS3 navigation cursor.
+    syncPresetNavigationCursorFromCurrentPreset();
 
     if ( displayPowerState == DISPLAY_POWER_ACTIVE ) {
       handleTouch();
