@@ -2343,6 +2343,216 @@ class CoreS3DisplayUsermod : public Usermod {
     drawNumericControl( 62, 58, "Brightness", 70, BRI_BUTTON_Y, 99, valueText, pressedTarget, M5STACK_TOUCH_TARGET_BRIGHTNESS_DOWN, M5STACK_TOUCH_TARGET_BRIGHTNESS_UP );
   }
 
+  struct M5StackEffectCapabilities {
+    bool supports1D = true;
+    bool supports2D = false;
+    bool supports3D = false;
+    bool audioVolume = false;
+    bool audioFrequency = false;
+  };
+
+  M5StackEffectCapabilities getEffectCapabilities( uint8_t effectMode ) {
+    M5StackEffectCapabilities capability;
+
+    const char* modeData = strip.getModeData( effectMode );
+
+    if ( modeData == nullptr ) {
+      return capability;
+    }
+
+    const char* metadataStart = strchr( modeData, '@' );
+
+    if ( metadataStart == nullptr ) {
+      // WLED metadata specification defaults missing flags to 1D.
+      return capability;
+    }
+
+    const char* flagsStart = metadataStart + 1;
+
+    // Metadata sections:
+    // parameters ; colors ; palette ; flags ; defaults
+    for ( uint8_t section = 0; section < 3; section++ ) {
+      flagsStart = strchr( flagsStart, ';' );
+
+      if ( flagsStart == nullptr ) {
+        return capability;
+      }
+
+      flagsStart++;
+    }
+
+    const char* flagsEnd = strchr( flagsStart, ';' );
+
+    if ( flagsEnd == nullptr ) {
+      flagsEnd = flagsStart + strlen( flagsStart );
+    }
+
+    if ( flagsStart == flagsEnd ) {
+      return capability;
+    }
+
+    bool dimensionFlagFound = false;
+
+    capability.supports1D = false;
+
+    for ( const char* flag = flagsStart; flag < flagsEnd; flag++ ) {
+      switch ( *flag ) {
+        case '0':
+          // Flag 0 means the effect also works well on a single LED.
+          // Treat it as 1D-capable for the compact CoreS3 display.
+          capability.supports1D = true;
+          dimensionFlagFound = true;
+          break;
+
+        case '1':
+          capability.supports1D = true;
+          dimensionFlagFound = true;
+          break;
+
+        case '2':
+          capability.supports2D = true;
+          dimensionFlagFound = true;
+          break;
+
+        case '3':
+          capability.supports3D = true;
+          dimensionFlagFound = true;
+          break;
+
+        case 'v':
+          capability.audioVolume = true;
+          break;
+
+        case 'f':
+          capability.audioFrequency = true;
+          break;
+
+        default:
+          break;
+      }
+    }
+
+    if ( !dimensionFlagFound ) {
+      // WLED metadata specification: missing dimension flags fall back to 1D.
+      capability.supports1D = true;
+    }
+
+    return capability;
+  }
+
+  bool effectRequires2D( const M5StackEffectCapabilities& capability ) {
+    return capability.supports2D && !capability.supports1D;
+  }
+
+  bool currentMainSegmentIs2D() {
+    if ( strip.getSegmentsNum() == 0 ) {
+      return false;
+    }
+
+    return strip.getMainSegment().is2D();
+  }
+
+  void getEffectDimensionText(
+    const M5StackEffectCapabilities& capability,
+    char* text,
+    size_t textSize
+  ) {
+    if ( text == nullptr || textSize == 0 ) {
+      return;
+    }
+
+    text[0] = '\0';
+
+    if ( capability.supports1D && capability.supports2D && capability.supports3D ) {
+      strncpy( text, "1D/2D/3D", textSize - 1 );
+    }
+    else if ( capability.supports1D && capability.supports2D ) {
+      strncpy( text, "1D/2D", textSize - 1 );
+    }
+    else if ( capability.supports1D && capability.supports3D ) {
+      strncpy( text, "1D/3D", textSize - 1 );
+    }
+    else if ( capability.supports2D && capability.supports3D ) {
+      strncpy( text, "2D/3D", textSize - 1 );
+    }
+    else if ( capability.supports2D ) {
+      strncpy( text, "2D", textSize - 1 );
+    }
+    else if ( capability.supports3D ) {
+      strncpy( text, "3D", textSize - 1 );
+    }
+    else {
+      strncpy( text, "1D", textSize - 1 );
+    }
+
+    text[ textSize - 1 ] = '\0';
+  }
+
+  void getEffectAudioText(
+    const M5StackEffectCapabilities& capability,
+    char* text,
+    size_t textSize
+  ) {
+    if ( text == nullptr || textSize == 0 ) {
+      return;
+    }
+
+    text[0] = '\0';
+
+    if ( capability.audioVolume && capability.audioFrequency ) {
+      strncpy( text, "AUDIO", textSize - 1 );
+    }
+    else if ( capability.audioFrequency ) {
+      strncpy( text, "FFT", textSize - 1 );
+    }
+    else if ( capability.audioVolume ) {
+      strncpy( text, "VOL", textSize - 1 );
+    }
+
+    text[ textSize - 1 ] = '\0';
+  }
+
+  void getEffectCapabilityText(
+    uint8_t effectMode,
+    char* text,
+    size_t textSize,
+    bool& incompatibleWithCurrentSegment
+  ) {
+    if ( text == nullptr || textSize == 0 ) {
+      incompatibleWithCurrentSegment = false;
+      return;
+    }
+
+    const M5StackEffectCapabilities capability = getEffectCapabilities( effectMode );
+
+    incompatibleWithCurrentSegment =
+      effectRequires2D( capability ) && !currentMainSegmentIs2D();
+
+    char dimensionText[16];
+    char audioText[8];
+
+    getEffectDimensionText( capability, dimensionText, sizeof(dimensionText) );
+    getEffectAudioText( capability, audioText, sizeof(audioText) );
+
+    if ( incompatibleWithCurrentSegment ) {
+      if ( audioText[0] != '\0' ) {
+        snprintf( text, textSize, "2D REQUIRED | %s", audioText );
+      }
+      else {
+        snprintf( text, textSize, "2D REQUIRED" );
+      }
+
+      return;
+    }
+
+    if ( audioText[0] != '\0' ) {
+      snprintf( text, textSize, "%s | %s", dimensionText, audioText );
+    }
+    else {
+      snprintf( text, textSize, "%s", dimensionText );
+    }
+  }
+
   void getEffectName( uint8_t effectMode, char* effectName, size_t effectNameSize ) {
     if ( effectName == nullptr || effectNameSize == 0 ) {
       return;
@@ -2401,13 +2611,29 @@ class CoreS3DisplayUsermod : public Usermod {
   void drawEffect( uint8_t effectMode, M5StackTouchTarget pressedTarget = M5STACK_TOUCH_TARGET_NONE ) {
     display.fillRect( 0, 120, screenWidth, 58, TFT_BLACK );
 
+    char capabilityText[40];
+    char effectLabel[56];
+    bool incompatibleWithCurrentSegment = false;
+
+    getEffectCapabilityText(
+      effectMode,
+      capabilityText,
+      sizeof(capabilityText),
+      incompatibleWithCurrentSegment
+    );
+
+    snprintf( effectLabel, sizeof(effectLabel), "Effect  %s", capabilityText );
+
     display.setTextDatum( textdatum_t::middle_center );
 
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextColor(
+      incompatibleWithCurrentSegment ? TFT_YELLOW : TFT_WHITE,
+      TFT_BLACK
+    );
 
     display.setTextSize( 1 );
 
-    display.drawString( "Effect", screenWidth / 2, 128 );
+    display.drawString( effectLabel, screenWidth / 2, 128 );
 
     drawTriangleButton( CONTROL_LEFT_X, FX_BUTTON_Y, false, pressedTarget == M5STACK_TOUCH_TARGET_EFFECT_PREV );
 
@@ -2600,11 +2826,20 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void drawEffectPageName( uint8_t effectMode ) {
-    display.fillRect( 56, 32, 208, 22, TFT_BLACK );
+    display.fillRect( 40, 30, 240, 26, TFT_BLACK );
 
     char effectName[64];
+    char capabilityText[40];
+    bool incompatibleWithCurrentSegment = false;
 
     getEffectName( effectMode, effectName, sizeof(effectName) );
+
+    getEffectCapabilityText(
+      effectMode,
+      capabilityText,
+      sizeof(capabilityText),
+      incompatibleWithCurrentSegment
+    );
 
     display.setTextDatum( textdatum_t::middle_center );
 
@@ -2612,7 +2847,14 @@ class CoreS3DisplayUsermod : public Usermod {
 
     display.setTextSize( 1 );
 
-    display.drawString( effectName, screenWidth / 2, 42 );
+    display.drawString( effectName, screenWidth / 2, 36 );
+
+    display.setTextColor(
+      incompatibleWithCurrentSegment ? TFT_YELLOW : TFT_CYAN,
+      TFT_BLACK
+    );
+
+    display.drawString( capabilityText, screenWidth / 2, 49 );
   }
 
   String getPresetDisplayName( uint8_t presetId ) {
@@ -4051,23 +4293,38 @@ class CoreS3DisplayUsermod : public Usermod {
   void applyEffectStep( int step ) {
     uint8_t modeCount = strip.getModeCount();
 
-    if ( modeCount == 0 ) {
+    if ( modeCount == 0 || step == 0 ) {
       return;
     }
 
     Segment& mainSegment = strip.getMainSegment();
 
-    int newMode = mainSegment.mode + step;
+    const int direction = ( step < 0 ) ? -1 : 1;
 
-    if ( newMode < 0 ) {
-      newMode = modeCount - 1;
+    int newMode = mainSegment.mode;
+
+    bool validModeFound = false;
+
+    for ( uint16_t attempt = 0; attempt < modeCount; attempt++ ) {
+      newMode += direction;
+
+      if ( newMode < 0 ) {
+        newMode = modeCount - 1;
+      }
+
+      if ( newMode >= modeCount ) {
+        newMode = 0;
+      }
+
+      const char* modeData = strip.getModeData( (uint8_t)newMode );
+
+      if ( modeData != nullptr && strncmp_P( "RSVD", modeData, 4 ) != 0 ) {
+        validModeFound = true;
+        break;
+      }
     }
 
-    if ( newMode >= modeCount ) {
-      newMode = 0;
-    }
-
-    if ( newMode == mainSegment.mode ) {
+    if ( !validModeFound || newMode == mainSegment.mode ) {
       return;
     }
 
