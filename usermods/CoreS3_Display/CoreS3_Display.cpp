@@ -6,6 +6,7 @@
 #include "M5StackDisplayUI.h"
 #include "M5StackDisplayTouchState.h"
 #include "M5StackDisplayTouchHelpers.h"
+#include "M5StackDisplayTouchContext.h"
 
 #include "CoreS3_WLED_Logo.h"
 
@@ -4681,7 +4682,11 @@ class CoreS3DisplayUsermod : public Usermod {
   // Starts a new gesture and acquires its M5StackTouchTarget.
   // =========================================================
 
-  void handleTouchPress( const M5StackTouchHitState& hit, unsigned long now ) {
+  void handleTouchPress( const M5StackTouchFrameContext& context ) {
+    M5StackTouchRuntimeState& touchState = context.state;
+    const M5StackTouchHitState& hit = context.hit;
+    const unsigned long now = context.now;
+
     if (!touchState.touchActive) {
       touchState.touchActive = true;
 
@@ -4970,7 +4975,11 @@ class CoreS3DisplayUsermod : public Usermod {
   // Preserves pressed visuals, long-press and repeat behavior.
   // =========================================================
 
-  void handleTouchHold( const M5StackTouchHitState& hit, unsigned long now ) {
+  void handleTouchHold( const M5StackTouchFrameContext& context ) {
+    M5StackTouchRuntimeState& touchState = context.state;
+    const M5StackTouchHitState& hit = context.hit;
+    const unsigned long now = context.now;
+
     if ( touchState.touchTarget == M5STACK_TOUCH_TARGET_POWER ) {
       touchState.lastTouchInsidePower = hit.insidePower;
 
@@ -5921,7 +5930,10 @@ class CoreS3DisplayUsermod : public Usermod {
   // are now separated into focused helpers.
   // =========================================================
 
-  void handleTouchRelease( unsigned long now ) {
+  void handleTouchRelease( const M5StackTouchReleaseContext& context ) {
+    M5StackTouchRuntimeState& touchState = context.state;
+    const unsigned long now = context.now;
+
     if (!touchState.touchActive) {
       return;
     }
@@ -6008,14 +6020,25 @@ class CoreS3DisplayUsermod : public Usermod {
 
       M5StackTouchHitState hit = buildTouchHitState( touchX, touchY );
 
-      handleTouchPress( hit, now );
+      M5StackTouchFrameContext touchContext = {
+        touchState,
+        hit,
+        now
+      };
 
-      handleTouchHold( hit, now );
+      handleTouchPress( touchContext );
+
+      handleTouchHold( touchContext );
 
       return;
     }
 
-    handleTouchRelease( now );
+    M5StackTouchReleaseContext releaseContext = {
+      touchState,
+      now
+    };
+
+    handleTouchRelease( releaseContext );
   }
 
   // =========================================================
