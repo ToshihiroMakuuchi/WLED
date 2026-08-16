@@ -219,6 +219,410 @@ enum M5StackDetectedVariant : uint8_t {
 };
 
 // ===========================================================
+// M5Stack Display hardware backend
+//
+// This backend owns the board-dependent operations used by the
+// controller UI:
+//   - Core2-family read-only hardware diagnostics
+//   - Display initialization / rotation
+//   - Touch acquisition
+//   - LCD brightness writes
+//
+// The usermod itself keeps UI state, WLED state synchronization,
+// Preset handling, Touch state machines, Sleep/Wake and drawing.
+//
+// CoreS3 runtime behavior is intentionally unchanged.
+// Core2 / Core2 for AWS remain diagnostic-only.
+// ===========================================================
+
+class M5StackDisplayHardwareBackend {
+  private:
+
+  struct HardwareProbeResult {
+    M5StackHardwareProbeState state = M5STACK_HARDWARE_PROBE_NOT_RUN;
+    M5StackDetectedPmu pmu = M5STACK_DETECTED_PMU_UNKNOWN;
+    M5StackDetectedImu imu = M5STACK_DETECTED_IMU_UNKNOWN;
+    M5StackDetectedVariant variant = M5STACK_DETECTED_VARIANT_UNKNOWN;
+
+    bool address34 = false;
+    bool address35 = false;
+    bool address38 = false;
+    bool address40 = false;
+    bool address51 = false;
+    bool address68 = false;
+
+    uint8_t imuChipId = 0;
+  };
+
+  static constexpr int CORE2_INTERNAL_I2C_SDA = 21;
+  static constexpr int CORE2_INTERNAL_I2C_SCL = 22;
+  static constexpr uint32_t CORE2_INTERNAL_I2C_FREQUENCY = 400000;
+
+  M5GFX& display;
+  HardwareProbeResult hardwareProbe;
+
+  bool probeI2CAddress( TwoWire& wire, uint8_t address ) {
+    wire.beginTransmission( address );
+
+    return wire.endTransmission() == 0;
+  }
+
+  bool readI2CRegister8( TwoWire& wire, uint8_t address, uint8_t reg, uint8_t& value ) {
+    wire.beginTransmission( address );
+    wire.write( reg );
+
+    if ( wire.endTransmission( false ) != 0 ) {
+      return false;
+    }
+
+    size_t received = wire.requestFrom( address, (size_t)1, true );
+
+    if ( received != 1 || !wire.available() ) {
+      return false;
+    }
+
+    value = (uint8_t)wire.read();
+
+    return true;
+  }
+
+  void classifyCore2HardwareProbe( TwoWire& wire ) {
+    if ( hardwareProbe.address68 ) {
+      uint8_t chipId = 0;
+
+      // BMI270 CHIP_ID register 0x00 returns 0x24.
+      if ( readI2CRegister8( wire, 0x68, 0x00, chipId ) && chipId == 0x24 ) {
+        hardwareProbe.imu = M5STACK_DETECTED_IMU_BMI270;
+        hardwareProbe.imuChipId = chipId;
+      }
+      else {
+        // MPU6886 WHO_AM_I register 0x75 returns 0x19.
+        if ( readI2CRegister8( wire, 0x68, 0x75, chipId ) && chipId == 0x19 ) {
+          hardwareProbe.imu = M5STACK_DETECTED_IMU_MPU6886;
+          hardwareProbe.imuChipId = chipId;
+        }
+      }
+    }
+
+    if ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2_AWS ) {
+      if ( hardwareProbe.address34 ) {
+        // Both documented Core2 for AWS generations use AXP192.
+        hardwareProbe.pmu = M5STACK_DETECTED_PMU_AXP192;
+      }
+
+      if ( hardwareProbe.imu == M5STACK_DETECTED_IMU_BMI270 ) {
+        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3;
+      }
+      else if ( hardwareProbe.imu == M5STACK_DETECTED_IMU_MPU6886 ) {
+        // Official legacy Core2 for AWS documentation identifies MPU6886,
+        // but does not assign the v1.0 / v1.1 name here. Keep it generic.
+        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY;
+      }
+    }
+    else if ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2 ) {
+      if ( hardwareProbe.address34 && hardwareProbe.address40 ) {
+        // Core2 v1.1 signature: AXP2101 + INA3221.
+        hardwareProbe.pmu = M5STACK_DETECTED_PMU_AXP2101;
+        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_V1_1;
+      }
+      else if ( hardwareProbe.address34 ) {
+        hardwareProbe.pmu = M5STACK_DETECTED_PMU_AXP192;
+        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_LEGACY;
+      }
+    }
+  }
+
+  void printCore2HardwareProbeResult() {
+    Serial.printf(
+      "[CoreS3_Display] Hardware probe: %s, Variant=%s, PMU=%s, IMU=%s",
+      probeStateName(),
+      detectedVariantName(),
+      detectedPmuName(),
+      detectedImuName()
+    );
+
+    if ( hardwareProbe.imuChipId > 0 ) {
+      Serial.printf( " (ID=0x%02X)", hardwareProbe.imuChipId );
+    }
+
+    Serial.println();
+
+    Serial.printf(
+      "[CoreS3_Display] Detected revision: %s\n",
+      detectedRevisionName()
+    );
+
+    Serial.printf(
+      "[CoreS3_Display] Core2 I2C signature: "
+      "34=%s 35=%s 38=%s 40=%s 51=%s 68=%s\n",
+      hardwareProbe.address34 ? "YES" : "NO",
+      hardwareProbe.address35 ? "YES" : "NO",
+      hardwareProbe.address38 ? "YES" : "NO",
+      hardwareProbe.address40 ? "YES" : "NO",
+      hardwareProbe.address51 ? "YES" : "NO",
+      hardwareProbe.address68 ? "YES" : "NO"
+    );
+  }
+
+  public:
+
+  explicit M5StackDisplayHardwareBackend( M5GFX& displayRef )
+    : display( displayRef ) {
+  }
+
+  const char* profileName() const {
+    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.name;
+  }
+
+  const char* revisionName() const {
+    switch ( ACTIVE_M5STACK_DISPLAY_REVISION ) {
+      case M5STACK_DISPLAY_REVISION_V1_0:
+        return "v1.0";
+
+      case M5STACK_DISPLAY_REVISION_V1_1:
+        return "v1.1";
+
+      case M5STACK_DISPLAY_REVISION_V1_3:
+        return "v1.3";
+
+      case M5STACK_DISPLAY_REVISION_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+  bool isDisplayRuntimeEnabled() const {
+    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.displayRuntimeEnabled;
+  }
+
+  bool isCore2FamilyProfile() const {
+    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.diagnosticProbeEnabled;
+  }
+
+  bool isCore2DiagnosticOnlyMode() const {
+    return isCore2FamilyProfile() && ACTIVE_M5STACK_CORE2_DIAGNOSTIC_ONLY;
+  }
+
+  const char* runtimeModeName() const {
+    return isCore2DiagnosticOnlyMode() ? "CORE2 DIAGNOSTIC ONLY" : "DISPLAY ACTIVE";
+  }
+
+  const char* portStatusName() const {
+    if ( ACTIVE_M5STACK_HARDWARE_CAPABILITIES.displayRuntimeEnabled ) {
+      return "CORES3 VERIFIED DISPLAY RUNTIME";
+    }
+
+    if ( isCore2DiagnosticOnlyMode() ) {
+      return "CORE2 PORT PREPARED - DIAGNOSTIC ONLY";
+    }
+
+    return "HARDWARE RUNTIME BLOCKED";
+  }
+
+  const char* probeStateName() const {
+    switch ( hardwareProbe.state ) {
+      case M5STACK_HARDWARE_PROBE_NOT_REQUIRED:
+        return "NOT REQUIRED";
+
+      case M5STACK_HARDWARE_PROBE_COMPLETE:
+        return "COMPLETE";
+
+      case M5STACK_HARDWARE_PROBE_FAILED:
+        return "FAILED";
+
+      case M5STACK_HARDWARE_PROBE_NOT_RUN:
+      default:
+        return "NOT RUN";
+    }
+  }
+
+  const char* detectedPmuName() const {
+    switch ( hardwareProbe.pmu ) {
+      case M5STACK_DETECTED_PMU_AXP192:
+        return "AXP192 signature";
+
+      case M5STACK_DETECTED_PMU_AXP2101:
+        return "AXP2101 signature";
+
+      case M5STACK_DETECTED_PMU_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+  const char* detectedImuName() const {
+    switch ( hardwareProbe.imu ) {
+      case M5STACK_DETECTED_IMU_MPU6886:
+        return "MPU6886";
+
+      case M5STACK_DETECTED_IMU_BMI270:
+        return "BMI270";
+
+      case M5STACK_DETECTED_IMU_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+  const char* detectedVariantName() const {
+    switch ( hardwareProbe.variant ) {
+      case M5STACK_DETECTED_VARIANT_CORE2_LEGACY:
+        return "Core2 legacy signature";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_V1_1:
+        return "Core2 v1.1 signature";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY:
+        return "Core2 for AWS MPU6886 generation";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3:
+        return "Core2 for AWS v1.3 signature";
+
+      case M5STACK_DETECTED_VARIANT_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+  const char* detectedRevisionName() const {
+    switch ( hardwareProbe.variant ) {
+      case M5STACK_DETECTED_VARIANT_CORE2_V1_1:
+        return "v1.1 signature";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3:
+        return "v1.3 signature";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY:
+        return "Legacy MPU6886 generation; exact revision unknown";
+
+      case M5STACK_DETECTED_VARIANT_CORE2_LEGACY:
+        return "Legacy generation; exact revision unknown";
+
+      case M5STACK_DETECTED_VARIANT_UNKNOWN:
+      default:
+        return "UNKNOWN";
+    }
+  }
+
+  bool isProbeComplete() const {
+    return hardwareProbe.state == M5STACK_HARDWARE_PROBE_COMPLETE;
+  }
+
+  bool hasI2CAddress( uint8_t address ) const {
+    switch ( address ) {
+      case 0x34:
+        return hardwareProbe.address34;
+
+      case 0x35:
+        return hardwareProbe.address35;
+
+      case 0x38:
+        return hardwareProbe.address38;
+
+      case 0x40:
+        return hardwareProbe.address40;
+
+      case 0x51:
+        return hardwareProbe.address51;
+
+      case 0x68:
+        return hardwareProbe.address68;
+
+      default:
+        return false;
+    }
+  }
+
+  void runDiagnostics() {
+    hardwareProbe = HardwareProbeResult();
+
+    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.diagnosticProbeEnabled ) {
+      hardwareProbe.state = M5STACK_HARDWARE_PROBE_NOT_REQUIRED;
+
+      Serial.println( F( "[CoreS3_Display] CoreS3 hardware probe skipped (verified profile)" ) );
+
+      return;
+    }
+
+    TwoWire probeWire( 1 );
+
+    if ( !probeWire.begin( CORE2_INTERNAL_I2C_SDA, CORE2_INTERNAL_I2C_SCL, CORE2_INTERNAL_I2C_FREQUENCY ) ) {
+      hardwareProbe.state = M5STACK_HARDWARE_PROBE_FAILED;
+
+      Serial.println( F( "[CoreS3_Display] ERROR: Core2 diagnostic I2C start failed" ) );
+
+      return;
+    }
+
+    delay( 10 );
+
+    hardwareProbe.address34 = probeI2CAddress( probeWire, 0x34 );
+    hardwareProbe.address35 = probeI2CAddress( probeWire, 0x35 );
+    hardwareProbe.address38 = probeI2CAddress( probeWire, 0x38 );
+    hardwareProbe.address40 = probeI2CAddress( probeWire, 0x40 );
+    hardwareProbe.address51 = probeI2CAddress( probeWire, 0x51 );
+    hardwareProbe.address68 = probeI2CAddress( probeWire, 0x68 );
+
+    classifyCore2HardwareProbe( probeWire );
+
+    probeWire.end();
+
+    hardwareProbe.state = M5STACK_HARDWARE_PROBE_COMPLETE;
+
+    printCore2HardwareProbeResult();
+  }
+
+  bool initializeDisplay( int16_t& screenWidth, int16_t& screenHeight, bool& touchReady ) {
+    if ( !isDisplayRuntimeEnabled() ) {
+      Serial.printf(
+        "[CoreS3_Display] Hardware profile not enabled for Display runtime: %s (%s)\n",
+        profileName(),
+        revisionName()
+      );
+
+      return false;
+    }
+
+    display.begin();
+
+    display.setRotation( ACTIVE_M5STACK_HARDWARE_CAPABILITIES.displayRotation );
+
+    screenWidth = display.width();
+    screenHeight = display.height();
+
+    Serial.printf( "[CoreS3_Display] " "Display size: %d x %d\n", screenWidth, screenHeight );
+
+    if ( screenWidth <= 0 || screenHeight <= 0 ) {
+      Serial.println( F( "[CoreS3_Display] " "ERROR: Display not detected" ) );
+
+      return false;
+    }
+
+    touchReady = ( display.touch() != nullptr );
+
+    Serial.printf( "[CoreS3_Display] " "Touch: %s\n", touchReady ? "READY" : "NOT FOUND" );
+
+    return true;
+  }
+
+  bool readTouch( int16_t& touchX, int16_t& touchY ) {
+    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.touchRuntimeEnabled ) {
+      return false;
+    }
+
+    return ( display.getTouch( &touchX, &touchY ) > 0 );
+  }
+
+  void writeBrightness( uint8_t value ) {
+    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.brightnessRuntimeEnabled ) {
+      return;
+    }
+
+    display.setBrightness( value );
+  }
+};
+
+// ===========================================================
 // Fixed touch rectangles
 //
 // These values preserve the hardware-verified touch hit areas.
@@ -277,6 +681,7 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   M5GFX display;
+  M5StackDisplayHardwareBackend hardwareBackend;
 
   bool displayReady = false;
   bool touchReady = false;
@@ -289,32 +694,6 @@ class CoreS3DisplayUsermod : public Usermod {
   unsigned long lastTouchPoll = 0;
   unsigned long lastTouchAction = 0;
   unsigned long touchReleaseCandidate = 0;
-
-  // =========================================================
-  // Core2-family hardware diagnostic result
-  // =========================================================
-
-  struct HardwareProbeResult {
-    M5StackHardwareProbeState state = M5STACK_HARDWARE_PROBE_NOT_RUN;
-    M5StackDetectedPmu pmu = M5STACK_DETECTED_PMU_UNKNOWN;
-    M5StackDetectedImu imu = M5STACK_DETECTED_IMU_UNKNOWN;
-    M5StackDetectedVariant variant = M5STACK_DETECTED_VARIANT_UNKNOWN;
-
-    bool address34 = false;
-    bool address35 = false;
-    bool address38 = false;
-    bool address40 = false;
-    bool address51 = false;
-    bool address68 = false;
-
-    uint8_t imuChipId = 0;
-  };
-
-  HardwareProbeResult hardwareProbe;
-
-  static constexpr int CORE2_INTERNAL_I2C_SDA = 21;
-  static constexpr int CORE2_INTERNAL_I2C_SCL = 22;
-  static constexpr uint32_t CORE2_INTERNAL_I2C_FREQUENCY = 400000;
 
   // =========================================================
   // Wi-Fi state
@@ -1098,351 +1477,75 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
-  // Core2-family read-only hardware diagnostics
+  // Hardware backend facade
   //
-  // CoreS3 intentionally skips these probes. Core2 and Core2 for
-  // AWS share internal I2C on SDA=21 / SCL=22. The probe only
-  // reads address presence and IMU identity registers; it does not
-  // configure PMU, Touch, RTC, secure element, or IMU hardware.
+  // Keep board-specific implementation behind one backend while
+  // preserving the existing usermod call sites. This minimizes the
+  // regression surface for the hardware-verified CoreS3 UI.
   // =========================================================
 
   const char* getHardwareProbeStateName() {
-    switch ( hardwareProbe.state ) {
-      case M5STACK_HARDWARE_PROBE_NOT_REQUIRED:
-        return "NOT REQUIRED";
-
-      case M5STACK_HARDWARE_PROBE_COMPLETE:
-        return "COMPLETE";
-
-      case M5STACK_HARDWARE_PROBE_FAILED:
-        return "FAILED";
-
-      case M5STACK_HARDWARE_PROBE_NOT_RUN:
-      default:
-        return "NOT RUN";
-    }
+    return hardwareBackend.probeStateName();
   }
 
   const char* getDetectedPmuName() {
-    switch ( hardwareProbe.pmu ) {
-      case M5STACK_DETECTED_PMU_AXP192:
-        return "AXP192 signature";
-
-      case M5STACK_DETECTED_PMU_AXP2101:
-        return "AXP2101 signature";
-
-      case M5STACK_DETECTED_PMU_UNKNOWN:
-      default:
-        return "UNKNOWN";
-    }
+    return hardwareBackend.detectedPmuName();
   }
 
   const char* getDetectedImuName() {
-    switch ( hardwareProbe.imu ) {
-      case M5STACK_DETECTED_IMU_MPU6886:
-        return "MPU6886";
-
-      case M5STACK_DETECTED_IMU_BMI270:
-        return "BMI270";
-
-      case M5STACK_DETECTED_IMU_UNKNOWN:
-      default:
-        return "UNKNOWN";
-    }
+    return hardwareBackend.detectedImuName();
   }
 
   const char* getDetectedVariantName() {
-    switch ( hardwareProbe.variant ) {
-      case M5STACK_DETECTED_VARIANT_CORE2_LEGACY:
-        return "Core2 legacy signature";
-
-      case M5STACK_DETECTED_VARIANT_CORE2_V1_1:
-        return "Core2 v1.1 signature";
-
-      case M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY:
-        return "Core2 for AWS MPU6886 generation";
-
-      case M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3:
-        return "Core2 for AWS v1.3 signature";
-
-      case M5STACK_DETECTED_VARIANT_UNKNOWN:
-      default:
-        return "UNKNOWN";
-    }
+    return hardwareBackend.detectedVariantName();
   }
 
-
   bool isCore2FamilyProfile() {
-    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.diagnosticProbeEnabled;
+    return hardwareBackend.isCore2FamilyProfile();
   }
 
   bool isCore2DiagnosticOnlyMode() {
-    return isCore2FamilyProfile() && ACTIVE_M5STACK_CORE2_DIAGNOSTIC_ONLY;
+    return hardwareBackend.isCore2DiagnosticOnlyMode();
   }
 
   const char* getHardwareRuntimeModeName() {
-    return isCore2DiagnosticOnlyMode() ? "CORE2 DIAGNOSTIC ONLY" : "DISPLAY ACTIVE";
+    return hardwareBackend.runtimeModeName();
   }
 
   const char* getHardwarePortStatusName() {
-    if ( ACTIVE_M5STACK_HARDWARE_CAPABILITIES.displayRuntimeEnabled ) {
-      return "CORES3 VERIFIED DISPLAY RUNTIME";
-    }
-
-    if ( isCore2DiagnosticOnlyMode() ) {
-      return "CORE2 PORT PREPARED - DIAGNOSTIC ONLY";
-    }
-
-    return "HARDWARE RUNTIME BLOCKED";
+    return hardwareBackend.portStatusName();
   }
 
   const char* getDetectedRevisionName() {
-    switch ( hardwareProbe.variant ) {
-      case M5STACK_DETECTED_VARIANT_CORE2_V1_1:
-        return "v1.1 signature";
-
-      case M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3:
-        return "v1.3 signature";
-
-      case M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY:
-        return "Legacy MPU6886 generation; exact revision unknown";
-
-      case M5STACK_DETECTED_VARIANT_CORE2_LEGACY:
-        return "Legacy generation; exact revision unknown";
-
-      case M5STACK_DETECTED_VARIANT_UNKNOWN:
-      default:
-        return "UNKNOWN";
-    }
-  }
-
-  bool probeI2CAddress( TwoWire& wire, uint8_t address ) {
-    wire.beginTransmission( address );
-
-    return wire.endTransmission() == 0;
-  }
-
-  bool readI2CRegister8( TwoWire& wire, uint8_t address, uint8_t reg, uint8_t& value ) {
-    wire.beginTransmission( address );
-    wire.write( reg );
-
-    if ( wire.endTransmission( false ) != 0 ) {
-      return false;
-    }
-
-    size_t received = wire.requestFrom( address, (size_t)1, true );
-
-    if ( received != 1 || !wire.available() ) {
-      return false;
-    }
-
-    value = (uint8_t)wire.read();
-
-    return true;
-  }
-
-  void classifyCore2HardwareProbe( TwoWire& wire ) {
-    if ( hardwareProbe.address68 ) {
-      uint8_t chipId = 0;
-
-      // BMI270 CHIP_ID register 0x00 returns 0x24.
-      if ( readI2CRegister8( wire, 0x68, 0x00, chipId ) && chipId == 0x24 ) {
-        hardwareProbe.imu = M5STACK_DETECTED_IMU_BMI270;
-        hardwareProbe.imuChipId = chipId;
-      }
-      else {
-        // MPU6886 WHO_AM_I register 0x75 returns 0x19.
-        if ( readI2CRegister8( wire, 0x68, 0x75, chipId ) && chipId == 0x19 ) {
-          hardwareProbe.imu = M5STACK_DETECTED_IMU_MPU6886;
-          hardwareProbe.imuChipId = chipId;
-        }
-      }
-    }
-
-    if ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2_AWS ) {
-      if ( hardwareProbe.address34 ) {
-        // Both documented Core2 for AWS generations use AXP192.
-        hardwareProbe.pmu = M5STACK_DETECTED_PMU_AXP192;
-      }
-
-      if ( hardwareProbe.imu == M5STACK_DETECTED_IMU_BMI270 ) {
-        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_AWS_V1_3;
-      }
-      else if ( hardwareProbe.imu == M5STACK_DETECTED_IMU_MPU6886 ) {
-        // Official legacy Core2 for AWS documentation identifies MPU6886,
-        // but does not assign the v1.0 / v1.1 name here. Keep it generic.
-        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_AWS_LEGACY;
-      }
-    }
-    else if ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2 ) {
-      if ( hardwareProbe.address34 && hardwareProbe.address40 ) {
-        // Core2 v1.1 signature: AXP2101 + INA3221.
-        hardwareProbe.pmu = M5STACK_DETECTED_PMU_AXP2101;
-        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_V1_1;
-      }
-      else if ( hardwareProbe.address34 ) {
-        hardwareProbe.pmu = M5STACK_DETECTED_PMU_AXP192;
-        hardwareProbe.variant = M5STACK_DETECTED_VARIANT_CORE2_LEGACY;
-      }
-    }
-  }
-
-  void printCore2HardwareProbeResult() {
-    Serial.printf(
-      "[CoreS3_Display] Hardware probe: %s, Variant=%s, PMU=%s, IMU=%s",
-      getHardwareProbeStateName(),
-      getDetectedVariantName(),
-      getDetectedPmuName(),
-      getDetectedImuName()
-    );
-
-    if ( hardwareProbe.imuChipId > 0 ) {
-      Serial.printf( " (ID=0x%02X)", hardwareProbe.imuChipId );
-    }
-
-    Serial.println();
-
-    Serial.printf(
-      "[CoreS3_Display] Detected revision: %s\n",
-      getDetectedRevisionName()
-    );
-
-    Serial.printf(
-      "[CoreS3_Display] Core2 I2C signature: "
-      "34=%s 35=%s 38=%s 40=%s 51=%s 68=%s\n",
-      hardwareProbe.address34 ? "YES" : "NO",
-      hardwareProbe.address35 ? "YES" : "NO",
-      hardwareProbe.address38 ? "YES" : "NO",
-      hardwareProbe.address40 ? "YES" : "NO",
-      hardwareProbe.address51 ? "YES" : "NO",
-      hardwareProbe.address68 ? "YES" : "NO"
-    );
+    return hardwareBackend.detectedRevisionName();
   }
 
   void runHardwareDiagnostics() {
-    hardwareProbe = HardwareProbeResult();
-
-    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.diagnosticProbeEnabled ) {
-      hardwareProbe.state = M5STACK_HARDWARE_PROBE_NOT_REQUIRED;
-
-      Serial.println( F( "[CoreS3_Display] CoreS3 hardware probe skipped (verified profile)" ) );
-
-      return;
-    }
-
-    TwoWire probeWire( 1 );
-
-    if ( !probeWire.begin( CORE2_INTERNAL_I2C_SDA, CORE2_INTERNAL_I2C_SCL, CORE2_INTERNAL_I2C_FREQUENCY ) ) {
-      hardwareProbe.state = M5STACK_HARDWARE_PROBE_FAILED;
-
-      Serial.println( F( "[CoreS3_Display] ERROR: Core2 diagnostic I2C start failed" ) );
-
-      return;
-    }
-
-    delay( 10 );
-
-    hardwareProbe.address34 = probeI2CAddress( probeWire, 0x34 );
-    hardwareProbe.address35 = probeI2CAddress( probeWire, 0x35 );
-    hardwareProbe.address38 = probeI2CAddress( probeWire, 0x38 );
-    hardwareProbe.address40 = probeI2CAddress( probeWire, 0x40 );
-    hardwareProbe.address51 = probeI2CAddress( probeWire, 0x51 );
-    hardwareProbe.address68 = probeI2CAddress( probeWire, 0x68 );
-
-    classifyCore2HardwareProbe( probeWire );
-
-    probeWire.end();
-
-    hardwareProbe.state = M5STACK_HARDWARE_PROBE_COMPLETE;
-
-    printCore2HardwareProbeResult();
+    hardwareBackend.runDiagnostics();
   }
 
-  // =========================================================
-  // Display / Touch hardware access boundary
-  //
-  // CoreS3 behavior is intentionally unchanged here.
-  // Later hardware profiles can adapt these helpers for
-  // Core2 / Core2 for AWS without touching UI/WLED logic.
-  // =========================================================
-
   const char* getHardwareProfileName() {
-    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.name;
+    return hardwareBackend.profileName();
   }
 
   const char* getHardwareRevisionName() {
-    switch ( ACTIVE_M5STACK_DISPLAY_REVISION ) {
-      case M5STACK_DISPLAY_REVISION_V1_0:
-        return "v1.0";
-
-      case M5STACK_DISPLAY_REVISION_V1_1:
-        return "v1.1";
-
-      case M5STACK_DISPLAY_REVISION_V1_3:
-        return "v1.3";
-
-      case M5STACK_DISPLAY_REVISION_UNKNOWN:
-      default:
-        return "UNKNOWN";
-    }
+    return hardwareBackend.revisionName();
   }
 
   bool isHardwareDisplayRuntimeEnabled() {
-    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.displayRuntimeEnabled;
-  }
-
-  uint8_t getHardwareDisplayRotation() {
-    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.displayRotation;
+    return hardwareBackend.isDisplayRuntimeEnabled();
   }
 
   bool initializeDisplayHardware() {
-    if ( !isHardwareDisplayRuntimeEnabled() ) {
-      Serial.printf(
-        "[CoreS3_Display] Hardware profile not enabled for Display runtime: %s (%s)\n",
-        getHardwareProfileName(),
-        getHardwareRevisionName()
-      );
-
-      return false;
-    }
-
-    display.begin();
-
-    display.setRotation( getHardwareDisplayRotation() );
-
-    screenWidth = display.width();
-
-    screenHeight = display.height();
-
-    Serial.printf( "[CoreS3_Display] " "Display size: %d x %d\n", screenWidth, screenHeight );
-
-    if ( screenWidth <= 0 || screenHeight <= 0 ) {
-      Serial.println( F( "[CoreS3_Display] " "ERROR: Display not detected" ) );
-
-      return false;
-    }
-
-    touchReady = ( display.touch() != nullptr );
-
-    Serial.printf( "[CoreS3_Display] " "Touch: %s\n", touchReady ? "READY" : "NOT FOUND" );
-
-    return true;
+    return hardwareBackend.initializeDisplay( screenWidth, screenHeight, touchReady );
   }
 
   bool readDisplayTouch( int16_t& touchX, int16_t& touchY ) {
-    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.touchRuntimeEnabled ) {
-      return false;
-    }
-
-    return ( display.getTouch( &touchX, &touchY ) > 0 );
+    return hardwareBackend.readTouch( touchX, touchY );
   }
 
   void writeDisplayBrightness( uint8_t value ) {
-    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.brightnessRuntimeEnabled ) {
-      return;
-    }
-
-    display.setBrightness( value );
+    hardwareBackend.writeBrightness( value );
   }
 
   // =========================================================
@@ -6933,6 +7036,10 @@ class CoreS3DisplayUsermod : public Usermod {
 
   public:
 
+  CoreS3DisplayUsermod()
+    : hardwareBackend( display ) {
+  }
+
   void addToConfig( JsonObject& root ) override {
     JsonObject top = root.createNestedObject( FPSTR( CORES3_DISPLAY_CONFIG_NAME ) );
 
@@ -7276,19 +7383,19 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray hardwareCore2I2cInfo = user.createNestedArray( "M5Stack Core2 I2C Signature" );
 
-    if ( hardwareProbe.state == M5STACK_HARDWARE_PROBE_COMPLETE ) {
+    if ( hardwareBackend.isProbeComplete() ) {
       char signature[64];
 
       snprintf(
         signature,
         sizeof(signature),
         "34:%c 35:%c 38:%c 40:%c 51:%c 68:%c",
-        hardwareProbe.address34 ? 'Y' : 'N',
-        hardwareProbe.address35 ? 'Y' : 'N',
-        hardwareProbe.address38 ? 'Y' : 'N',
-        hardwareProbe.address40 ? 'Y' : 'N',
-        hardwareProbe.address51 ? 'Y' : 'N',
-        hardwareProbe.address68 ? 'Y' : 'N'
+        hardwareBackend.hasI2CAddress( 0x34 ) ? 'Y' : 'N',
+        hardwareBackend.hasI2CAddress( 0x35 ) ? 'Y' : 'N',
+        hardwareBackend.hasI2CAddress( 0x38 ) ? 'Y' : 'N',
+        hardwareBackend.hasI2CAddress( 0x40 ) ? 'Y' : 'N',
+        hardwareBackend.hasI2CAddress( 0x51 ) ? 'Y' : 'N',
+        hardwareBackend.hasI2CAddress( 0x68 ) ? 'Y' : 'N'
       );
 
       hardwareCore2I2cInfo.add( signature );
@@ -7316,8 +7423,12 @@ class CoreS3DisplayUsermod : public Usermod {
     JsonArray touchInfo = user.createNestedArray( "CoreS3 Display Touch" );
 
     if ( isCore2DiagnosticOnlyMode() ) {
-      if ( hardwareProbe.state == M5STACK_HARDWARE_PROBE_COMPLETE ) {
-        touchInfo.add( hardwareProbe.address38 ? "I2C 0x38 DETECTED - NOT INITIALIZED" : "I2C 0x38 NOT DETECTED" );
+      if ( hardwareBackend.isProbeComplete() ) {
+        touchInfo.add(
+          hardwareBackend.hasI2CAddress( 0x38 )
+            ? "I2C 0x38 DETECTED - NOT INITIALIZED"
+            : "I2C 0x38 NOT DETECTED"
+        );
       }
       else {
         touchInfo.add( "DIAGNOSTIC PROBE UNAVAILABLE" );
