@@ -136,26 +136,56 @@ static constexpr bool ACTIVE_M5STACK_CORE2_DIAGNOSTIC_ONLY =
   ( WLED_M5STACK_CORE2_DIAGNOSTIC_ONLY == 1 );
 
 // ===========================================================
-// Hardware port capability boundary
+// M5Stack hardware capability profile
 //
-// These flags define the only hardware-dependent runtime features
-// currently allowed for each profile. They intentionally keep the
-// Core2 family diagnostic-only until its Display/Touch/Power path is
-// implemented and verified on real hardware.
+// Board-dependent runtime capabilities are defined in one table.
+// UI, WLED-state handling, Preset logic, Touch state machines and
+// Display drawing remain board-neutral and consume this boundary.
+//
+// CoreS3 is the only verified active Display runtime.
+// Core2 / Core2 for AWS remain diagnostic-only until their
+// Display / Touch / Power implementations are hardware-verified.
 // ===========================================================
 
-static constexpr bool ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED =
-  ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORES3 );
+struct M5StackDisplayHardwareCapabilities {
+  const char* name;
+  uint8_t displayRotation;
+  bool displayRuntimeEnabled;
+  bool touchRuntimeEnabled;
+  bool brightnessRuntimeEnabled;
+  bool diagnosticProbeEnabled;
+};
 
-static constexpr bool ACTIVE_M5STACK_TOUCH_RUNTIME_ENABLED =
-  ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED;
+static constexpr M5StackDisplayHardwareCapabilities M5STACK_HARDWARE_CAPABILITIES[] = {
+  {
+    "M5Stack CoreS3",
+    1,
+    true,
+    true,
+    true,
+    false
+  },
+  {
+    "M5Stack Core2",
+    1,
+    false,
+    false,
+    false,
+    true
+  },
+  {
+    "M5Stack Core2 for AWS",
+    1,
+    false,
+    false,
+    false,
+    true
+  }
+};
 
-static constexpr bool ACTIVE_M5STACK_BRIGHTNESS_RUNTIME_ENABLED =
-  ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED;
-
-static constexpr bool ACTIVE_M5STACK_CORE2_DIAGNOSTIC_PROBE_ENABLED =
-  ( ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2 ||
-    ACTIVE_M5STACK_DISPLAY_PROFILE == M5STACK_DISPLAY_HARDWARE_CORE2_AWS );
+static constexpr const M5StackDisplayHardwareCapabilities&
+  ACTIVE_M5STACK_HARDWARE_CAPABILITIES =
+    M5STACK_HARDWARE_CAPABILITIES[WLED_M5STACK_DISPLAY_PROFILE];
 
 // ===========================================================
 // Core2-family read-only hardware diagnostic classifications
@@ -1143,7 +1173,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
 
   bool isCore2FamilyProfile() {
-    return ACTIVE_M5STACK_CORE2_DIAGNOSTIC_PROBE_ENABLED;
+    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.diagnosticProbeEnabled;
   }
 
   bool isCore2DiagnosticOnlyMode() {
@@ -1155,7 +1185,7 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   const char* getHardwarePortStatusName() {
-    if ( ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED ) {
+    if ( ACTIVE_M5STACK_HARDWARE_CAPABILITIES.displayRuntimeEnabled ) {
       return "CORES3 VERIFIED DISPLAY RUNTIME";
     }
 
@@ -1292,7 +1322,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void runHardwareDiagnostics() {
     hardwareProbe = HardwareProbeResult();
 
-    if ( !ACTIVE_M5STACK_CORE2_DIAGNOSTIC_PROBE_ENABLED ) {
+    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.diagnosticProbeEnabled ) {
       hardwareProbe.state = M5STACK_HARDWARE_PROBE_NOT_REQUIRED;
 
       Serial.println( F( "[CoreS3_Display] CoreS3 hardware probe skipped (verified profile)" ) );
@@ -1337,18 +1367,7 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   const char* getHardwareProfileName() {
-    switch ( ACTIVE_M5STACK_DISPLAY_PROFILE ) {
-      case M5STACK_DISPLAY_HARDWARE_CORES3:
-        return "M5Stack CoreS3";
-
-      case M5STACK_DISPLAY_HARDWARE_CORE2:
-        return "M5Stack Core2";
-
-      case M5STACK_DISPLAY_HARDWARE_CORE2_AWS:
-        return "M5Stack Core2 for AWS";
-    }
-
-    return "Unknown M5Stack";
+    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.name;
   }
 
   const char* getHardwareRevisionName() {
@@ -1369,13 +1388,11 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   bool isHardwareDisplayRuntimeEnabled() {
-    return ACTIVE_M5STACK_DISPLAY_RUNTIME_ENABLED;
+    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.displayRuntimeEnabled;
   }
 
   uint8_t getHardwareDisplayRotation() {
-    // The hardware-verified CoreS3 display rotation is 1.
-    // Future profiles can select their rotation here after hardware test.
-    return 1;
+    return ACTIVE_M5STACK_HARDWARE_CAPABILITIES.displayRotation;
   }
 
   bool initializeDisplayHardware() {
@@ -1413,7 +1430,7 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   bool readDisplayTouch( int16_t& touchX, int16_t& touchY ) {
-    if ( !ACTIVE_M5STACK_TOUCH_RUNTIME_ENABLED ) {
+    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.touchRuntimeEnabled ) {
       return false;
     }
 
@@ -1421,7 +1438,7 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void writeDisplayBrightness( uint8_t value ) {
-    if ( !ACTIVE_M5STACK_BRIGHTNESS_RUNTIME_ENABLED ) {
+    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.brightnessRuntimeEnabled ) {
       return;
     }
 
