@@ -623,55 +623,56 @@ class M5StackDisplayHardwareBackend {
 };
 
 // ===========================================================
-// Fixed touch rectangles
+// Shared 320 x 240 UI touch rectangles
 //
-// These values preserve the hardware-verified touch hit areas.
-// Only their representation is consolidated here.
+// These hit areas are part of the common M5Stack controller UI.
+// Their numeric values remain the hardware-verified CoreS3 baseline
+// and can be reused by another profile only after hardware validation.
 // ===========================================================
 
-struct CoreS3TouchRect {
+struct M5StackTouchRect {
   int16_t x;
   int16_t y;
   int16_t w;
   int16_t h;
 };
 
-static constexpr CoreS3TouchRect CORES3_TOUCH_POWER              = {   8,   8,  44, 44 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_BRIGHTNESS_DOWN    = {  16,  82,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_BRIGHTNESS_UP      = { 240,  82,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_EFFECT_PREV        = {  16, 138,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_EFFECT_DETAIL      = {  88, 138, 144, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_EFFECT_NEXT        = { 240, 138,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_COLOR_OPEN         = {   8, 180, 152, 60 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_OPEN        = { 160, 180, 152, 60 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_BACK               = { 268,   8,  44, 44 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_HUE_DOWN           = {  16, 151,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_HUE_UP             = { 240, 151,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_SATURATION_DOWN    = {  16, 204,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_SATURATION_UP      = { 240, 204,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_SPEED_DOWN         = {  16,  82,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_SPEED_UP           = { 240,  82,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_INTENSITY_DOWN     = {  16, 140,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_INTENSITY_UP       = { 240, 140,  64, 34 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_PALETTE_PREV       = {   8, 188,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_PALETTE_NEXT       = { 232, 188,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_PREV        = {   8, 188,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_NEXT        = { 232, 188,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_MANAGE      = {  88, 188, 144, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_SAVE_NEW    = {  48,  60, 224, 42 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_PRESET_SAVE_HOLD   = {  48, 170, 224, 66 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_OVERWRITE_OPEN     = {  48, 102, 224, 42 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_OVERWRITE_PREV     = {   8, 116,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_OVERWRITE_NEXT     = { 232, 116,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_OVERWRITE_HOLD     = {  48, 184, 224, 56 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_DELETE_OPEN        = {  48, 144, 224, 42 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_DELETE_PREV        = {   8, 116,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_DELETE_NEXT        = { 232, 116,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_DELETE_HOLD        = {  48, 184, 224, 56 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_BOOT_OPEN          = {  48, 186, 224, 48 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_BOOT_PREV          = {   8, 116,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_BOOT_NEXT          = { 232, 116,  80, 52 };
-static constexpr CoreS3TouchRect CORES3_TOUCH_BOOT_HOLD          = {  48, 184, 224, 56 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_POWER              = {   8,   8,  44, 44 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_BRIGHTNESS_DOWN    = {  16,  82,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_BRIGHTNESS_UP      = { 240,  82,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_EFFECT_PREV        = {  16, 138,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_EFFECT_DETAIL      = {  88, 138, 144, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_EFFECT_NEXT        = { 240, 138,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_COLOR_OPEN         = {   8, 180, 152, 60 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_PRESET_OPEN        = { 160, 180, 152, 60 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_BACK               = { 268,   8,  44, 44 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_HUE_DOWN           = {  16, 151,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_HUE_UP             = { 240, 151,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_SATURATION_DOWN    = {  16, 204,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_SATURATION_UP      = { 240, 204,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_SPEED_DOWN         = {  16,  82,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_SPEED_UP           = { 240,  82,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_INTENSITY_DOWN     = {  16, 140,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_INTENSITY_UP       = { 240, 140,  64, 34 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_PALETTE_PREV       = {   8, 188,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_PALETTE_NEXT       = { 232, 188,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_PRESET_PREV        = {   8, 188,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_PRESET_NEXT        = { 232, 188,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_PRESET_MANAGE      = {  88, 188, 144, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_PRESET_SAVE_NEW    = {  48,  60, 224, 42 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_PRESET_SAVE_HOLD   = {  48, 170, 224, 66 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_OVERWRITE_OPEN     = {  48, 102, 224, 42 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_OVERWRITE_PREV     = {   8, 116,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_OVERWRITE_NEXT     = { 232, 116,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_OVERWRITE_HOLD     = {  48, 184, 224, 56 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_DELETE_OPEN        = {  48, 144, 224, 42 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_DELETE_PREV        = {   8, 116,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_DELETE_NEXT        = { 232, 116,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_DELETE_HOLD        = {  48, 184, 224, 56 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_BOOT_OPEN          = {  48, 186, 224, 48 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_BOOT_PREV          = {   8, 116,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_BOOT_NEXT          = { 232, 116,  80, 52 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_BOOT_HOLD          = {  48, 184, 224, 56 };
 
 class CoreS3DisplayUsermod : public Usermod {
   private:
@@ -4656,46 +4657,46 @@ class CoreS3DisplayUsermod : public Usermod {
     lastLedState = bri > 0 ? 1 : 0;
   }
 
-  bool pointInsideRect( int16_t px, int16_t py, const CoreS3TouchRect& rect ) {
+  bool pointInsideRect( int16_t px, int16_t py, const M5StackTouchRect& rect ) {
     return ( px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + rect.h );
   }
 
-  bool isPowerButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_POWER ); }
-  bool isBrightnessDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_BRIGHTNESS_DOWN ); }
-  bool isBrightnessUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_BRIGHTNESS_UP ); }
-  bool isEffectPrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_EFFECT_PREV ); }
-  bool isEffectDetailTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_EFFECT_DETAIL ); }
-  bool isEffectNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_EFFECT_NEXT ); }
-  bool isColorButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_COLOR_OPEN ); }
-  bool isPresetOpenButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_PRESET_OPEN ); }
-  bool isBackButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_BACK ); }
-  bool isHueDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_HUE_DOWN ); }
-  bool isHueUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_HUE_UP ); }
-  bool isSaturationDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_SATURATION_DOWN ); }
-  bool isSaturationUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_SATURATION_UP ); }
-  bool isSpeedDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_SPEED_DOWN ); }
-  bool isSpeedUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_SPEED_UP ); }
-  bool isIntensityDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_INTENSITY_DOWN ); }
-  bool isIntensityUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_INTENSITY_UP ); }
-  bool isPalettePrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_PALETTE_PREV ); }
-  bool isPaletteNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_PALETTE_NEXT ); }
-  bool isPresetPrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_PRESET_PREV ); }
-  bool isPresetNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_PRESET_NEXT ); }
-  bool isPresetManageTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_PRESET_MANAGE ); }
-  bool isPresetSaveNewTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_PRESET_SAVE_NEW ); }
-  bool isPresetSaveHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_PRESET_SAVE_HOLD ); }
-  bool isPresetOverwriteOpenTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_OVERWRITE_OPEN ); }
-  bool isPresetOverwritePrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_OVERWRITE_PREV ); }
-  bool isPresetOverwriteNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_OVERWRITE_NEXT ); }
-  bool isPresetOverwriteHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_OVERWRITE_HOLD ); }
-  bool isPresetDeleteOpenTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_DELETE_OPEN ); }
-  bool isPresetDeletePrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_DELETE_PREV ); }
-  bool isPresetDeleteNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_DELETE_NEXT ); }
-  bool isPresetDeleteHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_DELETE_HOLD ); }
-  bool isPresetBootOpenTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_BOOT_OPEN ); }
-  bool isPresetBootPrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_BOOT_PREV ); }
-  bool isPresetBootNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_BOOT_NEXT ); }
-  bool isPresetBootHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, CORES3_TOUCH_BOOT_HOLD ); }
+  bool isPowerButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_POWER ); }
+  bool isBrightnessDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BRIGHTNESS_DOWN ); }
+  bool isBrightnessUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BRIGHTNESS_UP ); }
+  bool isEffectPrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_EFFECT_PREV ); }
+  bool isEffectDetailTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_EFFECT_DETAIL ); }
+  bool isEffectNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_EFFECT_NEXT ); }
+  bool isColorButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_COLOR_OPEN ); }
+  bool isPresetOpenButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_OPEN ); }
+  bool isBackButtonTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BACK ); }
+  bool isHueDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_HUE_DOWN ); }
+  bool isHueUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_HUE_UP ); }
+  bool isSaturationDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_SATURATION_DOWN ); }
+  bool isSaturationUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_SATURATION_UP ); }
+  bool isSpeedDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_SPEED_DOWN ); }
+  bool isSpeedUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_SPEED_UP ); }
+  bool isIntensityDownTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_INTENSITY_DOWN ); }
+  bool isIntensityUpTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_INTENSITY_UP ); }
+  bool isPalettePrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PALETTE_PREV ); }
+  bool isPaletteNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PALETTE_NEXT ); }
+  bool isPresetPrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_PREV ); }
+  bool isPresetNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_NEXT ); }
+  bool isPresetManageTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_MANAGE ); }
+  bool isPresetSaveNewTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_SAVE_NEW ); }
+  bool isPresetSaveHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_PRESET_SAVE_HOLD ); }
+  bool isPresetOverwriteOpenTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_OVERWRITE_OPEN ); }
+  bool isPresetOverwritePrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_OVERWRITE_PREV ); }
+  bool isPresetOverwriteNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_OVERWRITE_NEXT ); }
+  bool isPresetOverwriteHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_OVERWRITE_HOLD ); }
+  bool isPresetDeleteOpenTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_DELETE_OPEN ); }
+  bool isPresetDeletePrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_DELETE_PREV ); }
+  bool isPresetDeleteNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_DELETE_NEXT ); }
+  bool isPresetDeleteHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_DELETE_HOLD ); }
+  bool isPresetBootOpenTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BOOT_OPEN ); }
+  bool isPresetBootPrevTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BOOT_PREV ); }
+  bool isPresetBootNextTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BOOT_NEXT ); }
+  bool isPresetBootHoldTouched( int16_t x, int16_t y ) { return pointInsideRect( x, y, M5STACK_TOUCH_BOOT_HOLD ); }
 
   void beginHueEdit() {
     uint32_t currentColor = getPrimaryColor();
