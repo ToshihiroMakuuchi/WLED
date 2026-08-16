@@ -89,10 +89,10 @@ struct M5StackRepeatTouchState {
   bool longPressActive = false;
 };
 
-// Consolidated runtime state for one active Touch interaction.
+// Consolidated runtime state for Touch interaction and feedback.
 //
 // Field names/defaults intentionally match the previously separate
-// CoreS3_Display.cpp members so this is a storage-only refactor.
+// CoreS3_Display.cpp members so these phases remain storage-only refactors.
 struct M5StackTouchRuntimeState {
   unsigned long lastTouchPoll = 0;
   unsigned long lastTouchAction = 0;
@@ -132,6 +132,41 @@ struct M5StackTouchRuntimeState {
   M5StackRepeatTouchState intensityRepeatState;
   M5StackRepeatTouchState paletteRepeatState;
   M5StackRepeatTouchState presetRepeatState;
-  int16_t lastTouchX = -1;
-  int16_t lastTouchY = -1;
+  // ESP32 toolchains use a 16-bit signed short here.
+  // Using the fundamental type also keeps VS Code IntelliSense from
+  // mis-parsing these final coordinate members in this header.
+  signed short lastTouchX = -1;
+  signed short lastTouchY = -1;
+
+  // Wake Touch state used while the LCD is sleeping/waking.
+  unsigned long wakeTouchLastPoll = 0;
+  bool wakeTouchState = false;
+  unsigned long wakeReleaseCandidate = 0;
+
+  // Visual pressed-state flags used only for button feedback drawing.
+  bool powerButtonVisualPressed = false;
+  bool brightnessButtonVisualPressed = false;
+  bool effectButtonVisualPressed = false;
+  bool effectDetailVisualPressed = false;
+  bool colorButtonVisualPressed = false;
+  bool presetOpenButtonVisualPressed = false;
+  bool backButtonVisualPressed = false;
+  bool hueButtonVisualPressed = false;
+  bool saturationButtonVisualPressed = false;
+  bool speedButtonVisualPressed = false;
+  bool intensityButtonVisualPressed = false;
+  bool paletteButtonVisualPressed = false;
+  bool presetNavButtonVisualPressed = false;
+  bool presetManageButtonVisualPressed = false;
+  bool presetSaveNewButtonVisualPressed = false;
+  bool presetSaveHoldButtonVisualPressed = false;
+  bool presetOverwriteOpenButtonVisualPressed = false;
+  bool presetOverwriteNavButtonVisualPressed = false;
+  bool presetOverwriteHoldButtonVisualPressed = false;
+  bool presetDeleteOpenButtonVisualPressed = false;
+  bool presetDeleteNavButtonVisualPressed = false;
+  bool presetDeleteHoldButtonVisualPressed = false;
+  bool presetBootOpenButtonVisualPressed = false;
+  bool presetBootNavButtonVisualPressed = false;
+  bool presetBootHoldButtonVisualPressed = false;
 };
