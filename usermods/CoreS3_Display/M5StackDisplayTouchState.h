@@ -88,3 +88,50 @@ struct M5StackRepeatTouchState {
   unsigned long lastRepeat = 0;
   bool longPressActive = false;
 };
+
+// Consolidated runtime state for one active Touch interaction.
+//
+// Field names/defaults intentionally match the previously separate
+// CoreS3_Display.cpp members so this is a storage-only refactor.
+struct M5StackTouchRuntimeState {
+  unsigned long lastTouchPoll = 0;
+  unsigned long lastTouchAction = 0;
+  unsigned long touchReleaseCandidate = 0;
+  M5StackTouchTarget touchTarget = M5STACK_TOUCH_TARGET_NONE;
+  bool touchActive = false;
+  bool lastTouchInsidePower = false;
+  bool lastTouchInsideBrightness = false;
+  bool lastTouchInsideEffect = false;
+  bool lastTouchInsideEffectDetail = false;
+  bool lastTouchInsideColor = false;
+  bool lastTouchInsidePresetOpen = false;
+  bool lastTouchInsideBack = false;
+  bool lastTouchInsideHue = false;
+  bool lastTouchInsideSaturation = false;
+  bool lastTouchInsideSpeed = false;
+  bool lastTouchInsideIntensity = false;
+  bool lastTouchInsidePalette = false;
+  bool lastTouchInsidePresetNav = false;
+  bool lastTouchInsidePresetManage = false;
+  bool lastTouchInsidePresetSaveNew = false;
+  bool lastTouchInsidePresetSaveHold = false;
+  bool lastTouchInsidePresetOverwriteOpen = false;
+  bool lastTouchInsidePresetOverwriteNav = false;
+  bool lastTouchInsidePresetOverwriteHold = false;
+  bool lastTouchInsidePresetDeleteOpen = false;
+  bool lastTouchInsidePresetDeleteNav = false;
+  bool lastTouchInsidePresetDeleteHold = false;
+  bool lastTouchInsidePresetBootOpen = false;
+  bool lastTouchInsidePresetBootNav = false;
+  bool lastTouchInsidePresetBootHold = false;
+  M5StackRepeatTouchState brightnessRepeatState;
+  M5StackRepeatTouchState effectRepeatState;
+  M5StackRepeatTouchState hueRepeatState;
+  M5StackRepeatTouchState saturationRepeatState;
+  M5StackRepeatTouchState speedRepeatState;
+  M5StackRepeatTouchState intensityRepeatState;
+  M5StackRepeatTouchState paletteRepeatState;
+  M5StackRepeatTouchState presetRepeatState;
+  int16_t lastTouchX = -1;
+  int16_t lastTouchY = -1;
+};
