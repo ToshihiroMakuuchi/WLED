@@ -2745,11 +2745,39 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void drawBrightness( int brightnessValue, M5StackTouchTarget pressedTarget = M5STACK_TOUCH_TARGET_NONE ) {
-    char valueText[8];
+    brightnessValue = constrain( brightnessValue, 0, 255 );
 
-    snprintf( valueText, sizeof(valueText), "%d", brightnessValue );
+    int brightnessPercent = 0;
 
-    drawNumericControl( 62, 58, "Brightness", 70, BRI_BUTTON_Y, 99, valueText, pressedTarget, M5STACK_TOUCH_TARGET_BRIGHTNESS_DOWN, M5STACK_TOUCH_TARGET_BRIGHTNESS_UP );
+    if ( brightnessValue >= 255 ) {
+      brightnessPercent = 100;
+    }
+    else if ( brightnessValue > 0 ) {
+      brightnessPercent = max( 1, ( brightnessValue * 100 ) / 255 );
+    }
+
+    char valueText[16];
+
+    snprintf(
+      valueText,
+      sizeof(valueText),
+      "%d  %d%%",
+      brightnessValue,
+      brightnessPercent
+    );
+
+    drawNumericControl(
+      62,
+      58,
+      "LED Brightness",
+      70,
+      BRI_BUTTON_Y,
+      99,
+      valueText,
+      pressedTarget,
+      M5STACK_TOUCH_TARGET_BRIGHTNESS_DOWN,
+      M5STACK_TOUCH_TARGET_BRIGHTNESS_UP
+    );
   }
 
   struct M5StackEffectCapabilities {
