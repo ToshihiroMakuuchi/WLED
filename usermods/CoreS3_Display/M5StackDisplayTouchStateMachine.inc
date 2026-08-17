@@ -179,6 +179,7 @@
 
       M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.brightnessRepeatState );
       M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.effectRepeatState );
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.colorSlotHoldState );
       M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.hueRepeatState );
       M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.saturationRepeatState );
       M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.speedRepeatState );
@@ -254,16 +255,22 @@
           touchState.touchTarget = M5STACK_TOUCH_TARGET_COLOR_SLOT_1;
 
           touchState.lastTouchInsideColorSlot = true;
+
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.colorSlotHoldState, now );
         }
         else if (hit.insideColorSlot2) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_COLOR_SLOT_2;
 
           touchState.lastTouchInsideColorSlot = true;
+
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.colorSlotHoldState, now );
         }
         else if (hit.insideColorSlot3) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_COLOR_SLOT_3;
 
           touchState.lastTouchInsideColorSlot = true;
+
+          M5StackDisplayTouchHelpers::beginRepeatTouch( touchState.colorSlotHoldState, now );
         }
         else if (hit.insideHueDown) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_HUE_DOWN;
@@ -594,6 +601,29 @@
       }
 
       touchState.lastTouchInsideColorSlot = insideSelectedSlot;
+
+      if (!insideSelectedSlot) {
+        return;
+      }
+
+      if (
+        !touchState.colorSlotHoldState.longPressActive &&
+        touchState.colorSlotHoldState.pressStart > 0 &&
+        now - touchState.colorSlotHoldState.pressStart >= COLOR_SLOT_LONG_PRESS_MS
+      ) {
+        touchState.colorSlotHoldState.longPressActive = true;
+
+        uint8_t colorSlot = 0;
+
+        if ( touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_2 ) {
+          colorSlot = 1;
+        }
+        else if ( touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_3 ) {
+          colorSlot = 2;
+        }
+
+        toggleColorSlotBlack( colorSlot );
+      }
 
       return;
     }
@@ -1005,7 +1035,12 @@
       case M5STACK_TOUCH_TARGET_COLOR_SLOT_1:
       case M5STACK_TOUCH_TARGET_COLOR_SLOT_2:
       case M5STACK_TOUCH_TARGET_COLOR_SLOT_3:
-        return touchState.lastTouchInsideColorSlot ? TOUCH_RELEASE_ACTION_COLOR_SLOT_SELECT : TOUCH_RELEASE_ACTION_NONE;
+        return (
+          touchState.lastTouchInsideColorSlot &&
+          !touchState.colorSlotHoldState.longPressActive
+        )
+          ? TOUCH_RELEASE_ACTION_COLOR_SLOT_SELECT
+          : TOUCH_RELEASE_ACTION_NONE;
 
       case M5STACK_TOUCH_TARGET_PRESET_OPEN:
         return touchState.lastTouchInsidePresetOpen ? TOUCH_RELEASE_ACTION_PRESET_OPEN : TOUCH_RELEASE_ACTION_NONE;

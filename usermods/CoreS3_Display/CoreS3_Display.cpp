@@ -113,6 +113,15 @@ class CoreS3DisplayUsermod : public Usermod {
   uint32_t lastColorSlots[3] = { 0, 0, 0 };
   bool lastColorSlotsValid = false;
 
+  // Runtime-only BLACK toggle history.
+  //
+  // A long-press on C1/C2/C3 toggles that WLED color slot between black
+  // (#000000) and its last observed non-black value. This history is never
+  // written to Flash/config and is refreshed by both CoreS3 and Web UI color
+  // changes.
+  uint32_t lastNonBlackColorSlots[3] = { 0, 0, 0 };
+  bool lastNonBlackColorSlotValid[3] = { false, false, false };
+
   // =========================================================
   // Preset state
   // =========================================================
@@ -550,6 +559,14 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr unsigned long TOUCH_RELEASE_CONFIRM_MS = 70;
 
   static constexpr unsigned long TOUCH_ACTION_COOLDOWN_MS = 250;
+
+  // =========================================================
+  // COLOR slot behavior
+  // =========================================================
+
+  // Deliberately longer than the repeat-control threshold. BLACK is
+  // reversible, but should still require an intentional hold.
+  static constexpr unsigned long COLOR_SLOT_LONG_PRESS_MS = 600;
 
   // =========================================================
   // Brightness behavior
@@ -2139,7 +2156,14 @@ class CoreS3DisplayUsermod : public Usermod {
     Segment& mainSegment = strip.getMainSegment();
 
     for ( uint8_t colorSlot = 0; colorSlot < 3; colorSlot++ ) {
-      lastColorSlots[ colorSlot ] = mainSegment.colors[ colorSlot ];
+      const uint32_t slotColor = mainSegment.colors[ colorSlot ];
+
+      lastColorSlots[ colorSlot ] = slotColor;
+
+      if ( slotColor != 0 ) {
+        lastNonBlackColorSlots[ colorSlot ] = slotColor;
+        lastNonBlackColorSlotValid[ colorSlot ] = true;
+      }
     }
 
     lastColorSlotsValid = true;
@@ -2196,6 +2220,76 @@ class CoreS3DisplayUsermod : public Usermod {
 
       drawSaturation( logicalSaturationValue, M5STACK_TOUCH_TARGET_NONE );
     }
+  }
+
+  bool toggleColorSlotBlack( uint8_t colorSlot ) {
+    if ( strip.getSegmentsNum() == 0 || colorSlot > 2 ) {
+      return false;
+    }
+
+    const M5StackEffectColorCapabilities capability =
+      getEffectColorCapabilities( getCurrentEffectMode() );
+
+    if ( !isEffectColorSlotEnabled( capability, colorSlot ) ) {
+      return false;
+    }
+
+    Segment& mainSegment = strip.getMainSegment();
+
+    const uint32_t currentColor = mainSegment.colors[ colorSlot ];
+
+    uint32_t newColor = 0;
+
+    if ( currentColor != 0 ) {
+      lastNonBlackColorSlots[ colorSlot ] = currentColor;
+      lastNonBlackColorSlotValid[ colorSlot ] = true;
+
+      newColor = 0;
+    }
+    else {
+      // If this slot has never had a non-black color during this runtime,
+      // restore to RGB white. The user can then immediately tune Hue/Sat.
+      newColor =
+        lastNonBlackColorSlotValid[ colorSlot ]
+          ? lastNonBlackColorSlots[ colorSlot ]
+          : 0x00FFFFFF;
+    }
+
+    selectedColorSlot = colorSlot;
+
+    hueEditValid = false;
+    saturationEditValid = false;
+
+    if ( newColor != currentColor ) {
+      mainSegment.setColor( colorSlot, newColor );
+
+      stateUpdated( CALL_MODE_BUTTON );
+    }
+
+    syncLogicalColorFromRgb( newColor );
+
+    lastSelectedColor = newColor;
+    lastSelectedColorValid = true;
+
+    if ( colorSlot == 0 ) {
+      lastPrimaryColor = newColor;
+      lastPrimaryColorValid = true;
+    }
+
+    cacheCurrentColorSlots();
+
+    lastHueValue = logicalHueValue;
+    lastSaturationValue = logicalSaturationValue;
+
+    if ( currentPage == SCREEN_COLOR ) {
+      drawColorDetails( newColor );
+
+      drawHue( logicalHueValue, M5STACK_TOUCH_TARGET_NONE );
+
+      drawSaturation( logicalSaturationValue, M5STACK_TOUCH_TARGET_NONE );
+    }
+
+    return true;
   }
 
   uint8_t getCurrentEffectMode() {
@@ -3616,29 +3710,40 @@ class CoreS3DisplayUsermod : public Usermod {
     display.drawString(
       selectedText,
       screenWidth / 2,
-      hasCustomColorLabel ? 116 : COLOR_SELECTED_INFO_Y
+      116
     );
 
-    if ( hasCustomColorLabel ) {
-      char roleText[40];
+    char slotHintText[56];
 
+    if ( hasCustomColorLabel ) {
       snprintf(
-        roleText,
-        sizeof(roleText),
-        "Role: %s",
-        customColorLabel
+        slotHintText,
+        sizeof(slotHintText),
+        "Role: %s  Hold: %s",
+        customColorLabel,
+        color == 0 ? "RESTORE" : "BLACK"
       );
 
       display.setTextColor( TFT_CYAN, TFT_BLACK );
-
-      display.setTextSize( 1 );
-
-      display.drawString(
-        roleText,
-        screenWidth / 2,
-        130
-      );
     }
+    else {
+      snprintf(
+        slotHintText,
+        sizeof(slotHintText),
+        "Hold: %s",
+        color == 0 ? "RESTORE" : "BLACK"
+      );
+
+      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+    }
+
+    display.setTextSize( 1 );
+
+    display.drawString(
+      slotHintText,
+      screenWidth / 2,
+      130
+    );
 
     display.drawFastHLine( 32, 136, screenWidth - 64, TFT_DARKGREY );
   }
@@ -5191,6 +5296,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.brightnessRepeatState );
     M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.effectRepeatState );
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.colorSlotHoldState );
     M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.hueRepeatState );
     M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.saturationRepeatState );
     M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.speedRepeatState );
@@ -6274,7 +6380,13 @@ class CoreS3DisplayUsermod : public Usermod {
 
     bool saturationTouchActive = ( touchState.touchTarget == M5STACK_TOUCH_TARGET_SATURATION_DOWN || touchState.touchTarget == M5STACK_TOUCH_TARGET_SATURATION_UP );
 
-    bool colorControlTouchActive = ( hueTouchActive || saturationTouchActive );
+    bool colorSlotTouchActive = (
+      touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_1 ||
+      touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_2 ||
+      touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_3
+    );
+
+    bool colorControlTouchActive = ( hueTouchActive || saturationTouchActive || colorSlotTouchActive );
 
     bool primaryColorChangeHandled = false;
 

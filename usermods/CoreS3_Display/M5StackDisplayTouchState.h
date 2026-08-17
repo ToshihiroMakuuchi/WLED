@@ -132,6 +132,7 @@ struct M5StackTouchRuntimeState {
   bool lastTouchInsidePresetBootHold = false;
   M5StackRepeatTouchState brightnessRepeatState;
   M5StackRepeatTouchState effectRepeatState;
+  M5StackRepeatTouchState colorSlotHoldState;
   M5StackRepeatTouchState hueRepeatState;
   M5StackRepeatTouchState saturationRepeatState;
   M5StackRepeatTouchState speedRepeatState;
