@@ -70,11 +70,29 @@ class CoreS3DisplayUsermod : public Usermod {
 
   unsigned long lastUpdate = 0;
   // =========================================================
-  // Wi-Fi state
+  // Network access state
+  // =========================================================
+  //
+  // CoreS3 is a local controller first. STA connectivity must not be
+  // treated as a prerequisite for the touch UI because WLED can also be
+  // reached through its SoftAP, and local LED control must remain usable
+  // even when no network interface is currently available.
   // =========================================================
 
-  bool lastWiFiConnected = false;
-  String lastIPAddress = "";
+  enum NetworkAccessMode : uint8_t {
+    NETWORK_ACCESS_NONE = 0,
+    NETWORK_ACCESS_STA,
+    NETWORK_ACCESS_AP
+  };
+
+  NetworkAccessMode lastNetworkAccessMode = NETWORK_ACCESS_NONE;
+  String lastNetworkDisplayText = "";
+
+  // Session-only Recovery AP state. This never changes the persisted
+  // WLED AP behavior or the user's configured AP credentials.
+  bool recoveryApSessionActive = false;
+  String recoveryApSSID = "";
+  unsigned long recoveryApLastStartAttempt = 0;
 
   bool readyScreenShown = false;
   bool connectingScreenShown = false;
@@ -227,7 +245,7 @@ class CoreS3DisplayUsermod : public Usermod {
   // =========================================================
 
   enum StartupState : uint8_t {
-    STARTUP_FADE_IN = 0, STARTUP_WAIT_WIFI, STARTUP_CONNECTED_HOLD, STARTUP_FADE_OUT, STARTUP_MAIN_FADE_IN, STARTUP_DONE };
+    STARTUP_FADE_IN = 0, STARTUP_WAIT_WIFI, STARTUP_READY_HOLD, STARTUP_FADE_OUT, STARTUP_MAIN_FADE_IN, STARTUP_DONE };
 
   StartupState startupState = STARTUP_FADE_IN;
 
@@ -237,10 +255,15 @@ class CoreS3DisplayUsermod : public Usermod {
 
   uint8_t startupDotCount = 0;
 
+  NetworkAccessMode startupNetworkAccessMode = NETWORK_ACCESS_NONE;
   String startupIPAddress = "";
 
-  static constexpr unsigned long STARTUP_CONNECTED_HOLD_MS = 700;
+  static constexpr unsigned long STARTUP_READY_HOLD_MS = 700;
   static constexpr unsigned long STARTUP_DOTS_INTERVAL_MS = 350;
+
+  // Display/UI fail-safe only. WLED itself continues its normal Wi-Fi
+  // connection/reconnection behavior after the local UI becomes available.
+  static constexpr unsigned long STARTUP_NETWORK_WAIT_TIMEOUT_MS = 10000;
 
   // =========================================================
   // Persistent logical HSV
@@ -559,6 +582,11 @@ class CoreS3DisplayUsermod : public Usermod {
   static constexpr unsigned long TOUCH_RELEASE_CONFIRM_MS = 70;
 
   static constexpr unsigned long TOUCH_ACTION_COOLDOWN_MS = 250;
+
+  // Recovery AP is intentionally harder to trigger than ordinary UI
+  // actions because it temporarily exposes a Wi-Fi access point.
+  static constexpr unsigned long WIFI_RECOVERY_HOLD_MS = 1500;
+  static constexpr unsigned long WIFI_RECOVERY_REOPEN_MS = 1000;
 
   // =========================================================
   // COLOR slot behavior
@@ -1667,6 +1695,129 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   // =========================================================
+  // Network access helpers
+  // =========================================================
+
+  NetworkAccessMode getNetworkAccessMode() {
+    // Prefer the normal station connection when both STA and SoftAP are active.
+    if ( WiFi.status() == WL_CONNECTED ) {
+      return NETWORK_ACCESS_STA;
+    }
+
+    // WLED owns SoftAP lifecycle and exposes apActive through wled.h.
+    // A running SoftAP is a valid network-ready state even though
+    // WiFi.status() is not WL_CONNECTED.
+    if ( apActive ) {
+      return NETWORK_ACCESS_AP;
+    }
+
+    return NETWORK_ACCESS_NONE;
+  }
+
+  String getNetworkIPAddress( NetworkAccessMode mode ) {
+    if ( mode == NETWORK_ACCESS_STA ) {
+      return WiFi.localIP().toString();
+    }
+
+    if ( mode == NETWORK_ACCESS_AP ) {
+      return WiFi.softAPIP().toString();
+    }
+
+    return "";
+  }
+
+  String getNetworkDisplayText( NetworkAccessMode mode ) {
+    if ( mode == NETWORK_ACCESS_STA ) {
+      return WiFi.localIP().toString();
+    }
+
+    if ( mode == NETWORK_ACCESS_AP ) {
+      if ( recoveryApSessionActive && recoveryApSSID.length() > 0 ) {
+        String displaySSID = recoveryApSSID;
+
+        if ( displaySSID.length() > 18 ) {
+          displaySSID = displaySSID.substring( 0, 18 );
+        }
+
+        return displaySSID + "  " + WiFi.softAPIP().toString();
+      }
+
+      return String( "AP: " ) + WiFi.softAPIP().toString();
+    }
+
+    return "Offline - Hold for Recovery AP";
+  }
+
+  String getCurrentNetworkDisplayText() {
+    return getNetworkDisplayText( getNetworkAccessMode() );
+  }
+
+  bool startWiFiRecoveryAP() {
+    if ( getNetworkAccessMode() != NETWORK_ACCESS_NONE ) {
+      return false;
+    }
+
+    recoveryApLastStartAttempt = millis();
+
+    // WLED::initAP(true) deliberately uses WLED's compiled recovery/default
+    // AP credentials and bypasses AP_BEHAVIOR_BUTTON_ONLY. Back up the live
+    // config variables first, then restore them immediately so this emergency
+    // session does not modify the user's stored AP configuration.
+    char savedApSSID[ sizeof(apSSID) ];
+    char savedApPass[ sizeof(apPass) ];
+
+    strlcpy( savedApSSID, apSSID, sizeof(savedApSSID) );
+    strlcpy( savedApPass, apPass, sizeof(savedApPass) );
+
+    WLED::instance().initAP( true );
+
+    String startedSSID = apSSID;
+
+    strlcpy( apSSID, savedApSSID, sizeof(apSSID) );
+    strlcpy( apPass, savedApPass, sizeof(apPass) );
+
+    if ( !apActive ) {
+      recoveryApSessionActive = false;
+      recoveryApSSID = "";
+
+      return false;
+    }
+
+    recoveryApSessionActive = true;
+    recoveryApSSID = startedSSID;
+
+    return true;
+  }
+
+  void serviceWiFiRecoveryAP() {
+    if ( !recoveryApSessionActive ) {
+      return;
+    }
+
+    if ( WiFi.status() == WL_CONNECTED ) {
+      recoveryApSessionActive = false;
+      recoveryApSSID = "";
+
+      return;
+    }
+
+    if ( apActive ) {
+      return;
+    }
+
+    const unsigned long now = millis();
+
+    if ( now - recoveryApLastStartAttempt < WIFI_RECOVERY_REOPEN_MS ) {
+      return;
+    }
+
+    // WLED's normal reconnect path may temporarily tear down SoftAP while it
+    // retries STA. During an explicit recovery session, reopen the emergency
+    // AP so the user retains a path back into the Web UI.
+    startWiFiRecoveryAP();
+  }
+
+  // =========================================================
   // Startup logo
   // =========================================================
 
@@ -1742,6 +1893,36 @@ class CoreS3DisplayUsermod : public Usermod {
     display.drawString( ipAddress, screenWidth / 2, 181 );
   }
 
+  void drawStartupAccessPointStatus( const String& ipAddress ) {
+    display.fillRect( 0, 125, screenWidth, 100, TFT_BLACK );
+
+    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextColor( TFT_GREEN, TFT_BLACK );
+    display.setTextSize( 2 );
+
+    display.drawString( "Wi-Fi AP Ready", screenWidth / 2, 150 );
+
+    display.setTextColor( TFT_WHITE, TFT_BLACK );
+    display.setTextSize( 1 );
+
+    display.drawString( ipAddress, screenWidth / 2, 181 );
+  }
+
+  void drawStartupLocalControlStatus() {
+    display.fillRect( 0, 125, screenWidth, 100, TFT_BLACK );
+
+    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextColor( TFT_YELLOW, TFT_BLACK );
+    display.setTextSize( 2 );
+
+    display.drawString( "Local Control Ready", screenWidth / 2, 150 );
+
+    display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+    display.setTextSize( 1 );
+
+    display.drawString( "Wi-Fi unavailable", screenWidth / 2, 181 );
+  }
+
   void handleStartupSequence() {
     if ( startupState == STARTUP_DONE ) {
       return;
@@ -1774,21 +1955,40 @@ class CoreS3DisplayUsermod : public Usermod {
         drawStartupConnectingStatus();
       }
 
-      if ( WiFi.status() == WL_CONNECTED ) {
-        startupIPAddress = WiFi.localIP().toString();
+      NetworkAccessMode currentNetworkMode = getNetworkAccessMode();
 
-        drawStartupConnectedStatus( startupIPAddress );
+      if ( currentNetworkMode != NETWORK_ACCESS_NONE ) {
+        startupNetworkAccessMode = currentNetworkMode;
+        startupIPAddress = getNetworkIPAddress( currentNetworkMode );
 
-        startupState = STARTUP_CONNECTED_HOLD;
+        if ( currentNetworkMode == NETWORK_ACCESS_STA ) {
+          drawStartupConnectedStatus( startupIPAddress );
+        }
+        else {
+          drawStartupAccessPointStatus( startupIPAddress );
+        }
 
+        startupState = STARTUP_READY_HOLD;
+        startupStateStart = now;
+
+        return;
+      }
+
+      if ( now - startupStateStart >= STARTUP_NETWORK_WAIT_TIMEOUT_MS ) {
+        startupNetworkAccessMode = NETWORK_ACCESS_NONE;
+        startupIPAddress = "";
+
+        drawStartupLocalControlStatus();
+
+        startupState = STARTUP_READY_HOLD;
         startupStateStart = now;
       }
 
       return;
     }
 
-    if ( startupState == STARTUP_CONNECTED_HOLD ) {
-      if ( now - startupStateStart >= STARTUP_CONNECTED_HOLD_MS ) {
+    if ( startupState == STARTUP_READY_HOLD ) {
+      if ( now - startupStateStart >= STARTUP_READY_HOLD_MS ) {
         startupState = STARTUP_FADE_OUT;
 
         startupLastFadeStep = now;
@@ -1799,7 +1999,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if ( startupState == STARTUP_FADE_OUT ) {
       if ( updateFade( 0, now, startupLastFadeStep ) ) {
-        drawMainScreen( startupIPAddress );
+        drawMainScreen( getNetworkDisplayText( startupNetworkAccessMode ) );
 
         setDisplayBrightness( 0 );
 
@@ -1815,9 +2015,8 @@ class CoreS3DisplayUsermod : public Usermod {
       if ( updateFade( getNormalDisplayBrightness(), now, startupLastFadeStep ) ) {
         startupState = STARTUP_DONE;
 
-        lastWiFiConnected = true;
-
-        lastIPAddress = startupIPAddress;
+        lastNetworkAccessMode = getNetworkAccessMode();
+        lastNetworkDisplayText = getNetworkDisplayText( lastNetworkAccessMode );
 
         readyScreenShown = true;
 
@@ -1896,12 +2095,6 @@ class CoreS3DisplayUsermod : public Usermod {
   void redrawCurrentPageForWake() {
     settlePendingPreset();
 
-    if ( WiFi.status() != WL_CONNECTED ) {
-      drawConnectingScreen();
-
-      return;
-    }
-
     if ( currentPage == SCREEN_COLOR ) {
       drawColorScreen();
 
@@ -1937,7 +2130,7 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
-    drawMainScreen( WiFi.localIP().toString() );
+    drawMainScreen( getCurrentNetworkDisplayText() );
   }
 
   void beginDisplaySleep( unsigned long now ) {
@@ -2618,32 +2811,6 @@ class CoreS3DisplayUsermod : public Usermod {
     display.drawString( subtitle, screenWidth / 2, 41 );
 
     display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
-  }
-
-  void drawConnectingScreen() {
-    drawStartupBase();
-
-    display.fillRect( 0, 125, screenWidth, 100, TFT_BLACK );
-
-    display.setTextDatum( textdatum_t::middle_center );
-
-    display.setTextColor( TFT_WHITE, TFT_BLACK );
-
-    display.setTextSize( 2 );
-
-    display.drawString( "Wi-Fi Reconnecting...", screenWidth / 2, 153 );
-
-    display.setTextSize( 1 );
-
-    display.setTextColor( TFT_DARKGREY, TFT_BLACK );
-
-    display.drawString( "WLED is running", screenWidth / 2, 185 );
-
-    connectingScreenShown = true;
-
-    readyScreenShown = false;
-
-    resetTouchGesture();
   }
 
   void drawPowerIcon( int16_t centerX, int16_t centerY, uint16_t iconColor, uint16_t backgroundColor ) {
@@ -4100,7 +4267,30 @@ class CoreS3DisplayUsermod : public Usermod {
     drawPresetManageButton( pressedTarget == M5STACK_TOUCH_TARGET_PRESET_MANAGE );
   }
 
-  void drawMainScreen( const String& ipAddress ) {
+  void drawMainNetworkStatusLine(
+    const String& networkStatusText,
+    uint16_t textColor = TFT_WHITE
+  ) {
+    display.fillRect(
+      HEADER_CONTENT_LEFT,
+      28,
+      HEADER_CONTENT_RIGHT - HEADER_CONTENT_LEFT,
+      28,
+      TFT_BLACK
+    );
+
+    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextColor( textColor, TFT_BLACK );
+    display.setTextSize( 1 );
+
+    display.drawString(
+      networkStatusText,
+      HEADER_CENTER_X,
+      HEADER_IP_Y
+    );
+  }
+
+  void drawMainScreen( const String& networkStatusText ) {
     display.fillScreen( TFT_BLACK );
 
     currentPage = SCREEN_MAIN;
@@ -4119,9 +4309,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     display.drawString( "WLED M5Stack CoreS3", HEADER_CENTER_X, HEADER_TITLE_Y );
 
-    display.setTextSize( 1 );
-
-    display.drawString( ipAddress, HEADER_CENTER_X, HEADER_IP_Y );
+    drawMainNetworkStatusLine( networkStatusText );
 
     display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
 
@@ -5289,6 +5477,8 @@ class CoreS3DisplayUsermod : public Usermod {
 
     touchState.lastTouchInsidePower = false;
 
+    touchState.lastTouchInsideWiFiRecovery = false;
+
     touchState.lastTouchInsideBrightness = false;
 
     touchState.lastTouchInsideEffect = false;
@@ -5339,6 +5529,8 @@ class CoreS3DisplayUsermod : public Usermod {
 
     touchState.powerButtonVisualPressed = false;
 
+    touchState.wifiRecoveryVisualPressed = false;
+
     touchState.brightnessButtonVisualPressed = false;
 
     touchState.effectButtonVisualPressed = false;
@@ -5385,6 +5577,7 @@ class CoreS3DisplayUsermod : public Usermod {
     touchState.presetBootNavButtonVisualPressed = false;
     touchState.presetBootHoldButtonVisualPressed = false;
 
+    M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.wifiRecoveryHoldState );
     M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.brightnessRepeatState );
     M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.effectRepeatState );
     M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.colorSlotHoldState );
@@ -6387,6 +6580,8 @@ class CoreS3DisplayUsermod : public Usermod {
       return;
     }
 
+    serviceWiFiRecoveryAP();
+
     if ( !presetCacheReady && !presetCacheBuilding ) {
       startPresetCacheRebuild();
     }
@@ -6422,43 +6617,47 @@ class CoreS3DisplayUsermod : public Usermod {
 
     bool presetPendingSettled = settlePendingPreset();
 
-    bool wifiConnected = ( WiFi.status() == WL_CONNECTED );
+    NetworkAccessMode currentNetworkMode = getNetworkAccessMode();
+    String currentNetworkDisplayText =
+      getNetworkDisplayText( currentNetworkMode );
 
-    if (!wifiConnected) {
-      if ( !connectingScreenShown ) {
-        drawConnectingScreen();
-      }
+    if ( !readyScreenShown ) {
+      drawMainScreen( currentNetworkDisplayText );
 
-      lastWiFiConnected = false;
-
-      lastIPAddress = "";
-
-      return;
-    }
-
-    String currentIPAddress = WiFi.localIP().toString();
-
-    if ( !lastWiFiConnected || !readyScreenShown ) {
-      drawMainScreen( currentIPAddress );
-
-      lastIPAddress = currentIPAddress;
-
-      lastWiFiConnected = true;
+      lastNetworkAccessMode = currentNetworkMode;
+      lastNetworkDisplayText = currentNetworkDisplayText;
 
       return;
     }
 
-    if ( currentIPAddress != lastIPAddress ) {
-      lastIPAddress = currentIPAddress;
+    const bool networkPresentationChanged =
+      ( currentNetworkMode != lastNetworkAccessMode ) ||
+      ( currentNetworkDisplayText != lastNetworkDisplayText );
 
-      if ( currentPage == SCREEN_MAIN ) {
-        drawMainScreen( currentIPAddress );
+    if ( networkPresentationChanged ) {
+      // Do not redraw/reset MAIN in the middle of a touch gesture. This is
+      // especially important when a Recovery AP starts during a long press.
+      if (
+        currentPage == SCREEN_MAIN &&
+        touchState.touchTarget != M5STACK_TOUCH_TARGET_NONE
+      ) {
+        // Keep the old cache so the transition is still observed after the
+        // finger is released, unless the Recovery handler updates it itself.
+      }
+      else {
+        lastNetworkAccessMode = currentNetworkMode;
+        lastNetworkDisplayText = currentNetworkDisplayText;
 
-        return;
+        // Network changes are informational only. Do not interrupt COLOR,
+        // EFFECT or PRESET operation. MAIN is the page that owns the
+        // network-status line, so redraw it only when it is currently visible.
+        if ( currentPage == SCREEN_MAIN ) {
+          drawMainScreen( currentNetworkDisplayText );
+
+          return;
+        }
       }
     }
-
-    lastWiFiConnected = true;
 
     bool ledOn = (bri > 0);
 
@@ -6622,11 +6821,26 @@ class CoreS3DisplayUsermod : public Usermod {
 
     JsonArray wifiInfo = user.createNestedArray( "CoreS3 Display WiFi" );
 
-    if ( WiFi.status() == WL_CONNECTED ) {
-      wifiInfo.add( WiFi.localIP().toString() );
+    NetworkAccessMode networkMode = getNetworkAccessMode();
+
+    if ( networkMode == NETWORK_ACCESS_STA ) {
+      wifiInfo.add( String( "STA: " ) + WiFi.localIP().toString() );
+    }
+    else if ( networkMode == NETWORK_ACCESS_AP ) {
+      if ( recoveryApSessionActive && recoveryApSSID.length() > 0 ) {
+        wifiInfo.add(
+          String( "Recovery AP: " ) +
+          recoveryApSSID +
+          " @ " +
+          WiFi.softAPIP().toString()
+        );
+      }
+      else {
+        wifiInfo.add( String( "AP: " ) + WiFi.softAPIP().toString() );
+      }
     }
     else {
-      wifiInfo.add( "Not connected" );
+      wifiInfo.add( "Offline - local control available" );
     }
 
     JsonArray ledInfo = user.createNestedArray( "CoreS3 Display LED" );

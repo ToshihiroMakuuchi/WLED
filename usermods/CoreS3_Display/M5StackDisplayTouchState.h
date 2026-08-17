@@ -14,6 +14,8 @@ enum M5StackTouchTarget : uint8_t {
 
   M5STACK_TOUCH_TARGET_POWER,
 
+  M5STACK_TOUCH_TARGET_WIFI_RECOVERY,
+
   M5STACK_TOUCH_TARGET_BRIGHTNESS_DOWN, M5STACK_TOUCH_TARGET_BRIGHTNESS_UP,
 
   M5STACK_TOUCH_TARGET_EFFECT_PREV, M5STACK_TOUCH_TARGET_EFFECT_DETAIL, M5STACK_TOUCH_TARGET_EFFECT_NEXT,
@@ -47,6 +49,7 @@ enum M5StackTouchTarget : uint8_t {
 // One hit-test snapshot built from the current Touch coordinates.
 struct M5StackTouchHitState {
   bool insidePower = false;
+  bool insideWiFiRecovery = false;
   bool insideBrightnessDown = false;
   bool insideBrightnessUp = false;
   bool insideEffectPrev = false;
@@ -105,6 +108,7 @@ struct M5StackTouchRuntimeState {
   M5StackTouchTarget touchTarget = M5STACK_TOUCH_TARGET_NONE;
   bool touchActive = false;
   bool lastTouchInsidePower = false;
+  bool lastTouchInsideWiFiRecovery = false;
   bool lastTouchInsideBrightness = false;
   bool lastTouchInsideEffect = false;
   bool lastTouchInsideEffectDetail = false;
@@ -130,6 +134,7 @@ struct M5StackTouchRuntimeState {
   bool lastTouchInsidePresetBootOpen = false;
   bool lastTouchInsidePresetBootNav = false;
   bool lastTouchInsidePresetBootHold = false;
+  M5StackRepeatTouchState wifiRecoveryHoldState;
   M5StackRepeatTouchState brightnessRepeatState;
   M5StackRepeatTouchState effectRepeatState;
   M5StackRepeatTouchState colorSlotHoldState;
@@ -152,6 +157,7 @@ struct M5StackTouchRuntimeState {
 
   // Visual pressed-state flags used only for button feedback drawing.
   bool powerButtonVisualPressed = false;
+  bool wifiRecoveryVisualPressed = false;
   bool brightnessButtonVisualPressed = false;
   bool effectButtonVisualPressed = false;
   bool effectDetailVisualPressed = false;

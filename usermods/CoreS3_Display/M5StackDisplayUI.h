@@ -24,6 +24,7 @@ struct M5StackTouchRect {
 };
 
 static constexpr M5StackTouchRect M5STACK_TOUCH_POWER              = {   8,   8,  44, 44 };
+static constexpr M5StackTouchRect M5STACK_TOUCH_WIFI_RECOVERY      = {  60,  28, 252, 28 };
 static constexpr M5StackTouchRect M5STACK_TOUCH_BRIGHTNESS_DOWN    = {  16,  82,  64, 34 };
 static constexpr M5StackTouchRect M5STACK_TOUCH_BRIGHTNESS_UP      = { 240,  82,  64, 34 };
 static constexpr M5StackTouchRect M5STACK_TOUCH_EFFECT_PREV        = {  16, 138,  64, 34 };

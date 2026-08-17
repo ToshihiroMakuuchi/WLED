@@ -29,6 +29,15 @@
     hit.insidePower = M5StackDisplayTouchHelpers::isPowerButtonTouched( touchX, touchY );
 
     if ( currentPage == SCREEN_MAIN ) {
+      if ( getNetworkAccessMode() == NETWORK_ACCESS_NONE ) {
+        hit.insideWiFiRecovery =
+          M5StackDisplayTouchHelpers::pointInsideRect(
+            touchX,
+            touchY,
+            M5STACK_TOUCH_WIFI_RECOVERY
+          );
+      }
+
       hit.insideBrightnessDown = M5StackDisplayTouchHelpers::isBrightnessDownTouched( touchX, touchY );
 
       hit.insideBrightnessUp = M5StackDisplayTouchHelpers::isBrightnessUpTouched( touchX, touchY );
@@ -177,6 +186,7 @@
 
       touchState.touchTarget = M5STACK_TOUCH_TARGET_NONE;
 
+      M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.wifiRecoveryHoldState );
       M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.brightnessRepeatState );
       M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.effectRepeatState );
       M5StackDisplayTouchHelpers::resetRepeatTouch( touchState.colorSlotHoldState );
@@ -200,7 +210,23 @@
       }
 
       else if ( currentPage == SCREEN_MAIN ) {
-        if (hit.insideBrightnessDown) {
+        if (hit.insideWiFiRecovery) {
+          touchState.touchTarget = M5STACK_TOUCH_TARGET_WIFI_RECOVERY;
+
+          touchState.lastTouchInsideWiFiRecovery = true;
+          touchState.wifiRecoveryVisualPressed = true;
+
+          M5StackDisplayTouchHelpers::beginRepeatTouch(
+            touchState.wifiRecoveryHoldState,
+            now
+          );
+
+          drawMainNetworkStatusLine(
+            "Hold... Recovery AP",
+            TFT_YELLOW
+          );
+        }
+        else if (hit.insideBrightnessDown) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_BRIGHTNESS_DOWN;
 
           touchState.lastTouchInsideBrightness = true;
@@ -492,6 +518,64 @@
 
       if ( hit.insidePower != touchState.powerButtonVisualPressed ) {
         drawPowerButton( bri > 0, hit.insidePower );
+      }
+
+      return;
+    }
+
+    if ( touchState.touchTarget == M5STACK_TOUCH_TARGET_WIFI_RECOVERY ) {
+      touchState.lastTouchInsideWiFiRecovery = hit.insideWiFiRecovery;
+
+      if ( !hit.insideWiFiRecovery ) {
+        // Leaving the header area cancels this hold completely. Re-entering
+        // during the same gesture must not trigger Recovery AP immediately.
+        touchState.wifiRecoveryHoldState.pressStart = 0;
+
+        if ( touchState.wifiRecoveryVisualPressed ) {
+          touchState.wifiRecoveryVisualPressed = false;
+
+          drawMainNetworkStatusLine(
+            getCurrentNetworkDisplayText()
+          );
+        }
+
+        return;
+      }
+
+      if (
+        !touchState.wifiRecoveryHoldState.longPressActive &&
+        touchState.wifiRecoveryHoldState.pressStart > 0 &&
+        now - touchState.wifiRecoveryHoldState.pressStart >= WIFI_RECOVERY_HOLD_MS
+      ) {
+        touchState.wifiRecoveryHoldState.longPressActive = true;
+
+        drawMainNetworkStatusLine(
+          "Starting Recovery AP...",
+          TFT_YELLOW
+        );
+
+        if ( startWiFiRecoveryAP() ) {
+          NetworkAccessMode recoveryMode = getNetworkAccessMode();
+          String recoveryText = getNetworkDisplayText( recoveryMode );
+
+          lastNetworkAccessMode = recoveryMode;
+          lastNetworkDisplayText = recoveryText;
+
+          touchState.wifiRecoveryVisualPressed = false;
+
+          drawMainNetworkStatusLine(
+            recoveryText,
+            TFT_GREEN
+          );
+        }
+        else {
+          // Keep the visual marked active so release restores the normal
+          // offline hint after a failed start attempt.
+          drawMainNetworkStatusLine(
+            "Recovery AP failed",
+            TFT_RED
+          );
+        }
       }
 
       return;
@@ -1018,6 +1102,11 @@
       case M5STACK_TOUCH_TARGET_POWER:
         return ( touchState.lastTouchInsidePower && now - touchState.lastTouchAction >= TOUCH_ACTION_COOLDOWN_MS ) ? TOUCH_RELEASE_ACTION_POWER : TOUCH_RELEASE_ACTION_NONE;
 
+      case M5STACK_TOUCH_TARGET_WIFI_RECOVERY:
+        // Recovery AP is a hold-only gesture. Short release intentionally
+        // performs no action.
+        return TOUCH_RELEASE_ACTION_NONE;
+
       case M5STACK_TOUCH_TARGET_BRIGHTNESS_DOWN:
       case M5STACK_TOUCH_TARGET_BRIGHTNESS_UP:
         return ( touchState.lastTouchInsideBrightness && !touchState.brightnessRepeatState.longPressActive ) ? TOUCH_RELEASE_ACTION_BRIGHTNESS_SHORT : TOUCH_RELEASE_ACTION_NONE;
@@ -1105,6 +1194,17 @@
   }
 
   void releaseTouchVisualState( M5StackTouchTarget releasedTarget ) {
+    if (
+      releasedTarget == M5STACK_TOUCH_TARGET_WIFI_RECOVERY &&
+      touchState.wifiRecoveryVisualPressed
+    ) {
+      drawMainNetworkStatusLine(
+        getCurrentNetworkDisplayText()
+      );
+
+      touchState.wifiRecoveryVisualPressed = false;
+    }
+
     if ( releasedTarget == M5STACK_TOUCH_TARGET_POWER && touchState.powerButtonVisualPressed ) {
       drawPowerButton( bri > 0, false );
     }
@@ -1276,7 +1376,7 @@
       return;
     }
 
-    drawMainScreen( WiFi.localIP().toString() );
+    drawMainScreen( getCurrentNetworkDisplayText() );
   }
 
   void executeTouchReleaseAction( TouchReleaseAction action, M5StackTouchTarget releasedTarget, unsigned long now ) {
