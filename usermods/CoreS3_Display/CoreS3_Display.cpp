@@ -4394,7 +4394,33 @@ class CoreS3DisplayUsermod : public Usermod {
 
     bool enabled = ( presetCacheReady && !presetCacheBuilding && freePresetId > 0 && pendingPresetId == 0 && !presetNeedsSaving() );
 
-    drawPresetTextButton( PRESET_SAVE_NEW_BUTTON_X, PRESET_SAVE_NEW_BUTTON_Y, PRESET_SAVE_NEW_BUTTON_W, PRESET_SAVE_NEW_BUTTON_H, "SAVE NEW", enabled, pressed && enabled, 2 );
+    char buttonLabel[24];
+
+    if ( !presetCacheReady || presetCacheBuilding ) {
+      strlcpy( buttonLabel, "SAVE NEW", sizeof(buttonLabel) );
+    }
+    else if ( freePresetId == 0 ) {
+      strlcpy( buttonLabel, "SAVE NEW  FULL", sizeof(buttonLabel) );
+    }
+    else {
+      snprintf(
+        buttonLabel,
+        sizeof(buttonLabel),
+        "SAVE NEW  #%u",
+        freePresetId
+      );
+    }
+
+    drawPresetTextButton(
+      PRESET_SAVE_NEW_BUTTON_X,
+      PRESET_SAVE_NEW_BUTTON_Y,
+      PRESET_SAVE_NEW_BUTTON_W,
+      PRESET_SAVE_NEW_BUTTON_H,
+      buttonLabel,
+      enabled,
+      pressed && enabled,
+      2
+    );
 
     touchState.presetSaveNewButtonVisualPressed = ( pressed && enabled );
   }
@@ -4429,6 +4455,45 @@ class CoreS3DisplayUsermod : public Usermod {
     drawPresetTextButton( PRESET_SAVE_HOLD_BUTTON_X, PRESET_SAVE_HOLD_BUTTON_Y, PRESET_SAVE_HOLD_BUTTON_W, PRESET_SAVE_HOLD_BUTTON_H, "HOLD TO SAVE", enabled, pressed && enabled, 2 );
 
     touchState.presetSaveHoldButtonVisualPressed = ( pressed && enabled );
+  }
+
+  void getPresetManageCurrentStateText(
+    char* text,
+    size_t textSize
+  ) {
+    if ( text == nullptr || textSize == 0 ) {
+      return;
+    }
+
+    text[0] = '\0';
+
+    if ( pendingPresetId > 0 ) {
+      snprintf(
+        text,
+        textSize,
+        "Current: Applying Preset #%u",
+        pendingPresetId
+      );
+
+      return;
+    }
+
+    if ( currentPreset == 0 ) {
+      strlcpy(
+        text,
+        "Current: Custom State",
+        textSize
+      );
+
+      return;
+    }
+
+    snprintf(
+      text,
+      textSize,
+      "Current: Active Preset #%u",
+      currentPreset
+    );
   }
 
   void drawPresetManageScreen() {
@@ -4478,18 +4543,12 @@ class CoreS3DisplayUsermod : public Usermod {
 
     resetTouchGesture();
 
-    uint8_t freePresetId = findFirstFreePresetId();
-    char manageSubtitle[32];
+    char manageSubtitle[40];
 
-    if ( !presetCacheReady || presetCacheBuilding ) {
-      strlcpy( manageSubtitle, "Preset cache loading...", sizeof(manageSubtitle) );
-    }
-    else if ( freePresetId == 0 ) {
-      strlcpy( manageSubtitle, "No free Preset ID", sizeof(manageSubtitle) );
-    }
-    else {
-      snprintf( manageSubtitle, sizeof(manageSubtitle), "Next new Preset ID: %u", freePresetId );
-    }
+    getPresetManageCurrentStateText(
+      manageSubtitle,
+      sizeof(manageSubtitle)
+    );
 
     drawStandardPageHeader( "PRESET MANAGE", manageSubtitle );
 
@@ -4506,6 +4565,10 @@ class CoreS3DisplayUsermod : public Usermod {
     drawPresetBootOpenButton( false );
 
     lastLedState = bri > 0 ? 1 : 0;
+
+    lastPresetValue = currentPreset;
+
+    lastPresetsModifiedTime = presetsModifiedTime;
   }
 
   // =========================================================
@@ -6095,6 +6158,23 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void updatePresetPageState( uint8_t displayedPreset, bool presetPendingSettled ) {
+    if ( presetSubPage == PRESET_SUBPAGE_MANAGE ) {
+      const bool presetFileChanged =
+        ( presetsModifiedTime != lastPresetsModifiedTime );
+
+      const bool activePresetChanged =
+        ( (int)currentPreset != lastPresetValue );
+
+      if (
+        touchState.touchTarget == M5STACK_TOUCH_TARGET_NONE &&
+        ( activePresetChanged || presetFileChanged || presetPendingSettled )
+      ) {
+        drawPresetManageScreen();
+      }
+
+      return;
+    }
+
     if ( presetSubPage == PRESET_SUBPAGE_NAV ) {
       bool presetTouchActive = ( touchState.touchTarget == M5STACK_TOUCH_TARGET_PRESET_PREV || touchState.touchTarget == M5STACK_TOUCH_TARGET_PRESET_NEXT );
 
