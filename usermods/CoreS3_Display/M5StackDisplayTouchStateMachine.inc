@@ -47,13 +47,45 @@
     if ( currentPage == SCREEN_COLOR ) {
       hit.insideBack = M5StackDisplayTouchHelpers::isBackButtonTouched( touchX, touchY );
 
-      hit.insideHueDown = M5StackDisplayTouchHelpers::isHueDownTouched( touchX, touchY );
+      const M5StackEffectColorCapabilities colorCapability =
+        getEffectColorCapabilities( getCurrentEffectMode() );
 
-      hit.insideHueUp = M5StackDisplayTouchHelpers::isHueUpTouched( touchX, touchY );
+      if ( colorCapability.color1 ) {
+        hit.insideColorSlot1 =
+          M5StackDisplayTouchHelpers::pointInsideRect(
+            touchX,
+            touchY,
+            M5STACK_TOUCH_COLOR_SLOT_1
+          );
+      }
 
-      hit.insideSaturationDown = M5StackDisplayTouchHelpers::isSaturationDownTouched( touchX, touchY );
+      if ( colorCapability.color2 ) {
+        hit.insideColorSlot2 =
+          M5StackDisplayTouchHelpers::pointInsideRect(
+            touchX,
+            touchY,
+            M5STACK_TOUCH_COLOR_SLOT_2
+          );
+      }
 
-      hit.insideSaturationUp = M5StackDisplayTouchHelpers::isSaturationUpTouched( touchX, touchY );
+      if ( colorCapability.color3 ) {
+        hit.insideColorSlot3 =
+          M5StackDisplayTouchHelpers::pointInsideRect(
+            touchX,
+            touchY,
+            M5STACK_TOUCH_COLOR_SLOT_3
+          );
+      }
+
+      if ( effectUsesAnyColor( colorCapability ) ) {
+        hit.insideHueDown = M5StackDisplayTouchHelpers::isHueDownTouched( touchX, touchY );
+
+        hit.insideHueUp = M5StackDisplayTouchHelpers::isHueUpTouched( touchX, touchY );
+
+        hit.insideSaturationDown = M5StackDisplayTouchHelpers::isSaturationDownTouched( touchX, touchY );
+
+        hit.insideSaturationUp = M5StackDisplayTouchHelpers::isSaturationUpTouched( touchX, touchY );
+      }
     }
 
     if ( currentPage == SCREEN_EFFECT ) {
@@ -217,6 +249,21 @@
           touchState.touchTarget = M5STACK_TOUCH_TARGET_BACK;
 
           touchState.lastTouchInsideBack = true;
+        }
+        else if (hit.insideColorSlot1) {
+          touchState.touchTarget = M5STACK_TOUCH_TARGET_COLOR_SLOT_1;
+
+          touchState.lastTouchInsideColorSlot = true;
+        }
+        else if (hit.insideColorSlot2) {
+          touchState.touchTarget = M5STACK_TOUCH_TARGET_COLOR_SLOT_2;
+
+          touchState.lastTouchInsideColorSlot = true;
+        }
+        else if (hit.insideColorSlot3) {
+          touchState.touchTarget = M5STACK_TOUCH_TARGET_COLOR_SLOT_3;
+
+          touchState.lastTouchInsideColorSlot = true;
         }
         else if (hit.insideHueDown) {
           touchState.touchTarget = M5STACK_TOUCH_TARGET_HUE_DOWN;
@@ -525,6 +572,28 @@
       if ( hit.insideBack != touchState.backButtonVisualPressed ) {
         drawBackButton( hit.insideBack );
       }
+
+      return;
+    }
+
+    if (
+      touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_1 ||
+      touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_2 ||
+      touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_3
+    ) {
+      bool insideSelectedSlot = false;
+
+      if ( touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_1 ) {
+        insideSelectedSlot = hit.insideColorSlot1;
+      }
+      else if ( touchState.touchTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_2 ) {
+        insideSelectedSlot = hit.insideColorSlot2;
+      }
+      else {
+        insideSelectedSlot = hit.insideColorSlot3;
+      }
+
+      touchState.lastTouchInsideColorSlot = insideSelectedSlot;
 
       return;
     }
@@ -883,6 +952,7 @@
     TOUCH_RELEASE_ACTION_EFFECT_STEP,
     TOUCH_RELEASE_ACTION_EFFECT_DETAIL,
     TOUCH_RELEASE_ACTION_COLOR_OPEN,
+    TOUCH_RELEASE_ACTION_COLOR_SLOT_SELECT,
     TOUCH_RELEASE_ACTION_PRESET_OPEN,
     TOUCH_RELEASE_ACTION_BACK,
     TOUCH_RELEASE_ACTION_HUE_SHORT,
@@ -931,6 +1001,11 @@
 
       case M5STACK_TOUCH_TARGET_COLOR_OPEN:
         return touchState.lastTouchInsideColor ? TOUCH_RELEASE_ACTION_COLOR_OPEN : TOUCH_RELEASE_ACTION_NONE;
+
+      case M5STACK_TOUCH_TARGET_COLOR_SLOT_1:
+      case M5STACK_TOUCH_TARGET_COLOR_SLOT_2:
+      case M5STACK_TOUCH_TARGET_COLOR_SLOT_3:
+        return touchState.lastTouchInsideColorSlot ? TOUCH_RELEASE_ACTION_COLOR_SLOT_SELECT : TOUCH_RELEASE_ACTION_NONE;
 
       case M5STACK_TOUCH_TARGET_PRESET_OPEN:
         return touchState.lastTouchInsidePresetOpen ? TOUCH_RELEASE_ACTION_PRESET_OPEN : TOUCH_RELEASE_ACTION_NONE;
@@ -1212,6 +1287,21 @@
         clearColorEditState();
 
         drawColorScreen();
+        return;
+
+      case TOUCH_RELEASE_ACTION_COLOR_SLOT_SELECT:
+        clearColorEditState();
+
+        if ( releasedTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_1 ) {
+          selectColorSlot( 0 );
+        }
+        else if ( releasedTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_2 ) {
+          selectColorSlot( 1 );
+        }
+        else if ( releasedTarget == M5STACK_TOUCH_TARGET_COLOR_SLOT_3 ) {
+          selectColorSlot( 2 );
+        }
+
         return;
 
       case TOUCH_RELEASE_ACTION_PRESET_OPEN:

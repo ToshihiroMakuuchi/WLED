@@ -99,6 +99,20 @@ class CoreS3DisplayUsermod : public Usermod {
   uint32_t lastPrimaryColor = 0;
   bool lastPrimaryColorValid = false;
 
+  // COLOR page multi-slot editor state.
+  //
+  // selectedColorSlot is runtime-only UI state:
+  //   0 = C1, 1 = C2, 2 = C3
+  //
+  // WLED Effect metadata decides which slots are selectable.
+  uint8_t selectedColorSlot = 0;
+
+  uint32_t lastSelectedColor = 0;
+  bool lastSelectedColorValid = false;
+
+  uint32_t lastColorSlots[3] = { 0, 0, 0 };
+  bool lastColorSlotsValid = false;
+
   // =========================================================
   // Preset state
   // =========================================================
@@ -398,10 +412,16 @@ class CoreS3DisplayUsermod : public Usermod {
   // COLOR layout
   // =========================================================
 
-  static constexpr int16_t COLOR_PREVIEW_X = 92;
-  static constexpr int16_t COLOR_PREVIEW_Y = 68;
-  static constexpr int16_t COLOR_PREVIEW_W = 136;
-  static constexpr int16_t COLOR_PREVIEW_H = 36;
+  static constexpr int16_t COLOR_SLOT_1_X = 32;
+  static constexpr int16_t COLOR_SLOT_2_X = 124;
+  static constexpr int16_t COLOR_SLOT_3_X = 216;
+
+  static constexpr int16_t COLOR_SLOT_Y = 76;
+  static constexpr int16_t COLOR_SLOT_W = 72;
+  static constexpr int16_t COLOR_SLOT_H = 28;
+
+  static constexpr int16_t COLOR_SLOT_LABEL_Y = 68;
+  static constexpr int16_t COLOR_SELECTED_INFO_Y = 121;
 
   static constexpr int16_t HUE_BUTTON_Y = 151;
 
@@ -2031,12 +2051,151 @@ class CoreS3DisplayUsermod : public Usermod {
     return ( ((uint16_t)(r & 0xF8) << 8) | ((uint16_t)(g & 0xFC) << 3) | ((uint16_t)b >> 3) );
   }
 
+  struct M5StackEffectColorCapabilities {
+    bool color1 = true;
+    bool color2 = true;
+    bool color3 = true;
+  };
+
   uint32_t getPrimaryColor() {
     if ( strip.getSegmentsNum() > 0 ) {
       return strip.getMainSegment().colors[0];
     }
 
     return 0;
+  }
+
+  uint32_t getColorSlotValue( uint8_t colorSlot ) {
+    if ( strip.getSegmentsNum() == 0 || colorSlot > 2 ) {
+      return 0;
+    }
+
+    return strip.getMainSegment().colors[ colorSlot ];
+  }
+
+  uint32_t getSelectedColor() {
+    return getColorSlotValue( selectedColorSlot );
+  }
+
+  bool isEffectColorSlotEnabled(
+    const M5StackEffectColorCapabilities& capability,
+    uint8_t colorSlot
+  ) {
+    if ( colorSlot == 0 ) {
+      return capability.color1;
+    }
+
+    if ( colorSlot == 1 ) {
+      return capability.color2;
+    }
+
+    if ( colorSlot == 2 ) {
+      return capability.color3;
+    }
+
+    return false;
+  }
+
+  uint8_t getFirstEnabledColorSlot(
+    const M5StackEffectColorCapabilities& capability
+  ) {
+    if ( capability.color1 ) {
+      return 0;
+    }
+
+    if ( capability.color2 ) {
+      return 1;
+    }
+
+    if ( capability.color3 ) {
+      return 2;
+    }
+
+    return 0;
+  }
+
+  bool normalizeSelectedColorSlot( uint8_t effectMode ) {
+    const M5StackEffectColorCapabilities capability =
+      getEffectColorCapabilities( effectMode );
+
+    if ( !effectUsesAnyColor( capability ) ) {
+      selectedColorSlot = 0;
+      return false;
+    }
+
+    if ( !isEffectColorSlotEnabled( capability, selectedColorSlot ) ) {
+      selectedColorSlot = getFirstEnabledColorSlot( capability );
+    }
+
+    return true;
+  }
+
+  void cacheCurrentColorSlots() {
+    if ( strip.getSegmentsNum() == 0 ) {
+      lastColorSlotsValid = false;
+      return;
+    }
+
+    Segment& mainSegment = strip.getMainSegment();
+
+    for ( uint8_t colorSlot = 0; colorSlot < 3; colorSlot++ ) {
+      lastColorSlots[ colorSlot ] = mainSegment.colors[ colorSlot ];
+    }
+
+    lastColorSlotsValid = true;
+  }
+
+  bool currentColorSlotsChanged() {
+    if ( strip.getSegmentsNum() == 0 ) {
+      return lastColorSlotsValid;
+    }
+
+    if ( !lastColorSlotsValid ) {
+      return true;
+    }
+
+    Segment& mainSegment = strip.getMainSegment();
+
+    for ( uint8_t colorSlot = 0; colorSlot < 3; colorSlot++ ) {
+      if ( mainSegment.colors[ colorSlot ] != lastColorSlots[ colorSlot ] ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  void selectColorSlot( uint8_t colorSlot ) {
+    const uint8_t effectMode = getCurrentEffectMode();
+
+    const M5StackEffectColorCapabilities capability =
+      getEffectColorCapabilities( effectMode );
+
+    if ( !isEffectColorSlotEnabled( capability, colorSlot ) ) {
+      return;
+    }
+
+    selectedColorSlot = colorSlot;
+
+    hueEditValid = false;
+    saturationEditValid = false;
+
+    const uint32_t selectedColor = getSelectedColor();
+
+    syncLogicalColorFromRgb( selectedColor );
+
+    lastSelectedColor = selectedColor;
+    lastSelectedColorValid = true;
+
+    cacheCurrentColorSlots();
+
+    if ( currentPage == SCREEN_COLOR ) {
+      drawColorDetails( selectedColor );
+
+      drawHue( logicalHueValue, M5STACK_TOUCH_TARGET_NONE );
+
+      drawSaturation( logicalSaturationValue, M5STACK_TOUCH_TARGET_NONE );
+    }
   }
 
   uint8_t getCurrentEffectMode() {
@@ -2328,9 +2487,9 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   uint8_t getDisplayedHue() {
-    uint32_t currentColor = getPrimaryColor();
+    uint32_t currentColor = getSelectedColor();
 
-    if ( logicalColorHsvValid && lastPrimaryColorValid && currentColor == lastPrimaryColor ) {
+    if ( logicalColorHsvValid && lastSelectedColorValid && currentColor == lastSelectedColor ) {
       return logicalHueValue;
     }
 
@@ -2338,9 +2497,9 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   uint8_t getDisplayedSaturation() {
-    uint32_t currentColor = getPrimaryColor();
+    uint32_t currentColor = getSelectedColor();
 
-    if ( logicalColorHsvValid && lastPrimaryColorValid && currentColor == lastPrimaryColor ) {
+    if ( logicalColorHsvValid && lastSelectedColorValid && currentColor == lastSelectedColor ) {
       return logicalSaturationValue;
     }
 
@@ -2911,6 +3070,185 @@ class CoreS3DisplayUsermod : public Usermod {
     );
   }
 
+  bool getEffectColorSlotCustomLabel(
+    uint8_t effectMode,
+    uint8_t colorSlot,
+    char* label,
+    size_t labelSize
+  ) {
+    if ( label == nullptr || labelSize == 0 || colorSlot > 2 ) {
+      return false;
+    }
+
+    label[0] = '\0';
+
+    const char* sectionStart = nullptr;
+    const char* sectionEnd = nullptr;
+
+    if ( !getEffectMetadataSection( effectMode, 1, sectionStart, sectionEnd ) ) {
+      // Missing Colors metadata uses WLED's default Fx/Bg/Cs labels.
+      // Keep CoreS3's stable C1/C2/C3 naming without an extra comment.
+      return false;
+    }
+
+    const char* fieldStart = sectionStart;
+
+    for ( uint8_t fieldIndex = 0; fieldIndex < colorSlot; fieldIndex++ ) {
+      const char* comma = nullptr;
+
+      for ( const char* cursor = fieldStart; cursor < sectionEnd; cursor++ ) {
+        if ( *cursor == ',' ) {
+          comma = cursor;
+          break;
+        }
+      }
+
+      if ( comma == nullptr ) {
+        return false;
+      }
+
+      fieldStart = comma + 1;
+    }
+
+    const char* fieldEnd = sectionEnd;
+
+    for ( const char* cursor = fieldStart; cursor < sectionEnd; cursor++ ) {
+      if ( *cursor == ',' ) {
+        fieldEnd = cursor;
+        break;
+      }
+    }
+
+    if ( fieldStart >= fieldEnd ) {
+      return false;
+    }
+
+    // "!" means WLED's default Fx/Bg/Cs label. It is intentionally not
+    // repeated because CoreS3 keeps C1/C2/C3 as the primary slot names.
+    if ( fieldEnd - fieldStart == 1 && *fieldStart == '!' ) {
+      return false;
+    }
+
+    size_t copyLength = (size_t)( fieldEnd - fieldStart );
+
+    // Keep the supplemental line compact on the 320 px display.
+    if ( copyLength > 24 ) {
+      copyLength = 24;
+    }
+
+    if ( copyLength >= labelSize ) {
+      copyLength = labelSize - 1;
+    }
+
+    memcpy( label, fieldStart, copyLength );
+    label[ copyLength ] = '\0';
+
+    return label[0] != '\0';
+  }
+
+  M5StackEffectColorCapabilities getEffectColorCapabilities( uint8_t effectMode ) {
+    M5StackEffectColorCapabilities capability;
+
+    const char* sectionStart = nullptr;
+    const char* sectionEnd = nullptr;
+
+    if ( !getEffectMetadataSection( effectMode, 1, sectionStart, sectionEnd ) ) {
+      // WLED metadata fallback: missing Colors section means all three
+      // color slots (Fx/Bg/Cs) are available.
+      return capability;
+    }
+
+    capability.color1 = false;
+    capability.color2 = false;
+    capability.color3 = false;
+
+    if ( sectionStart >= sectionEnd ) {
+      // Explicit empty Colors section means the Effect uses no color slots.
+      return capability;
+    }
+
+    const char* fieldStart = sectionStart;
+
+    for ( uint8_t colorIndex = 0; colorIndex < 3; colorIndex++ ) {
+      const char* fieldEnd = sectionEnd;
+
+      for ( const char* cursor = fieldStart; cursor < sectionEnd; cursor++ ) {
+        if ( *cursor == ',' ) {
+          fieldEnd = cursor;
+          break;
+        }
+      }
+
+      const bool enabled = fieldStart < fieldEnd;
+
+      if ( colorIndex == 0 ) {
+        capability.color1 = enabled;
+      }
+      else if ( colorIndex == 1 ) {
+        capability.color2 = enabled;
+      }
+      else {
+        capability.color3 = enabled;
+      }
+
+      if ( fieldEnd >= sectionEnd ) {
+        break;
+      }
+
+      fieldStart = fieldEnd + 1;
+    }
+
+    return capability;
+  }
+
+  bool effectUsesPrimaryColor( uint8_t effectMode ) {
+    return getEffectColorCapabilities( effectMode ).color1;
+  }
+
+  bool effectUsesAnyColor( const M5StackEffectColorCapabilities& capability ) {
+    return capability.color1 || capability.color2 || capability.color3;
+  }
+
+  void getEffectColorCapabilityText(
+    uint8_t effectMode,
+    char* text,
+    size_t textSize
+  ) {
+    if ( text == nullptr || textSize == 0 ) {
+      return;
+    }
+
+    const M5StackEffectColorCapabilities capability =
+      getEffectColorCapabilities( effectMode );
+
+    const char* capabilityText = "NONE";
+
+    if ( capability.color1 && capability.color2 && capability.color3 ) {
+      capabilityText = "C1/C2/C3";
+    }
+    else if ( capability.color1 && capability.color2 ) {
+      capabilityText = "C1/C2";
+    }
+    else if ( capability.color1 && capability.color3 ) {
+      capabilityText = "C1/C3";
+    }
+    else if ( capability.color2 && capability.color3 ) {
+      capabilityText = "C2/C3";
+    }
+    else if ( capability.color1 ) {
+      capabilityText = "C1";
+    }
+    else if ( capability.color2 ) {
+      capabilityText = "C2";
+    }
+    else if ( capability.color3 ) {
+      capabilityText = "C3";
+    }
+
+    strncpy( text, capabilityText, textSize - 1 );
+    text[ textSize - 1 ] = '\0';
+  }
+
   bool isEffectPaletteControlVisible( uint8_t effectMode ) {
     const char* sectionStart = nullptr;
     const char* sectionEnd = nullptr;
@@ -3016,9 +3354,22 @@ class CoreS3DisplayUsermod : public Usermod {
   void drawColorButton( uint32_t color, bool pressed ) {
     const uint16_t buttonColor = TFT_CYAN;
 
+    const uint8_t effectMode = getCurrentEffectMode();
+
+    const M5StackEffectColorCapabilities colorCapability =
+      getEffectColorCapabilities( effectMode );
+
+    const bool primaryColorUsed = colorCapability.color1;
+
+    const bool anyColorUsed = effectUsesAnyColor( colorCapability );
+
     uint16_t backgroundColor = pressed ? buttonColor : TFT_BLACK;
 
-    uint16_t textColor = pressed ? TFT_BLACK : TFT_WHITE;
+    uint16_t titleColor = pressed ? TFT_BLACK : TFT_WHITE;
+
+    uint16_t capabilityColor =
+      pressed ? TFT_BLACK :
+      ( primaryColorUsed ? TFT_CYAN : ( anyColorUsed ? TFT_YELLOW : TFT_DARKGREY ) );
 
     uint16_t previewColor = rgbTo565( R(color), G(color), B(color) );
 
@@ -3036,17 +3387,42 @@ class CoreS3DisplayUsermod : public Usermod {
 
     int16_t swatchY = MAIN_BOTTOM_BUTTON_Y + ( ( MAIN_BOTTOM_BUTTON_H - SWATCH_H ) / 2 );
 
-    display.fillRect( SWATCH_X, swatchY, SWATCH_W, SWATCH_H, previewColor );
+    if ( primaryColorUsed ) {
+      display.fillRect( SWATCH_X, swatchY, SWATCH_W, SWATCH_H, previewColor );
 
-    display.drawRect( SWATCH_X, swatchY, SWATCH_W, SWATCH_H, TFT_WHITE );
+      display.drawRect( SWATCH_X, swatchY, SWATCH_W, SWATCH_H, TFT_WHITE );
+    }
+    else {
+      display.fillRect( SWATCH_X, swatchY, SWATCH_W, SWATCH_H, TFT_BLACK );
+
+      display.drawRect( SWATCH_X, swatchY, SWATCH_W, SWATCH_H, TFT_DARKGREY );
+
+      display.drawLine( SWATCH_X + 4, swatchY + 4, SWATCH_X + SWATCH_W - 5, swatchY + SWATCH_H - 5, TFT_DARKGREY );
+
+      display.drawLine( SWATCH_X + SWATCH_W - 5, swatchY + 4, SWATCH_X + 4, swatchY + SWATCH_H - 5, TFT_DARKGREY );
+    }
+
+    char capabilityText[16];
+
+    getEffectColorCapabilityText(
+      effectMode,
+      capabilityText,
+      sizeof(capabilityText)
+    );
 
     display.setTextDatum( textdatum_t::middle_center );
 
-    display.setTextColor( textColor, backgroundColor );
+    display.setTextColor( titleColor, backgroundColor );
 
     display.setTextSize( 2 );
 
-    display.drawString( "COLOR", 105, MAIN_BOTTOM_BUTTON_Y + (MAIN_BOTTOM_BUTTON_H / 2) );
+    display.drawString( "COLOR", 105, MAIN_BOTTOM_BUTTON_Y + 12 );
+
+    display.setTextColor( capabilityColor, backgroundColor );
+
+    display.setTextSize( 1 );
+
+    display.drawString( capabilityText, 105, MAIN_BOTTOM_BUTTON_Y + 29 );
 
     touchState.colorButtonVisualPressed = pressed;
   }
@@ -3106,17 +3482,130 @@ class CoreS3DisplayUsermod : public Usermod {
   void drawColorDetails( uint32_t color ) {
     display.fillRect( 0, 60, screenWidth, 78, TFT_BLACK );
 
-    uint16_t previewColor = rgbTo565( R(color), G(color), B(color) );
+    const M5StackEffectColorCapabilities capability =
+      getEffectColorCapabilities( getCurrentEffectMode() );
 
-    display.fillRect( COLOR_PREVIEW_X, COLOR_PREVIEW_Y, COLOR_PREVIEW_W, COLOR_PREVIEW_H, previewColor );
+    const int16_t slotX[3] = {
+      COLOR_SLOT_1_X,
+      COLOR_SLOT_2_X,
+      COLOR_SLOT_3_X
+    };
 
-    display.drawRect( COLOR_PREVIEW_X, COLOR_PREVIEW_Y, COLOR_PREVIEW_W, COLOR_PREVIEW_H, TFT_WHITE );
+    Segment& mainSegment = strip.getMainSegment();
 
-    display.drawRect( COLOR_PREVIEW_X + 1, COLOR_PREVIEW_Y + 1, COLOR_PREVIEW_W - 2, COLOR_PREVIEW_H - 2, TFT_DARKGREY );
+    for ( uint8_t colorSlot = 0; colorSlot < 3; colorSlot++ ) {
+      const bool enabled =
+        isEffectColorSlotEnabled( capability, colorSlot );
 
-    char hexText[16];
+      const bool selected =
+        enabled && colorSlot == selectedColorSlot;
 
-    snprintf( hexText, sizeof(hexText), "#%02X%02X%02X", R(color), G(color), B(color) );
+      char slotLabel[4];
+
+      snprintf( slotLabel, sizeof(slotLabel), "C%u", colorSlot + 1 );
+
+      display.setTextDatum( textdatum_t::middle_center );
+
+      display.setTextColor(
+        selected ? TFT_CYAN : ( enabled ? TFT_WHITE : TFT_DARKGREY ),
+        TFT_BLACK
+      );
+
+      display.setTextSize( 1 );
+
+      display.drawString(
+        slotLabel,
+        slotX[ colorSlot ] + ( COLOR_SLOT_W / 2 ),
+        COLOR_SLOT_LABEL_Y
+      );
+
+      if ( enabled ) {
+        const uint32_t slotColor = mainSegment.colors[ colorSlot ];
+
+        const uint16_t previewColor =
+          rgbTo565( R(slotColor), G(slotColor), B(slotColor) );
+
+        display.fillRect(
+          slotX[ colorSlot ],
+          COLOR_SLOT_Y,
+          COLOR_SLOT_W,
+          COLOR_SLOT_H,
+          previewColor
+        );
+
+        display.drawRect(
+          slotX[ colorSlot ],
+          COLOR_SLOT_Y,
+          COLOR_SLOT_W,
+          COLOR_SLOT_H,
+          selected ? TFT_CYAN : TFT_DARKGREY
+        );
+
+        if ( selected ) {
+          display.drawRect(
+            slotX[ colorSlot ] + 1,
+            COLOR_SLOT_Y + 1,
+            COLOR_SLOT_W - 2,
+            COLOR_SLOT_H - 2,
+            TFT_WHITE
+          );
+        }
+      }
+      else {
+        display.fillRect(
+          slotX[ colorSlot ],
+          COLOR_SLOT_Y,
+          COLOR_SLOT_W,
+          COLOR_SLOT_H,
+          TFT_BLACK
+        );
+
+        display.drawRect(
+          slotX[ colorSlot ],
+          COLOR_SLOT_Y,
+          COLOR_SLOT_W,
+          COLOR_SLOT_H,
+          TFT_DARKGREY
+        );
+
+        display.drawLine(
+          slotX[ colorSlot ] + 8,
+          COLOR_SLOT_Y + 5,
+          slotX[ colorSlot ] + COLOR_SLOT_W - 9,
+          COLOR_SLOT_Y + COLOR_SLOT_H - 6,
+          TFT_DARKGREY
+        );
+
+        display.drawLine(
+          slotX[ colorSlot ] + COLOR_SLOT_W - 9,
+          COLOR_SLOT_Y + 5,
+          slotX[ colorSlot ] + 8,
+          COLOR_SLOT_Y + COLOR_SLOT_H - 6,
+          TFT_DARKGREY
+        );
+      }
+    }
+
+    char selectedText[24];
+    char customColorLabel[32];
+
+    const bool hasCustomColorLabel =
+      getEffectColorSlotCustomLabel(
+        getCurrentEffectMode(),
+        selectedColorSlot,
+        customColorLabel,
+        sizeof(customColorLabel)
+      );
+
+    snprintf(
+      selectedText,
+      sizeof(selectedText),
+      "C%u #%02X%02X%02X",
+      selectedColorSlot + 1,
+      R(color),
+      G(color),
+      B(color)
+    );
 
     display.setTextDatum( textdatum_t::middle_center );
 
@@ -3124,7 +3613,32 @@ class CoreS3DisplayUsermod : public Usermod {
 
     display.setTextSize( 2 );
 
-    display.drawString( hexText, screenWidth / 2, 121 );
+    display.drawString(
+      selectedText,
+      screenWidth / 2,
+      hasCustomColorLabel ? 116 : COLOR_SELECTED_INFO_Y
+    );
+
+    if ( hasCustomColorLabel ) {
+      char roleText[40];
+
+      snprintf(
+        roleText,
+        sizeof(roleText),
+        "Role: %s",
+        customColorLabel
+      );
+
+      display.setTextColor( TFT_CYAN, TFT_BLACK );
+
+      display.setTextSize( 1 );
+
+      display.drawString(
+        roleText,
+        screenWidth / 2,
+        130
+      );
+    }
 
     display.drawFastHLine( 32, 136, screenWidth - 64, TFT_DARKGREY );
   }
@@ -3524,7 +4038,35 @@ class CoreS3DisplayUsermod : public Usermod {
 
     resetTouchGesture();
 
-    drawStandardPageHeader( "COLOR", "Primary Color" );
+    const uint8_t effectMode = getCurrentEffectMode();
+
+    const M5StackEffectColorCapabilities colorCapability =
+      getEffectColorCapabilities( effectMode );
+
+    char capabilityText[16];
+    char subtitleText[32];
+
+    getEffectColorCapabilityText(
+      effectMode,
+      capabilityText,
+      sizeof(capabilityText)
+    );
+
+    snprintf(
+      subtitleText,
+      sizeof(subtitleText),
+      "Effect uses %s",
+      capabilityText
+    );
+
+    const bool anyColorUsed =
+      effectUsesAnyColor( colorCapability );
+
+    drawStandardPageHeader(
+      "COLOR",
+      subtitleText,
+      anyColorUsed ? TFT_WHITE : TFT_YELLOW
+    );
 
     drawPowerButton( bri > 0, false );
 
@@ -3532,15 +4074,53 @@ class CoreS3DisplayUsermod : public Usermod {
 
     uint32_t primaryColor = getPrimaryColor();
 
-    syncLogicalColorFromRgb( primaryColor );
+    if ( !anyColorUsed ) {
+      selectedColorSlot = 0;
 
-    drawColorDetails( primaryColor );
+      lastSelectedColorValid = false;
 
-    drawHue( logicalHueValue, M5STACK_TOUCH_TARGET_NONE );
+      display.fillRect( 0, 60, screenWidth, 180, TFT_BLACK );
 
-    drawSaturation( logicalSaturationValue, M5STACK_TOUCH_TARGET_NONE );
+      display.setTextDatum( textdatum_t::middle_center );
+
+      display.setTextColor( TFT_YELLOW, TFT_BLACK );
+
+      display.setTextSize( 2 );
+
+      display.drawString( "COLOR NOT USED", screenWidth / 2, 104 );
+
+      display.setTextColor( TFT_WHITE, TFT_BLACK );
+
+      display.setTextSize( 1 );
+
+      display.drawString(
+        "This effect does not use color slots.",
+        screenWidth / 2,
+        139
+      );
+    }
+    else {
+      normalizeSelectedColorSlot( effectMode );
+
+      const uint32_t selectedColor = getSelectedColor();
+
+      syncLogicalColorFromRgb( selectedColor );
+
+      lastSelectedColor = selectedColor;
+      lastSelectedColorValid = true;
+
+      drawColorDetails( selectedColor );
+
+      drawHue( logicalHueValue, M5STACK_TOUCH_TARGET_NONE );
+
+      drawSaturation( logicalSaturationValue, M5STACK_TOUCH_TARGET_NONE );
+    }
+
+    cacheCurrentColorSlots();
 
     lastLedState = bri > 0 ? 1 : 0;
+
+    lastEffectMode = effectMode;
 
     lastPrimaryColor = primaryColor;
 
@@ -4450,17 +5030,27 @@ class CoreS3DisplayUsermod : public Usermod {
 
 
   void beginHueEdit() {
-    uint32_t currentColor = getPrimaryColor();
+    uint32_t currentColor = getSelectedColor();
 
-    if ( !logicalColorHsvValid || !lastPrimaryColorValid || currentColor != lastPrimaryColor ) {
+    if ( !logicalColorHsvValid || !lastSelectedColorValid || currentColor != lastSelectedColor ) {
       syncLogicalColorFromRgb( currentColor );
 
-      lastPrimaryColor = currentColor;
+      lastSelectedColor = currentColor;
 
-      lastPrimaryColorValid = true;
+      lastSelectedColorValid = true;
     }
 
     hueEditHsv = logicalColorHsv;
+
+    // A true black WLED color converts to HSV with V=0. CoreS3 intentionally
+    // has no per-color Value control, so changing Hue alone could never leave
+    // black. Once the user starts editing a black slot, bootstrap the edit
+    // state to a visible fully-saturated color. The stored WLED color is not
+    // changed until the first actual Hue step is applied.
+    if ( currentColor == 0 ) {
+      hueEditHsv.s = 255;
+      hueEditHsv.v = 255;
+    }
 
     hueEditValue = logicalHueValue;
 
@@ -4470,17 +5060,24 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void beginSaturationEdit() {
-    uint32_t currentColor = getPrimaryColor();
+    uint32_t currentColor = getSelectedColor();
 
-    if ( !logicalColorHsvValid || !lastPrimaryColorValid || currentColor != lastPrimaryColor ) {
+    if ( !logicalColorHsvValid || !lastSelectedColorValid || currentColor != lastSelectedColor ) {
       syncLogicalColorFromRgb( currentColor );
 
-      lastPrimaryColor = currentColor;
+      lastSelectedColor = currentColor;
 
-      lastPrimaryColorValid = true;
+      lastSelectedColorValid = true;
     }
 
     saturationEditHsv = logicalColorHsv;
+
+    // Saturation also cannot make a true black color visible while HSV V is
+    // zero. Bootstrap only the edit Value; the requested Saturation remains
+    // under direct user control.
+    if ( currentColor == 0 ) {
+      saturationEditHsv.v = 255;
+    }
 
     saturationEditValue = logicalSaturationValue;
 
@@ -4507,6 +5104,8 @@ class CoreS3DisplayUsermod : public Usermod {
     touchState.lastTouchInsidePresetOpen = false;
 
     touchState.lastTouchInsideBack = false;
+
+    touchState.lastTouchInsideColorSlot = false;
 
     touchState.lastTouchInsideHue = false;
 
@@ -4727,6 +5326,8 @@ class CoreS3DisplayUsermod : public Usermod {
 
     if ( currentPage == SCREEN_MAIN ) {
       drawEffect( mainSegment.mode, touchState.touchTarget );
+
+      drawColorButton( getPrimaryColor(), false );
     }
 
     lastEffectMode = mainSegment.mode;
@@ -5045,8 +5646,8 @@ class CoreS3DisplayUsermod : public Usermod {
 
     Segment& mainSegment = strip.getMainSegment();
 
-    if ( newColor != mainSegment.colors[0] ) {
-      mainSegment.setColor( 0, newColor );
+    if ( newColor != mainSegment.colors[ selectedColorSlot ] ) {
+      mainSegment.setColor( selectedColorSlot, newColor );
 
       stateUpdated( CALL_MODE_BUTTON );
     }
@@ -5059,9 +5660,15 @@ class CoreS3DisplayUsermod : public Usermod {
       drawSaturation( logicalSaturationValue, M5STACK_TOUCH_TARGET_NONE );
     }
 
-    lastPrimaryColor = newColor;
+    lastSelectedColor = newColor;
+    lastSelectedColorValid = true;
 
-    lastPrimaryColorValid = true;
+    if ( selectedColorSlot == 0 ) {
+      lastPrimaryColor = newColor;
+      lastPrimaryColorValid = true;
+    }
+
+    cacheCurrentColorSlots();
 
     lastHueValue = logicalHueValue;
 
@@ -5147,8 +5754,8 @@ class CoreS3DisplayUsermod : public Usermod {
 
     Segment& mainSegment = strip.getMainSegment();
 
-    if ( newColor != mainSegment.colors[0] ) {
-      mainSegment.setColor( 0, newColor );
+    if ( newColor != mainSegment.colors[ selectedColorSlot ] ) {
+      mainSegment.setColor( selectedColorSlot, newColor );
 
       stateUpdated( CALL_MODE_BUTTON );
     }
@@ -5161,9 +5768,15 @@ class CoreS3DisplayUsermod : public Usermod {
       drawSaturation( logicalSaturationValue, touchState.touchTarget );
     }
 
-    lastPrimaryColor = newColor;
+    lastSelectedColor = newColor;
+    lastSelectedColorValid = true;
 
-    lastPrimaryColorValid = true;
+    if ( selectedColorSlot == 0 ) {
+      lastPrimaryColor = newColor;
+      lastPrimaryColorValid = true;
+    }
+
+    cacheCurrentColorSlots();
 
     lastHueValue = logicalHueValue;
 
@@ -5232,6 +5845,8 @@ class CoreS3DisplayUsermod : public Usermod {
     if ( !effectTouchActive && (int)effectMode != lastEffectMode ) {
       drawEffect( effectMode, M5STACK_TOUCH_TARGET_NONE );
 
+      drawColorButton( primaryColor, false );
+
       lastEffectMode = effectMode;
 
       lastSpeedValue = currentSpeed;
@@ -5260,21 +5875,52 @@ class CoreS3DisplayUsermod : public Usermod {
     return false;
   }
 
-  bool updateColorPageState( uint32_t primaryColor, bool primaryColorChanged, bool colorControlTouchActive ) {
-    if ( primaryColorChanged && !colorControlTouchActive ) {
-      syncLogicalColorFromRgb( primaryColor );
+  bool updateColorPageState(
+    uint8_t effectMode,
+    uint32_t primaryColor,
+    bool primaryColorChanged,
+    bool colorControlTouchActive
+  ) {
+    if ( touchState.touchTarget == M5STACK_TOUCH_TARGET_NONE && (int)effectMode != lastEffectMode ) {
+      drawColorScreen();
 
-      drawColorDetails( primaryColor );
+      return true;
+    }
+
+    const M5StackEffectColorCapabilities capability =
+      getEffectColorCapabilities( effectMode );
+
+    if ( !effectUsesAnyColor( capability ) ) {
+      if ( currentColorSlotsChanged() ) {
+        cacheCurrentColorSlots();
+      }
+
+      return primaryColorChanged;
+    }
+
+    normalizeSelectedColorSlot( effectMode );
+
+    if ( currentColorSlotsChanged() && !colorControlTouchActive ) {
+      const uint32_t selectedColor = getSelectedColor();
+
+      syncLogicalColorFromRgb( selectedColor );
+
+      lastSelectedColor = selectedColor;
+      lastSelectedColorValid = true;
+
+      drawColorDetails( selectedColor );
 
       drawHue( logicalHueValue, M5STACK_TOUCH_TARGET_NONE );
 
       drawSaturation( logicalSaturationValue, M5STACK_TOUCH_TARGET_NONE );
 
+      cacheCurrentColorSlots();
+
       lastHueValue = logicalHueValue;
 
       lastSaturationValue = logicalSaturationValue;
 
-      return true;
+      return primaryColorChanged;
     }
 
     return false;
@@ -5636,7 +6282,7 @@ class CoreS3DisplayUsermod : public Usermod {
       primaryColorChangeHandled = updateMainPageState( effectMode, currentSpeed, currentIntensity, currentPalette, primaryColor, primaryColorChanged );
     }
     else if ( currentPage == SCREEN_COLOR ) {
-      primaryColorChangeHandled = updateColorPageState( primaryColor, primaryColorChanged, colorControlTouchActive );
+      primaryColorChangeHandled = updateColorPageState( effectMode, primaryColor, primaryColorChanged, colorControlTouchActive );
     }
     else if ( currentPage == SCREEN_EFFECT ) {
       if ( updateEffectPageState( effectMode, currentSpeed, currentIntensity, currentPalette ) ) {

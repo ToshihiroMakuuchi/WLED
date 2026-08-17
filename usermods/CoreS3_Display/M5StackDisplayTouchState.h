@@ -22,6 +22,8 @@ enum M5StackTouchTarget : uint8_t {
 
   M5STACK_TOUCH_TARGET_BACK,
 
+  M5STACK_TOUCH_TARGET_COLOR_SLOT_1, M5STACK_TOUCH_TARGET_COLOR_SLOT_2, M5STACK_TOUCH_TARGET_COLOR_SLOT_3,
+
   M5STACK_TOUCH_TARGET_HUE_DOWN, M5STACK_TOUCH_TARGET_HUE_UP,
 
   M5STACK_TOUCH_TARGET_SATURATION_DOWN, M5STACK_TOUCH_TARGET_SATURATION_UP,
@@ -53,6 +55,9 @@ struct M5StackTouchHitState {
   bool insideColor = false;
   bool insidePresetOpen = false;
   bool insideBack = false;
+  bool insideColorSlot1 = false;
+  bool insideColorSlot2 = false;
+  bool insideColorSlot3 = false;
   bool insideHueDown = false;
   bool insideHueUp = false;
   bool insideSaturationDown = false;
@@ -106,6 +111,7 @@ struct M5StackTouchRuntimeState {
   bool lastTouchInsideColor = false;
   bool lastTouchInsidePresetOpen = false;
   bool lastTouchInsideBack = false;
+  bool lastTouchInsideColorSlot = false;
   bool lastTouchInsideHue = false;
   bool lastTouchInsideSaturation = false;
   bool lastTouchInsideSpeed = false;
