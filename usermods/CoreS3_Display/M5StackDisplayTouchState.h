@@ -176,4 +176,10 @@ struct M5StackTouchRuntimeState {
   bool presetBootOpenButtonVisualPressed = false;
   bool presetBootNavButtonVisualPressed = false;
   bool presetBootHoldButtonVisualPressed = false;
+
+  // VS Code IntelliSense has occasionally failed to expose the final member
+  // of this large runtime-state struct even though the ESP32 compiler parses
+  // it correctly. Keep an unused tail guard so all real runtime members sit
+  // before the parser-sensitive final position.
+  bool intellisenseTailGuard = false;
 };
