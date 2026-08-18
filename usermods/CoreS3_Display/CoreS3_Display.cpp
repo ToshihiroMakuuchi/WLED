@@ -51,6 +51,13 @@
 
 static const char CORES3_DISPLAY_CONFIG_NAME[] PROGMEM = "CoreS3_Display";
 
+// CoreS3_Power publishes read-only runtime health state.
+// Display consumes these signals only for user-facing warning UX; it does
+// not own or modify the power-control implementation.
+extern "C" bool coreS3PowerInitializationComplete();
+extern "C" bool coreS3PowerExternal5VReady();
+extern "C" bool coreS3PowerSafeShutdownMonitorReady();
+
 class CoreS3DisplayUsermod : public Usermod {
   private:
 
@@ -111,6 +118,38 @@ class CoreS3DisplayUsermod : public Usermod {
   unsigned long lastBatteryStatusRead = 0;
 
   static constexpr unsigned long BATTERY_STATUS_UPDATE_MS = 10000;
+
+  // =========================================================
+  // Runtime Health / Error UX
+  // =========================================================
+  //
+  // Normal operation stays visually unchanged. Only actionable failures are
+  // surfaced, once per boot, and only while MAIN is idle. Warnings are
+  // temporary so the controller remains usable even when a subsystem fails.
+  // =========================================================
+
+  enum RuntimeHealthWarning : uint8_t {
+    RUNTIME_HEALTH_WARNING_NONE = 0,
+    RUNTIME_HEALTH_WARNING_LED_POWER,
+    RUNTIME_HEALTH_WARNING_POWER_SAFETY,
+    RUNTIME_HEALTH_WARNING_TOUCH
+  };
+
+  RuntimeHealthWarning activeRuntimeHealthWarning =
+    RUNTIME_HEALTH_WARNING_NONE;
+
+  uint8_t runtimeHealthWarningsShownMask = 0;
+  unsigned long runtimeHealthStartMs = 0;
+  unsigned long runtimeHealthWarningStartMs = 0;
+
+  static constexpr uint8_t RUNTIME_HEALTH_SHOWN_LED_POWER = 0x01;
+  static constexpr uint8_t RUNTIME_HEALTH_SHOWN_POWER_SAFETY = 0x02;
+  static constexpr uint8_t RUNTIME_HEALTH_SHOWN_TOUCH = 0x04;
+
+  // Give the deferred M5GFX I2C1 power-key monitor time to ARM before
+  // declaring Safe Shutdown unavailable.
+  static constexpr unsigned long POWER_SAFETY_WARNING_GRACE_MS = 5000;
+  static constexpr unsigned long RUNTIME_HEALTH_WARNING_HOLD_MS = 2200;
 
   // =========================================================
   // Cached WLED state
@@ -1849,6 +1888,164 @@ class CoreS3DisplayUsermod : public Usermod {
     // retries STA. During an explicit recovery session, reopen the emergency
     // AP so the user retains a path back into the Web UI.
     startWiFiRecoveryAP();
+  }
+
+  // =========================================================
+  // Runtime Health / Error UX
+  // =========================================================
+
+  uint8_t getRuntimeHealthWarningMask( RuntimeHealthWarning warning ) const {
+    switch ( warning ) {
+      case RUNTIME_HEALTH_WARNING_LED_POWER:
+        return RUNTIME_HEALTH_SHOWN_LED_POWER;
+
+      case RUNTIME_HEALTH_WARNING_POWER_SAFETY:
+        return RUNTIME_HEALTH_SHOWN_POWER_SAFETY;
+
+      case RUNTIME_HEALTH_WARNING_TOUCH:
+        return RUNTIME_HEALTH_SHOWN_TOUCH;
+
+      case RUNTIME_HEALTH_WARNING_NONE:
+      default:
+        return 0;
+    }
+  }
+
+  RuntimeHealthWarning getNextRuntimeHealthWarning( unsigned long now ) {
+    const bool graceExpired =
+      now - runtimeHealthStartMs >= POWER_SAFETY_WARNING_GRACE_MS;
+
+    if (
+      !( runtimeHealthWarningsShownMask & RUNTIME_HEALTH_SHOWN_LED_POWER ) &&
+      (
+        ( coreS3PowerInitializationComplete() && !coreS3PowerExternal5VReady() ) ||
+        ( graceExpired && !coreS3PowerInitializationComplete() )
+      )
+    ) {
+      return RUNTIME_HEALTH_WARNING_LED_POWER;
+    }
+
+    if (
+      !( runtimeHealthWarningsShownMask & RUNTIME_HEALTH_SHOWN_POWER_SAFETY ) &&
+      graceExpired &&
+      !coreS3PowerSafeShutdownMonitorReady()
+    ) {
+      return RUNTIME_HEALTH_WARNING_POWER_SAFETY;
+    }
+
+    if (
+      !( runtimeHealthWarningsShownMask & RUNTIME_HEALTH_SHOWN_TOUCH ) &&
+      !touchReady
+    ) {
+      return RUNTIME_HEALTH_WARNING_TOUCH;
+    }
+
+    return RUNTIME_HEALTH_WARNING_NONE;
+  }
+
+  void drawRuntimeHealthWarning( RuntimeHealthWarning warning ) {
+    display.fillScreen( TFT_BLACK );
+
+    display.setTextDatum( textdatum_t::middle_center );
+
+    if ( warning == RUNTIME_HEALTH_WARNING_LED_POWER ) {
+      display.setTextColor( TFT_RED, TFT_BLACK );
+      display.setTextSize( 2 );
+      display.drawString( "LED POWER ERROR", screenWidth / 2, 82 );
+
+      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextSize( 1 );
+      display.drawString( "External 5V unavailable", screenWidth / 2, 122 );
+
+      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.drawString( "Check power path and reboot", screenWidth / 2, 151 );
+
+      return;
+    }
+
+    if ( warning == RUNTIME_HEALTH_WARNING_POWER_SAFETY ) {
+      display.setTextColor( TFT_YELLOW, TFT_BLACK );
+      display.setTextSize( 2 );
+      display.drawString( "POWER SAFETY WARNING", screenWidth / 2, 82 );
+
+      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextSize( 1 );
+      display.drawString( "Safe shutdown unavailable", screenWidth / 2, 122 );
+
+      display.setTextColor( TFT_DARKGREY, TFT_BLACK );
+      display.drawString( "Use WLED power control", screenWidth / 2, 151 );
+
+      return;
+    }
+
+    if ( warning == RUNTIME_HEALTH_WARNING_TOUCH ) {
+      display.setTextColor( TFT_RED, TFT_BLACK );
+      display.setTextSize( 2 );
+      display.drawString( "TOUCH ERROR", screenWidth / 2, 82 );
+
+      display.setTextColor( TFT_WHITE, TFT_BLACK );
+      display.setTextSize( 1 );
+      display.drawString( "Touch input unavailable", screenWidth / 2, 122 );
+
+      display.setTextColor( TFT_CYAN, TFT_BLACK );
+      display.drawString( "Use WLED Web UI", screenWidth / 2, 151 );
+    }
+  }
+
+  bool serviceRuntimeHealthWarnings() {
+    if (
+      startupState != STARTUP_DONE ||
+      displayPowerState != DISPLAY_POWER_ACTIVE ||
+      currentPage != SCREEN_MAIN
+    ) {
+      return false;
+    }
+
+    const unsigned long now = millis();
+
+    if ( activeRuntimeHealthWarning != RUNTIME_HEALTH_WARNING_NONE ) {
+      if ( now - runtimeHealthWarningStartMs < RUNTIME_HEALTH_WARNING_HOLD_MS ) {
+        return true;
+      }
+
+      runtimeHealthWarningsShownMask |=
+        getRuntimeHealthWarningMask( activeRuntimeHealthWarning );
+
+      activeRuntimeHealthWarning = RUNTIME_HEALTH_WARNING_NONE;
+      runtimeHealthWarningStartMs = 0;
+
+      drawMainScreen( getCurrentNetworkDisplayText() );
+
+      lastNetworkAccessMode = getNetworkAccessMode();
+      lastNetworkDisplayText = getCurrentNetworkDisplayText();
+      lastUserActivityMs = now;
+
+      return true;
+    }
+
+    if ( touchState.touchTarget != M5STACK_TOUCH_TARGET_NONE ) {
+      return false;
+    }
+
+    const RuntimeHealthWarning nextWarning =
+      getNextRuntimeHealthWarning( now );
+
+    if ( nextWarning == RUNTIME_HEALTH_WARNING_NONE ) {
+      return false;
+    }
+
+    activeRuntimeHealthWarning = nextWarning;
+    runtimeHealthWarningStartMs = now;
+
+    resetTouchGesture();
+    drawRuntimeHealthWarning( nextWarning );
+
+    Serial.printf(
+      "[CoreS3_Display] Runtime health warning: %u\n",
+      (unsigned)nextWarning
+    );
+
+    return true;
   }
 
   // =========================================================
@@ -6701,6 +6898,8 @@ class CoreS3DisplayUsermod : public Usermod {
 
     startupLastDotsUpdate = startupStateStart;
 
+    runtimeHealthStartMs = startupStateStart;
+
     displayPowerState = DISPLAY_POWER_ACTIVE;
 
     lastUserActivityMs = startupStateStart;
@@ -6750,6 +6949,10 @@ class CoreS3DisplayUsermod : public Usermod {
     servicePresetDeleteOperation();
 
     servicePresetBootOperation();
+
+    if ( serviceRuntimeHealthWarnings() ) {
+      return;
+    }
 
     // Follow a Preset explicitly selected from the WLED Web UI.
     // A transition to currentPreset == 0 intentionally does not erase the

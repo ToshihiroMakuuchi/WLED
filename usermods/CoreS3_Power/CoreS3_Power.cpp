@@ -3,6 +3,31 @@
 #include <M5GFX.h>
 #include <driver/i2c.h>
 
+// ============================================================
+// Read-only CoreS3 power health bridge
+//
+// CoreS3_Display consumes these states for user-facing warning UX only.
+// Power ownership and all register writes remain inside this usermod.
+// ============================================================
+static volatile bool coreS3PowerInitializationCompleteState = false;
+static volatile bool coreS3PowerExternal5VReadyState = false;
+static volatile bool coreS3PowerSafeShutdownMonitorReadyState = false;
+
+extern "C" bool coreS3PowerInitializationComplete()
+{
+  return coreS3PowerInitializationCompleteState;
+}
+
+extern "C" bool coreS3PowerExternal5VReady()
+{
+  return coreS3PowerExternal5VReadyState;
+}
+
+extern "C" bool coreS3PowerSafeShutdownMonitorReady()
+{
+  return coreS3PowerSafeShutdownMonitorReadyState;
+}
+
 class CoreS3PowerUsermod : public Usermod
 {
 private:
@@ -641,6 +666,7 @@ private:
       ) {
         if (configureRuntimePowerKeyMonitor()) {
           powerKeyMonitorReady = true;
+          coreS3PowerSafeShutdownMonitorReadyState = true;
         }
         else {
           lastRuntimeI2CFailureLog = now;
@@ -763,6 +789,10 @@ public:
   // ------------------------------------------------------------
   void setup() override
   {
+    coreS3PowerInitializationCompleteState = false;
+    coreS3PowerExternal5VReadyState = false;
+    coreS3PowerSafeShutdownMonitorReadyState = false;
+
     Serial.println();
     Serial.println(F("[CoreS3_Power] Power Enable test start"));
 
@@ -780,6 +810,8 @@ public:
       Serial.println(
         F("[CoreS3_Power] ERROR: Invalid CoreS3 I2C pins")
       );
+
+      coreS3PowerInitializationCompleteState = true;
       return;
     }
 
@@ -807,10 +839,13 @@ public:
       Serial.println(
         F("[CoreS3_Power] Power enable canceled")
       );
+
+      coreS3PowerInitializationCompleteState = true;
       return;
     }
 
     powerEnableSuccess = enableExternal5V();
+    coreS3PowerExternal5VReadyState = powerEnableSuccess;
 
     // --------------------------------------------------------
     // Physical power-key monitoring is intentionally NOT started here.
@@ -861,6 +896,8 @@ public:
       p1Before,
       p1After
     );
+
+    coreS3PowerInitializationCompleteState = true;
 
     Serial.println(F("[CoreS3_Power] Power Enable test end"));
     Serial.println();
