@@ -58,6 +58,14 @@ extern "C" bool coreS3PowerInitializationComplete();
 extern "C" bool coreS3PowerExternal5VReady();
 extern "C" bool coreS3PowerSafeShutdownMonitorReady();
 
+#if defined(WLED_M5STACK_CORES3_AUDIO)
+// CoreS3_Audio publishes terminal initialization and codec-ready state.
+// Display consumes these signals only to annotate Audio Reactive effects when
+// the built-in microphone is definitively unavailable.
+extern "C" bool coreS3AudioInitializationFinished();
+extern "C" bool coreS3AudioCodecReady();
+#endif
+
 class CoreS3DisplayUsermod : public Usermod {
   private:
 
@@ -150,6 +158,12 @@ class CoreS3DisplayUsermod : public Usermod {
   // declaring Safe Shutdown unavailable.
   static constexpr unsigned long POWER_SAFETY_WARNING_GRACE_MS = 5000;
   static constexpr unsigned long RUNTIME_HEALTH_WARNING_HOLD_MS = 2200;
+
+  // Audio health is contextual rather than a global warning: only an effect
+  // that actually depends on audio is annotated when codec initialization has
+  // definitively failed. During initialization the normal capability text is
+  // kept unchanged.
+  bool lastAudioUnavailable = false;
 
   // =========================================================
   // Cached WLED state
@@ -3275,6 +3289,31 @@ class CoreS3DisplayUsermod : public Usermod {
     return capability;
   }
 
+  bool effectUsesAudioReactive(
+    const M5StackEffectCapabilities& capability
+  ) const {
+    return capability.audioVolume || capability.audioFrequency;
+  }
+
+  bool isCoreS3AudioUnavailable() const {
+#if defined(WLED_M5STACK_CORES3_AUDIO)
+    return
+      coreS3AudioInitializationFinished() &&
+      !coreS3AudioCodecReady();
+#else
+    return false;
+#endif
+  }
+
+  bool isAudioUnavailableForEffect( uint8_t effectMode ) {
+    const M5StackEffectCapabilities capability =
+      getEffectCapabilities( effectMode );
+
+    return
+      effectUsesAudioReactive( capability ) &&
+      isCoreS3AudioUnavailable();
+  }
+
   bool effectRequires2D( const M5StackEffectCapabilities& capability ) {
     return capability.supports2D && !capability.supports1D;
   }
@@ -3363,6 +3402,10 @@ class CoreS3DisplayUsermod : public Usermod {
     incompatibleWithCurrentSegment =
       effectRequires2D( capability ) && !currentMainSegmentIs2D();
 
+    const bool audioUnavailable =
+      effectUsesAudioReactive( capability ) &&
+      isCoreS3AudioUnavailable();
+
     char dimensionText[16];
     char audioText[8];
 
@@ -3370,13 +3413,21 @@ class CoreS3DisplayUsermod : public Usermod {
     getEffectAudioText( capability, audioText, sizeof(audioText) );
 
     if ( incompatibleWithCurrentSegment ) {
-      if ( audioText[0] != '\0' ) {
+      if ( audioUnavailable ) {
+        snprintf( text, textSize, "2D REQ | AUDIO UNAVAILABLE" );
+      }
+      else if ( audioText[0] != '\0' ) {
         snprintf( text, textSize, "2D REQUIRED | %s", audioText );
       }
       else {
         snprintf( text, textSize, "2D REQUIRED" );
       }
 
+      return;
+    }
+
+    if ( audioUnavailable ) {
+      snprintf( text, textSize, "AUDIO UNAVAILABLE" );
       return;
     }
 
@@ -3856,7 +3907,9 @@ class CoreS3DisplayUsermod : public Usermod {
     display.setTextDatum( textdatum_t::middle_center );
 
     display.setTextColor(
-      incompatibleWithCurrentSegment ? TFT_YELLOW : TFT_WHITE,
+      ( incompatibleWithCurrentSegment || isAudioUnavailableForEffect( effectMode ) )
+        ? TFT_YELLOW
+        : TFT_WHITE,
       TFT_BLACK
     );
 
@@ -4284,7 +4337,9 @@ class CoreS3DisplayUsermod : public Usermod {
     display.drawString( effectName, screenWidth / 2, 36 );
 
     display.setTextColor(
-      incompatibleWithCurrentSegment ? TFT_YELLOW : TFT_CYAN,
+      ( incompatibleWithCurrentSegment || isAudioUnavailableForEffect( effectMode ) )
+        ? TFT_YELLOW
+        : TFT_CYAN,
       TFT_BLACK
     );
 
@@ -6567,6 +6622,45 @@ class CoreS3DisplayUsermod : public Usermod {
 
   #include "M5StackDisplayTouchStateMachine.inc"
 
+  void serviceAudioHealthPresentation( uint8_t effectMode ) {
+    const bool audioUnavailable = isCoreS3AudioUnavailable();
+
+    if ( audioUnavailable == lastAudioUnavailable ) {
+      return;
+    }
+
+    const bool relevantVisiblePage =
+      currentPage == SCREEN_MAIN || currentPage == SCREEN_EFFECT;
+
+    const bool currentEffectUsesAudio =
+      effectUsesAudioReactive( getEffectCapabilities( effectMode ) );
+
+    // Avoid changing effect visuals in the middle of a touch gesture. Keep the
+    // previous cached state so the change is retried after release.
+    if (
+      relevantVisiblePage &&
+      currentEffectUsesAudio &&
+      touchState.touchTarget != M5STACK_TOUCH_TARGET_NONE
+    ) {
+      return;
+    }
+
+    lastAudioUnavailable = audioUnavailable;
+
+    if ( !currentEffectUsesAudio ) {
+      return;
+    }
+
+    if ( currentPage == SCREEN_MAIN ) {
+      drawEffect( effectMode, M5STACK_TOUCH_TARGET_NONE );
+      return;
+    }
+
+    if ( currentPage == SCREEN_EFFECT ) {
+      drawEffectPageName( effectMode );
+    }
+  }
+
   // =========================================================
   // Page-specific runtime display synchronization
   //
@@ -7037,6 +7131,8 @@ class CoreS3DisplayUsermod : public Usermod {
     }
 
     uint8_t effectMode = getCurrentEffectMode();
+
+    serviceAudioHealthPresentation( effectMode );
 
     uint8_t currentSpeed = getCurrentSpeed();
 

@@ -52,10 +52,16 @@
 // ===========================================================
 
 static volatile bool coreS3AudioCodecReadyState = false;
+static volatile bool coreS3AudioInitializationFinishedState = false;
 
 extern "C" bool coreS3AudioCodecReady()
 {
   return coreS3AudioCodecReadyState;
+}
+
+extern "C" bool coreS3AudioInitializationFinished()
+{
+  return coreS3AudioInitializationFinishedState;
 }
 
 #if defined(WLED_M5STACK_CORES3_AUDIO)
@@ -104,6 +110,12 @@ private:
   uint8_t axp2101Reg90 = 0;
   uint8_t axp2101Reg93 = 0;
   uint8_t es7210ProbeReg00 = 0;
+
+  void finishInitialization()
+  {
+    initializationFinished = true;
+    coreS3AudioInitializationFinishedState = true;
+  }
 
   // ---------------------------------------------------------
   // CoreS3 internal audio pin reservation
@@ -308,7 +320,7 @@ private:
   {
     if (!audioPinsReserved) {
       Serial.println(F("[CoreS3_Audio] ERROR: audio pin reservation unavailable; codec initialization blocked"));
-      initializationFinished = true;
+      finishInitialization();
       return;
     }
 
@@ -328,7 +340,7 @@ private:
       );
 
       coreS3PinsValid = false;
-      initializationFinished = true;
+      finishInitialization();
       return;
     }
 
@@ -381,7 +393,7 @@ private:
         Serial.println(
           F("[CoreS3_Audio] ES7210 unavailable after retries; microphone initialization stopped")
         );
-        initializationFinished = true;
+        finishInitialization();
       }
 
       return;
@@ -395,12 +407,12 @@ private:
     );
 
     if (!es7210Configured) {
-      initializationFinished = true;
+      finishInitialization();
       return;
     }
 
     coreS3AudioCodecReadyState = true;
-    initializationFinished = true;
+    finishInitialization();
 
     Serial.println(F("[CoreS3_Audio] ES7210 READY"));
     Serial.println(F("[CoreS3_Audio] Waiting for AudioReactive to claim I2S_NUM_1"));
@@ -446,6 +458,10 @@ public:
 
   void setup() override
   {
+    coreS3AudioCodecReadyState = false;
+    coreS3AudioInitializationFinishedState = false;
+    initializationFinished = false;
+
     Serial.println();
     Serial.println(F("[CoreS3_Audio] Initialization start"));
 
