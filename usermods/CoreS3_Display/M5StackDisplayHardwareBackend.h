@@ -8,6 +8,13 @@
 // This class contains only board-dependent Display / Touch / brightness
 // access and Core2-family read-only hardware diagnostics.
 // UI/WLED behavior remains in CoreS3_Display.cpp.
+struct M5StackBatteryStatus {
+  bool available = false;
+  bool present = false;
+  bool charging = false;
+  uint8_t level = 0;
+};
+
 class M5StackDisplayHardwareBackend {
   private:
 
@@ -100,4 +107,9 @@ class M5StackDisplayHardwareBackend {
 
   bool readTouch( int16_t& touchX, int16_t& touchY );
   void writeBrightness( uint8_t value );
+
+  // Read battery state through the active board-specific hardware backend.
+  // The UI consumes only this generic status object; PMIC/register details
+  // stay outside CoreS3_Display.cpp.
+  bool readBatteryStatus( M5StackBatteryStatus& status );
 };

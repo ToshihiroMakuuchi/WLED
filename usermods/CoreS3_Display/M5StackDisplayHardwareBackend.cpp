@@ -2,6 +2,8 @@
 
 #include "M5StackDisplayHardwareBackend.h"
 
+#include <driver/i2c.h>
+
 // ===========================================================
 // Compile-time M5Stack hardware profile
 //
@@ -92,6 +94,7 @@ struct M5StackDisplayHardwareCapabilities {
   bool displayRuntimeEnabled;
   bool touchRuntimeEnabled;
   bool brightnessRuntimeEnabled;
+  bool batteryRuntimeEnabled;
   bool diagnosticProbeEnabled;
 };
 
@@ -99,6 +102,7 @@ static constexpr M5StackDisplayHardwareCapabilities M5STACK_HARDWARE_CAPABILITIE
   {
     "M5Stack CoreS3",
     1,
+    true,
     true,
     true,
     true,
@@ -110,11 +114,13 @@ static constexpr M5StackDisplayHardwareCapabilities M5STACK_HARDWARE_CAPABILITIE
     false,
     false,
     false,
+    false,
     true
   },
   {
     "M5Stack Core2 for AWS",
     1,
+    false,
     false,
     false,
     false,
@@ -125,6 +131,40 @@ static constexpr M5StackDisplayHardwareCapabilities M5STACK_HARDWARE_CAPABILITIE
 static constexpr const M5StackDisplayHardwareCapabilities&
   ACTIVE_M5STACK_HARDWARE_CAPABILITIES =
     M5STACK_HARDWARE_CAPABILITIES[WLED_M5STACK_DISPLAY_PROFILE];
+
+// ===========================================================
+// CoreS3 runtime battery telemetry
+//
+// CoreS3 uses AXP2101 at 0x34. After Display initialization the internal
+// GPIO12/GPIO11 bus is owned by M5GFX I2C_NUM_1, matching the verified
+// CoreS3 Power/Audio runtime architecture.
+//
+// AXP2101:
+//   0x00 bit3  = battery present
+//   0x01 6:5   = battery current direction (01 = charging)
+//   0xA4       = fuel-gauge battery percentage
+// ===========================================================
+
+static constexpr i2c_port_t CORES3_BATTERY_I2C_PORT = I2C_NUM_1;
+static constexpr uint32_t CORES3_BATTERY_I2C_FREQUENCY = 400000;
+static constexpr uint8_t CORES3_AXP2101_ADDR = 0x34;
+static constexpr uint8_t AXP2101_REG_PMU_STATUS1 = 0x00;
+static constexpr uint8_t AXP2101_REG_PMU_STATUS2 = 0x01;
+static constexpr uint8_t AXP2101_REG_BATTERY_PERCENT = 0xA4;
+
+static bool readCoreS3Axp2101Register( uint8_t reg, uint8_t& value ) {
+  auto result = lgfx::i2c::transactionWriteRead(
+    CORES3_BATTERY_I2C_PORT,
+    CORES3_AXP2101_ADDR,
+    &reg,
+    1,
+    &value,
+    1,
+    CORES3_BATTERY_I2C_FREQUENCY
+  );
+
+  return result.has_value();
+}
 
 bool M5StackDisplayHardwareBackend::probeI2CAddress( TwoWire& wire, uint8_t address ) {
     wire.beginTransmission( address );
@@ -482,4 +522,46 @@ void M5StackDisplayHardwareBackend::writeBrightness( uint8_t value ) {
     }
 
     display.setBrightness( value );
+  }
+
+
+bool M5StackDisplayHardwareBackend::readBatteryStatus( M5StackBatteryStatus& status ) {
+    status = M5StackBatteryStatus();
+
+    if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.batteryRuntimeEnabled ) {
+      return false;
+    }
+
+    if ( ACTIVE_M5STACK_DISPLAY_PROFILE != M5STACK_DISPLAY_HARDWARE_CORES3 ) {
+      return false;
+    }
+
+    uint8_t status1 = 0;
+    uint8_t status2 = 0;
+    uint8_t batteryPercent = 0;
+
+    if (
+      !readCoreS3Axp2101Register( AXP2101_REG_PMU_STATUS1, status1 ) ||
+      !readCoreS3Axp2101Register( AXP2101_REG_PMU_STATUS2, status2 ) ||
+      !readCoreS3Axp2101Register( AXP2101_REG_BATTERY_PERCENT, batteryPercent )
+    ) {
+      return false;
+    }
+
+    status.available = true;
+    status.present = ( status1 & 0x08 ) != 0;
+
+    const uint8_t batteryDirection = ( status2 >> 5 ) & 0x03;
+    status.charging = ( batteryDirection == 0x01 );
+
+    // AXP2101 REG A4 is a direct percentage value. Treat values outside
+    // the documented 0..100 range as invalid telemetry.
+    if ( batteryPercent > 100 ) {
+      status.available = false;
+      return false;
+    }
+
+    status.level = batteryPercent;
+
+    return true;
   }

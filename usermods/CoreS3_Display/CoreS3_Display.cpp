@@ -98,6 +98,21 @@ class CoreS3DisplayUsermod : public Usermod {
   bool connectingScreenShown = false;
 
   // =========================================================
+  // Battery status
+  // =========================================================
+  //
+  // MAIN-only status display. Battery is intentionally informational:
+  // it has no touch target and does not alter WLED behavior.
+  // =========================================================
+
+  M5StackBatteryStatus batteryStatus;
+  bool batteryStatusInitialized = false;
+
+  unsigned long lastBatteryStatusRead = 0;
+
+  static constexpr unsigned long BATTERY_STATUS_UPDATE_MS = 10000;
+
+  // =========================================================
   // Cached WLED state
   // =========================================================
 
@@ -399,6 +414,25 @@ class CoreS3DisplayUsermod : public Usermod {
 
   static constexpr int16_t HEADER_TITLE_Y = 18;
   static constexpr int16_t HEADER_IP_Y = 41;
+
+  // MAIN status row is split into:
+  //   left  = network / Recovery AP status
+  //   right = display-only battery icon + percentage
+  static constexpr int16_t HEADER_NETWORK_LEFT = 60;
+  static constexpr int16_t HEADER_NETWORK_RIGHT = 238;
+  static constexpr int16_t HEADER_NETWORK_CENTER_X =
+    ( HEADER_NETWORK_LEFT + HEADER_NETWORK_RIGHT ) / 2;
+
+  static constexpr int16_t BATTERY_STATUS_LEFT = 244;
+  static constexpr int16_t BATTERY_STATUS_RIGHT = 312;
+
+  static constexpr int16_t BATTERY_ICON_X = 246;
+  static constexpr int16_t BATTERY_ICON_Y = 36;
+  static constexpr int16_t BATTERY_ICON_W = 18;
+  static constexpr int16_t BATTERY_ICON_H = 10;
+
+  static constexpr int16_t BATTERY_PERCENT_X = 289;
+  static constexpr int16_t BATTERY_PERCENT_Y = 41;
 
   static constexpr int16_t CONTROL_LEFT_X = 16;
   static constexpr int16_t CONTROL_RIGHT_X = 240;
@@ -1745,7 +1779,7 @@ class CoreS3DisplayUsermod : public Usermod {
       return String( "AP: " ) + WiFi.softAPIP().toString();
     }
 
-    return "Offline - Hold for Recovery AP";
+    return "Offline - Hold Recovery AP";
   }
 
   String getCurrentNetworkDisplayText() {
@@ -4267,14 +4301,134 @@ class CoreS3DisplayUsermod : public Usermod {
     drawPresetManageButton( pressedTarget == M5STACK_TOUCH_TARGET_PRESET_MANAGE );
   }
 
+  uint16_t getBatteryStatusColor() const {
+    if ( !batteryStatus.available || !batteryStatus.present ) {
+      return TFT_DARKGREY;
+    }
+
+    if ( batteryStatus.level <= 15 ) {
+      return TFT_RED;
+    }
+
+    if ( batteryStatus.level <= 35 ) {
+      return TFT_YELLOW;
+    }
+
+    return TFT_GREEN;
+  }
+
+  bool sampleBatteryStatus( bool forceRead = false ) {
+    const unsigned long now = millis();
+
+    if (
+      !forceRead &&
+      batteryStatusInitialized &&
+      now - lastBatteryStatusRead < BATTERY_STATUS_UPDATE_MS
+    ) {
+      return false;
+    }
+
+    lastBatteryStatusRead = now;
+
+    M5StackBatteryStatus newStatus;
+    hardwareBackend.readBatteryStatus( newStatus );
+
+    const bool changed =
+      !batteryStatusInitialized ||
+      newStatus.available != batteryStatus.available ||
+      newStatus.present != batteryStatus.present ||
+      newStatus.charging != batteryStatus.charging ||
+      newStatus.level != batteryStatus.level;
+
+    batteryStatus = newStatus;
+    batteryStatusInitialized = true;
+
+    return changed;
+  }
+
+  void drawMainBatteryStatus() {
+    display.fillRect(
+      BATTERY_STATUS_LEFT,
+      28,
+      BATTERY_STATUS_RIGHT - BATTERY_STATUS_LEFT,
+      28,
+      TFT_BLACK
+    );
+
+    const uint16_t batteryColor = getBatteryStatusColor();
+
+    // Battery body + positive terminal.
+    display.drawRect(
+      BATTERY_ICON_X,
+      BATTERY_ICON_Y,
+      BATTERY_ICON_W,
+      BATTERY_ICON_H,
+      batteryColor
+    );
+
+    display.fillRect(
+      BATTERY_ICON_X + BATTERY_ICON_W,
+      BATTERY_ICON_Y + 3,
+      2,
+      4,
+      batteryColor
+    );
+
+    if ( batteryStatus.available && batteryStatus.present ) {
+      const int16_t interiorW = BATTERY_ICON_W - 4;
+      int16_t fillW =
+        ( interiorW * batteryStatus.level + 99 ) / 100;
+
+      fillW = constrain( fillW, 0, interiorW );
+
+      if ( fillW > 0 ) {
+        display.fillRect(
+          BATTERY_ICON_X + 2,
+          BATTERY_ICON_Y + 2,
+          fillW,
+          BATTERY_ICON_H - 4,
+          batteryColor
+        );
+      }
+    }
+
+    char batteryText[8];
+
+    if ( batteryStatus.available && batteryStatus.present ) {
+      snprintf(
+        batteryText,
+        sizeof(batteryText),
+        "%u%%",
+        batteryStatus.level
+      );
+    }
+    else {
+      strlcpy(
+        batteryText,
+        "--%",
+        sizeof(batteryText)
+      );
+    }
+
+    display.setTextDatum( textdatum_t::middle_center );
+    display.setTextColor( batteryColor, TFT_BLACK );
+    display.setTextSize( 1 );
+
+    display.drawString(
+      batteryText,
+      BATTERY_PERCENT_X,
+      BATTERY_PERCENT_Y
+    );
+  }
+
   void drawMainNetworkStatusLine(
     const String& networkStatusText,
     uint16_t textColor = TFT_WHITE
   ) {
     display.fillRect(
-      HEADER_CONTENT_LEFT,
+      HEADER_NETWORK_LEFT,
       28,
-      HEADER_CONTENT_RIGHT - HEADER_CONTENT_LEFT,
+      HEADER_NETWORK_RIGHT - HEADER_NETWORK_LEFT,
       28,
       TFT_BLACK
     );
@@ -4285,7 +4439,7 @@ class CoreS3DisplayUsermod : public Usermod {
 
     display.drawString(
       networkStatusText,
-      HEADER_CENTER_X,
+      HEADER_NETWORK_CENTER_X,
       HEADER_IP_Y
     );
   }
@@ -4310,6 +4464,9 @@ class CoreS3DisplayUsermod : public Usermod {
     display.drawString( "WLED M5Stack CoreS3", HEADER_CENTER_X, HEADER_TITLE_Y );
 
     drawMainNetworkStatusLine( networkStatusText );
+
+    sampleBatteryStatus( true );
+    drawMainBatteryStatus();
 
     display.drawFastHLine( 8, 58, screenWidth - 16, TFT_DARKGREY );
 
@@ -6657,6 +6814,13 @@ class CoreS3DisplayUsermod : public Usermod {
           return;
         }
       }
+    }
+
+    if (
+      currentPage == SCREEN_MAIN &&
+      sampleBatteryStatus()
+    ) {
+      drawMainBatteryStatus();
     }
 
     bool ledOn = (bri > 0);
