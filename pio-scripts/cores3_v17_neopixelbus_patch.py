@@ -1,24 +1,35 @@
-# Phase 10.4.4a - M5Stack CoreS3 / WLED V17 NeoPixelBus stabilization patch
+# Phase 10.4.6p-RMT-DIAG - M5Stack CoreS3 / WLED V17 NeoPixelBus diagnostic patch
 #
-# This PlatformIO PRE script makes the tested ESP32-S3 RMT changes reproducible.
-# It intentionally patches only NeoEsp32RmtXMethod.h from WLED's pinned
-# NeoPixelBus CORE3 dependency.
+# This PlatformIO PRE script preserves the verified CoreS3 NeoPixelBus/RMT
+# stabilization changes and changes only the ESP32-S3 RMT memory allocation
+# from 48 symbols to 96 symbols for diagnostic testing.
+#
+# Diagnostic purpose:
+#   Investigate the observed LED-tail anomaly where LEDs beyond the configured
+#   logical count can light when a frame is turned OFF.
 #
 # Applied behavior:
-#   1) ESP32-S3 uses one 48-symbol RMT memory block per TX channel.
-#   2) IsReadyToUpdate() no longer calls rmt_tx_wait_all_done(..., 0), avoiding
+#   1) ESP32-S3 uses 96 RMT symbols per TX channel for this diagnostic test.
+#      This is two ESP32-S3 RMT memory blocks (48 symbols per block).
+#   2) Other ESP32 targets remain at 192 symbols.
+#   3) IsReadyToUpdate() no longer calls rmt_tx_wait_all_done(..., 0), avoiding
 #      the ESP-IDF 5.5 "flush timeout" log flood and its runtime overhead.
-#   3) Initialize(), Update(), and destructor guard invalid handles so a failed
+#   4) Initialize(), Update(), and destructor guard invalid handles so a failed
 #      allocation does not cascade into invalid RMT API calls.
 #
-# The patch is idempotent and is re-applied automatically if PlatformIO
-# refreshes/reinstalls the library dependency.
+# IMPORTANT:
+#   - Diagnostic only. Do not Git-save as the stable baseline yet.
+#   - The unique marker intentionally differs from the existing 48-symbol
+#     stable patch so a normal PlatformIO build will re-patch an already
+#     modified NeoEsp32RmtXMethod.h from 48 -> 96.
+#
+# The patch remains idempotent once this diagnostic marker is present.
 
 from pathlib import Path
 
 Import("env")
 
-MARKER = "CoreS3 V17 stable RMT patch 10.4.4a"
+MARKER = "CoreS3 V17 RMT diagnostic 96-symbol patch 10.4.6p"
 
 
 def _replace_function(source: str, signature: str, replacement: str) -> str:
@@ -130,9 +141,9 @@ def _apply_patch() -> None:
     target = _find_target()
     text = target.read_text(encoding="utf-8")
 
-    # Fast path: stable patch already present.
+    # Fast path: this 96-symbol diagnostic patch is already present.
     if MARKER in text:
-        print(f"[CoreS3 RMT] stable patch already present: {target.name}")
+        print(f"[CoreS3 RMT DIAG96] diagnostic patch already present: {target.name}")
         return
 
     destructor = f'''    ~NeoEsp32RmtMethodBase()
@@ -181,8 +192,11 @@ def _apply_patch() -> None:
         config.gpio_num = static_cast<gpio_num_t>(_pin);
 
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
-        // ESP32-S3: one RMT TX memory block = 48 symbols.
-        config.mem_block_symbols = 48;
+        // Phase 10.4.6p-RMT-DIAG:
+        // ESP32-S3 has 48 symbols per RMT memory block.
+        // Use two blocks (96 symbols) to test whether the observed
+        // LED-tail anomaly is caused by RMT encoder refill/underrun timing.
+        config.mem_block_symbols = 96;
 #else
         config.mem_block_symbols = 192;
 #endif
@@ -270,19 +284,21 @@ def _apply_patch() -> None:
         text = _replace_function(text, "void Initialize()", initialize)
         text = _replace_function(text, "void Update(bool maintainBufferConsistency)", update)
     except RuntimeError as exc:
-        raise RuntimeError(f"CoreS3 RMT patch failed for {target}: {exc}") from exc
+        raise RuntimeError(f"CoreS3 RMT diagnostic patch failed for {target}: {exc}") from exc
 
     required = [
         MARKER,
-        "config.mem_block_symbols = 48;",
+        "config.mem_block_symbols = 96;",
         "return (_channel != nullptr && _led_encoder != nullptr);",
     ]
     for item in required:
         if item not in text:
-            raise RuntimeError(f"CoreS3 RMT patch verification failed: missing {item}")
+            raise RuntimeError(
+                f"CoreS3 RMT diagnostic patch verification failed: missing {item}"
+            )
 
     target.write_text(text, encoding="utf-8", newline="\n")
-    print(f"[CoreS3 RMT] applied stable ESP32-S3 patch: {target}")
+    print(f"[CoreS3 RMT DIAG96] applied ESP32-S3 96-symbol diagnostic patch: {target}")
 
 
 if not env.IsIntegrationDump():
