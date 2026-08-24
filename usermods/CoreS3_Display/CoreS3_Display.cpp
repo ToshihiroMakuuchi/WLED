@@ -2379,8 +2379,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void beginDisplaySleep( unsigned long now ) {
-    Serial.println( F( "[CoreS3_Display] " "Display sleep start" ) );
-
     resetTouchGesture();
 
     displayPowerState = DISPLAY_POWER_SLEEP_FADE_OUT;
@@ -2395,8 +2393,6 @@ class CoreS3DisplayUsermod : public Usermod {
   }
 
   void beginDisplayWake( unsigned long now ) {
-    Serial.println( F( "[CoreS3_Display] " "Display wake start" ) );
-
     resetTouchGesture();
 
     setDisplayBrightness( 0 );
@@ -2461,7 +2457,6 @@ class CoreS3DisplayUsermod : public Usermod {
 
         touchState.wakeReleaseCandidate = 0;
 
-        Serial.println( F( "[CoreS3_Display] " "Display wake fade complete" ) );
       }
 
       return true;
@@ -6905,7 +6900,20 @@ class CoreS3DisplayUsermod : public Usermod {
 
     fadeDurationMs = (uint16_t)newFadeDuration;
 
-    Serial.printf( "[CoreS3_Display] " "Config: Sleep=%u sec, " "LCD=%u, " "Fade=%s, " "FadeDuration=%u ms\n", sleepTimeoutSec, lcdBrightness, fadeEnabled ? "ON" : "OFF", fadeDurationMs );
+    if ( initDone ) {
+      Serial.printf(
+        "[CoreS3_Display] "
+        "Config updated: "
+        "Sleep=%u sec, "
+        "LCD=%u, "
+        "Fade=%s, "
+        "FadeDuration=%u ms\n",
+        sleepTimeoutSec,
+        lcdBrightness,
+        fadeEnabled ? "ON" : "OFF",
+        fadeDurationMs
+      );
+    }
 
     if ( initDone && displayReady && displayPowerState == DISPLAY_POWER_ACTIVE ) {
       setDisplayBrightness( getNormalDisplayBrightness() );
@@ -6943,6 +6951,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
+    Serial.println( F( "[CoreS3_Display][BUILD] Phase 10.4.6q-R3 DISPLAY PRODUCTION BASELINE" ) );
     Serial.println( F( "[CoreS3_Display] Initialization start" ) );
 
     Serial.printf(

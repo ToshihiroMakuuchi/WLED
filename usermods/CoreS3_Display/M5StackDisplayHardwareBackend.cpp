@@ -442,8 +442,6 @@ void M5StackDisplayHardwareBackend::runDiagnostics() {
     if ( !ACTIVE_M5STACK_HARDWARE_CAPABILITIES.diagnosticProbeEnabled ) {
       hardwareProbe.state = M5STACK_HARDWARE_PROBE_NOT_REQUIRED;
 
-      Serial.println( F( "[CoreS3_Display] CoreS3 hardware probe skipped (verified profile)" ) );
-
       return;
     }
 
