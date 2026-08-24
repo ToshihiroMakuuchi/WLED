@@ -5,32 +5,23 @@
 #include <esp_system.h>
 
 /*
- * Phase 10.4.6p-R5A - DCDC3 Always-PWM Stability Candidate
+ * Phase 10.4.6q-R1 - CoreS3 Power Production Cleanup
  *
- * STABILITY CANDIDATE - HARDWARE VALIDATION REQUIRED BEFORE GIT-SAVING.
+ * Validated power baseline for M5Stack CoreS3.
  *
- * Purpose:
- *   Carry the R4C A/B result into a near-production CoreS3 power usermod
- *   while removing the high-frequency PMIC diagnostic workload.
- *
- * Stability change:
+ * Power stability:
  *   - AXP2101 REG0x81 DCDC3 mode bit (bit4) is set to Always PWM.
  *   - DCDC1 mode is left unchanged.
- *   - The write is read-modify-write and preserves all unrelated REG0x81 bits.
+ *   - REG0x81 is updated read-modify-write, preserving unrelated bits.
  *   - DCDC output voltages, DCDC enable state, VBUS limits, charger settings,
- *     ADC settings, and DCDC OVP/UVP protection (REG0x23) are NOT changed.
+ *     ADC settings, and DCDC OVP/UVP protection (REG0x23) are unchanged.
  *
- * Diagnostic cleanup:
- *   - Removes the R3/R4 250-ms PMIC change watcher.
- *   - Removes the R3/R4 1-second PMIC snapshot.
- *   - Removes the 10-second PMIC DIAG stream and raw PMIC register dumps.
- *   - Keeps concise boot reset / PWRON / PWROFF cause reporting.
- *
- * Existing validated behavior is preserved:
+ * Preserved validated behavior:
  *   - AW9523B external-5V enable writes (BOOST then BUS).
  *   - Runtime External 5V re-assert after M5GFX initialization.
  *   - AXP2101 power-key IRQ handling for Safe Shutdown.
  *   - Safe Physical Shutdown LED BLACK / suspend / cancel-and-restore logic.
+ *   - Concise boot reset / PWRON / PWROFF cause reporting.
  */
 
 // ============================================================
@@ -438,9 +429,6 @@ private:
 
         writeRuntimeRegister(AXP2101_ADDR, AXP2101_REG_IRQ_STATUS_1, stalePowerKeyFlags);
       }
-      else {
-        Serial.println(F("[CoreS3_Power][BOOT] Stale PKEY IRQ before clear: NONE"));
-      }
     }
 
     powerKeyPressed = false;
@@ -453,15 +441,12 @@ private:
   }
 
   // ------------------------------------------------------------
-  // Phase 10.4.6p-R5A DCDC3 Always-PWM stability candidate
+  // CoreS3 DCDC3 Always-PWM stability measure
   //
-  // R4A and R4C remained stable with DCDC3 in Always-PWM, while R4B
-  // reproduced DCDC OVP with DCDC3 in Auto mode. R5A therefore keeps
-  // the minimum effective change: set DCDC3 Always-PWM and leave DCDC1
-  // plus every unrelated REG0x81 bit untouched.
-  //
-  // DCDC voltages, DCDC enables, charger settings, input limits, ADC
-  // settings, and REG0x23 DCDC OVP/UVP protection are not changed.
+  // Keep DCDC1 in its existing mode and force DCDC3 to Always-PWM.
+  // REG0x81 is updated read-modify-write so unrelated bits are preserved.
+  // DCDC voltages/enables, charger/input/ADC settings, and REG0x23
+  // DCDC OVP/UVP protection are not changed.
   // ------------------------------------------------------------
   void serviceDcdc3StabilityMode()
   {
@@ -716,8 +701,8 @@ public:
     bootResetReason = esp_reset_reason();
 
     Serial.println();
-    Serial.println(F("[CoreS3_Power][BUILD] Phase 10.4.6p-R5A DCDC3 ALWAYS-PWM STABILITY CANDIDATE"));
-    Serial.println(F("[CoreS3_Power] R5A power stability candidate start"));
+    Serial.println(F("[CoreS3_Power][BUILD] Phase 10.4.6q-R1 POWER PRODUCTION BASELINE"));
+    Serial.println(F("[CoreS3_Power] Initialization start"));
     Serial.printf("[CoreS3_Power] I2C SDA=%d SCL=%d\n", i2c_sda, i2c_scl);
     Serial.printf(
       "[CoreS3_Power][BOOT] ESP reset reason: %s (%d)\n",
@@ -754,15 +739,11 @@ public:
     Serial.println(F("[CoreS3_Power] Power key monitor: DEFERRED until M5GFX I2C1 is active"));
     Serial.println(F("[CoreS3_Power] Safe shutdown: AXP2101 LONG IRQ primary trigger"));
     Serial.printf("[CoreS3_Power] Safe shutdown: PRESS fallback >= %lu ms\n", SAFE_SHUTDOWN_FALLBACK_HOLD_MS);
-    Serial.printf("[CoreS3_Power] BUS_EN: %s\n", busEnabled ? "ON" : "OFF");
-    Serial.printf("[CoreS3_Power] BOOST_EN: %s\n", boostEnabled ? "ON" : "OFF");
     Serial.printf("[CoreS3_Power] External 5V: %s\n", external5VEnableSuccess ? "ENABLED" : "FAILED");
-    Serial.printf("[CoreS3_Power] AW9523 P0: 0x%02X -> 0x%02X\n", p0Before, p0After);
-    Serial.printf("[CoreS3_Power] AW9523 P1: 0x%02X -> 0x%02X\n", p1Before, p1After);
 
     coreS3PowerInitializationCompleteState = true;
 
-    Serial.println(F("[CoreS3_Power] R5A setup end"));
+    Serial.println(F("[CoreS3_Power] Initialization complete"));
     Serial.println();
   }
 
@@ -789,7 +770,7 @@ public:
     axpInfo.add(axp2101Found ? "Found (0x34)" : "Not found");
 
     JsonArray stabilityInfo = user.createNestedArray("CoreS3 Power Stability");
-    stabilityInfo.add("R5A DCDC3 Always-PWM candidate");
+    stabilityInfo.add("DCDC3 Always-PWM");
 
     JsonArray pwmInfo = user.createNestedArray("CoreS3 DCDC3 Mode");
     if (!dcdc3StabilityAttempted) {
