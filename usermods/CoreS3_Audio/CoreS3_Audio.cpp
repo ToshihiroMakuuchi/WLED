@@ -5,6 +5,8 @@
 // ===========================================================
 // M5Stack CoreS3 Audio Usermod
 //
+// Phase 10.4.6q-R2 - Audio Production Cleanup
+//
 // Responsibilities
 //   - Access the CoreS3 internal I2C bus through the M5GFX
 //     I2C_NUM_1 owner shared with Display / Touch.
@@ -356,21 +358,12 @@ private:
       axp2101RegistersRead =
         readRegister(AXP2101_ADDR, 0x93, axp2101Reg93);
 
-      Serial.printf(
-        "[CoreS3_Audio] AXP2101 via M5GFX I2C1: FOUND%s\n",
-        axp2101RegistersRead ? "" : " (REG93 unavailable)"
-      );
-
-      if (axp2101RegistersRead) {
-        Serial.printf(
-          "[CoreS3_Audio] AXP2101 audio rail diagnostic: REG90=0x%02X REG93=0x%02X\n",
-          axp2101Reg90,
-          axp2101Reg93
-        );
+      if (!axp2101RegistersRead) {
+        Serial.println(F("[CoreS3_Audio] WARNING: AXP2101 REG93 unavailable on M5GFX I2C1"));
       }
     }
     else {
-      Serial.println(F("[CoreS3_Audio] AXP2101 via M5GFX I2C1: NOT FOUND"));
+      Serial.println(F("[CoreS3_Audio] WARNING: AXP2101 unavailable on M5GFX I2C1"));
     }
 
     // ES7210 register 0x00 is RESET_CTL and is safe to read.
@@ -378,15 +371,9 @@ private:
     es7210Found = readRegister(ES7210_ADDR, 0x00, es7210ProbeReg00);
 
     Serial.printf(
-      "[CoreS3_Audio] ES7210 via M5GFX I2C1 (0x40): %s",
+      "[CoreS3_Audio] ES7210: %s\n",
       es7210Found ? "FOUND" : "NOT FOUND"
     );
-
-    if (es7210Found) {
-      Serial.printf(" (REG00=0x%02X)", es7210ProbeReg00);
-    }
-
-    Serial.println();
 
     if (!es7210Found) {
       if (initAttemptCount >= AUDIO_INIT_MAX_ATTEMPTS) {
@@ -414,8 +401,7 @@ private:
     coreS3AudioCodecReadyState = true;
     finishInitialization();
 
-    Serial.println(F("[CoreS3_Audio] ES7210 READY"));
-    Serial.println(F("[CoreS3_Audio] Waiting for AudioReactive to claim I2S_NUM_1"));
+    Serial.println(F("[CoreS3_Audio] READY - waiting for AudioReactive I2S1"));
   }
 
   const char* getAudioStatusName() const
@@ -463,36 +449,20 @@ public:
     initializationFinished = false;
 
     Serial.println();
+    Serial.println(F("[CoreS3_Audio][BUILD] Phase 10.4.6q-R2 AUDIO PRODUCTION BASELINE"));
     Serial.println(F("[CoreS3_Audio] Initialization start"));
-
-    Serial.println(F("[CoreS3_Audio] Built-in microphone / Audio Reactive integration"));
-
-    Serial.printf(
-      "[CoreS3_Audio] WLED I2C pins: SDA=%d SCL=%d\n",
-      i2c_sda,
-      i2c_scl
-    );
-
-    Serial.println(
-      F("[CoreS3_Audio] Internal codec access: M5GFX I2C_NUM_1 GPIO12/GPIO11")
-    );
-
-    Serial.println(
-      F("[CoreS3_Audio] Audio will not reinitialize the shared internal I2C bus")
-    );
-
-    Serial.println(F("[CoreS3_Audio] Audio hardware initialization is deferred"));
 
     audioPinsReserved = reserveInternalAudioPins();
 
     Serial.printf(
-      "[CoreS3_Audio] Internal audio pin reservation: %s (GPIO0=MCLK GPIO14=DIN)\n",
+      "[CoreS3_Audio] Internal audio pins: %s (MCLK=GPIO0 DIN=GPIO14)\n",
       audioPinsReserved ? "READY" : "FAILED"
     );
 
+    Serial.println(F("[CoreS3_Audio] Codec initialization deferred"));
+
     setupStartMs = millis();
     lastInitAttemptMs = setupStartMs;
-
   }
 
   // ---------------------------------------------------------
@@ -573,7 +543,10 @@ public:
 
     JsonArray pmuInfo = user.createNestedArray("CoreS3 Audio PMU");
 
-    if (!axp2101Found) {
+    if (!initializationFinished && !axp2101Found) {
+      pmuInfo.add("Waiting for probe");
+    }
+    else if (!axp2101Found) {
       pmuInfo.add("AXP2101 not found on M5GFX I2C1");
     }
     else if (!axp2101RegistersRead) {
@@ -615,7 +588,6 @@ public:
 
     JsonArray pinInfo = user.createNestedArray("CoreS3 Audio Pins");
     pinInfo.add("FIXED: MCLK0 BCLK34 WS33 DIN14");
-
   }
 };
 
