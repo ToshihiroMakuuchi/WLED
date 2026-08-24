@@ -4,6 +4,35 @@
 #include <driver/i2c.h>
 #include <esp_system.h>
 
+/*
+ * Phase 10.4.6p-R5A - DCDC3 Always-PWM Stability Candidate
+ *
+ * STABILITY CANDIDATE - HARDWARE VALIDATION REQUIRED BEFORE GIT-SAVING.
+ *
+ * Purpose:
+ *   Carry the R4C A/B result into a near-production CoreS3 power usermod
+ *   while removing the high-frequency PMIC diagnostic workload.
+ *
+ * Stability change:
+ *   - AXP2101 REG0x81 DCDC3 mode bit (bit4) is set to Always PWM.
+ *   - DCDC1 mode is left unchanged.
+ *   - The write is read-modify-write and preserves all unrelated REG0x81 bits.
+ *   - DCDC output voltages, DCDC enable state, VBUS limits, charger settings,
+ *     ADC settings, and DCDC OVP/UVP protection (REG0x23) are NOT changed.
+ *
+ * Diagnostic cleanup:
+ *   - Removes the R3/R4 250-ms PMIC change watcher.
+ *   - Removes the R3/R4 1-second PMIC snapshot.
+ *   - Removes the 10-second PMIC DIAG stream and raw PMIC register dumps.
+ *   - Keeps concise boot reset / PWRON / PWROFF cause reporting.
+ *
+ * Existing validated behavior is preserved:
+ *   - AW9523B external-5V enable writes (BOOST then BUS).
+ *   - Runtime External 5V re-assert after M5GFX initialization.
+ *   - AXP2101 power-key IRQ handling for Safe Shutdown.
+ *   - Safe Physical Shutdown LED BLACK / suspend / cancel-and-restore logic.
+ */
+
 // ============================================================
 // Read-only CoreS3 power health bridge
 //
@@ -38,32 +67,9 @@ private:
   static constexpr i2c_port_t CORES3_INTERNAL_I2C_PORT = I2C_NUM_1;
   static constexpr uint32_t CORES3_INTERNAL_I2C_FREQUENCY = 400000;
 
-  static constexpr uint8_t AXP2101_REG_STATUS1          = 0x00;
-  static constexpr uint8_t AXP2101_REG_STATUS2          = 0x01;
   static constexpr uint8_t AXP2101_REG_CHIP_ID          = 0x03;
-  static constexpr uint8_t AXP2101_REG_GAUGE_WDT_CTRL   = 0x18;
-  static constexpr uint8_t AXP2101_REG_WDT_CTRL         = 0x19;
-  static constexpr uint8_t AXP2101_REG_LOW_BAT_WARN     = 0x1A;
   static constexpr uint8_t AXP2101_REG_PWRON_STATUS     = 0x20;
   static constexpr uint8_t AXP2101_REG_PWROFF_STATUS    = 0x21;
-  static constexpr uint8_t AXP2101_REG_PWROFF_ENABLE    = 0x22;
-  static constexpr uint8_t AXP2101_REG_DC_OVP_UVP       = 0x23;
-  static constexpr uint8_t AXP2101_REG_VOFF_SET         = 0x24;
-  static constexpr uint8_t AXP2101_REG_PKEY_CONFIG      = 0x27;
-  static constexpr uint8_t AXP2101_REG_ADC_CTRL         = 0x30;
-
-  static constexpr uint8_t AXP2101_REG_ADC_BAT_H        = 0x34;
-  static constexpr uint8_t AXP2101_REG_ADC_BAT_L        = 0x35;
-  static constexpr uint8_t AXP2101_REG_ADC_VBUS_H       = 0x38;
-  static constexpr uint8_t AXP2101_REG_ADC_VBUS_L       = 0x39;
-  static constexpr uint8_t AXP2101_REG_ADC_VSYS_H       = 0x3A;
-  static constexpr uint8_t AXP2101_REG_ADC_VSYS_L       = 0x3B;
-  static constexpr uint8_t AXP2101_REG_BAT_PERCENT      = 0xA4;
-
-  static constexpr uint8_t AXP2101_STATUS1_VBUS_GOOD_MASK     = 0x20;
-  static constexpr uint8_t AXP2101_STATUS1_BAT_PRESENT_MASK   = 0x08;
-  static constexpr uint8_t AXP2101_STATUS1_THERMAL_MASK       = 0x02;
-  static constexpr uint8_t AXP2101_STATUS1_CURRENT_LIMIT_MASK = 0x01;
 
   static constexpr uint8_t AXP2101_PWROFF_PWRON_PULLDOWN_MASK = 0x01;
   static constexpr uint8_t AXP2101_PWROFF_SOFTWARE_MASK       = 0x02;
@@ -76,6 +82,12 @@ private:
 
   static constexpr uint8_t AXP2101_REG_IRQ_ENABLE_1 = 0x41;
   static constexpr uint8_t AXP2101_REG_IRQ_STATUS_1 = 0x49;
+
+  static constexpr uint8_t AXP2101_REG_DCDC_FORCE_PWM    = 0x81;
+  // AXP2101 REG0x81: bit2=DCDC1 mode, bit4=DCDC3 mode.
+  // 0=Auto PWM/PFM, 1=Always PWM. Keep all unrelated bits untouched.
+  static constexpr uint8_t AXP2101_DCDC1_ALWAYS_PWM_MASK = 0x04;
+  static constexpr uint8_t AXP2101_DCDC3_ALWAYS_PWM_MASK = 0x10;
 
   static constexpr uint8_t AXP2101_PKEY_POSITIVE_MASK = 0x01;
   static constexpr uint8_t AXP2101_PKEY_NEGATIVE_MASK = 0x02;
@@ -92,7 +104,7 @@ private:
   static constexpr unsigned long SAFE_SHUTDOWN_FALLBACK_HOLD_MS = 1500;
   static constexpr unsigned long SAFE_SHUTDOWN_BLACK_REFRESH_MS = 100;
   static constexpr unsigned long SAFE_SHUTDOWN_SHOW_WAIT_MS = 150;
-  static constexpr unsigned long POWER_DIAG_INTERVAL_MS = 10000;
+  static constexpr unsigned long RUNTIME_POWER_HEALTH_POLL_MS = 10000;
 
   static constexpr uint8_t REG_OUTPUT_P0 = 0x02;
   static constexpr uint8_t REG_OUTPUT_P1 = 0x03;
@@ -113,8 +125,14 @@ private:
 
   bool aw9523Found = false;
   bool axp2101Found = false;
-  bool powerEnableAttempted = false;
-  bool powerEnableSuccess = false;
+  // CoreS3 external 5V state.
+  bool external5VEnableAttempted = false;
+  bool external5VEnableSuccess = false;
+  bool runtimeExternal5VEnableAttempted = false;
+  bool runtimeExternal5VEnableSuccess = false;
+  bool runtimeExternal5VViolationLogged = false;
+  unsigned long lastRuntimePowerHealthPoll = 0;
+
   bool busEnabled = false;
   bool boostEnabled = false;
 
@@ -147,8 +165,12 @@ private:
   bool bootPowerOffStatusValid = false;
   uint8_t bootPowerOnStatus = 0;
   uint8_t bootPowerOffStatus = 0;
-  unsigned long lastPowerDiag = 0;
-  uint32_t powerDiagSampleCount = 0;
+
+  // R5A DCDC3 Always-PWM stability state.
+  bool dcdc3StabilityAttempted = false;
+  bool dcdc3StabilityApplied = false;
+  uint8_t dcdcModeBefore = 0;
+  uint8_t dcdcModeAfter = 0;
 
   const char* resetReasonText(esp_reset_reason_t reason)
   {
@@ -168,42 +190,31 @@ private:
     }
   }
 
-  const char* batteryDirectionText(uint8_t status2)
-  {
-    uint8_t state = (status2 >> 5) & 0x03;
-    switch (state) {
-      case 0: return "STANDBY";
-      case 1: return "CHARGING";
-      case 2: return "DISCHARGING";
-      default: return "UNKNOWN";
-    }
-  }
-
   void printPowerOffSource(uint8_t status)
   {
-    Serial.printf("[CoreS3_Power][BOOT_DIAG] AXP2101 PWROFF_STATUS=0x%02X\n", status);
+    Serial.printf("[CoreS3_Power][BOOT] AXP2101 PWROFF_STATUS=0x%02X\n", status);
 
     if (status == 0) {
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] Power-off cause: NONE LATCHED / UNKNOWN"));
+      Serial.println(F("[CoreS3_Power][BOOT] Power-off cause: NONE LATCHED / UNKNOWN"));
       return;
     }
 
     if (status & AXP2101_PWROFF_OVER_TEMP_MASK)
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] Power-off cause: PMIC DIE OVER TEMPERATURE"));
+      Serial.println(F("[CoreS3_Power][BOOT] Power-off cause: PMIC DIE OVER TEMPERATURE"));
     if (status & AXP2101_PWROFF_DCDC_OV_MASK)
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] Power-off cause: DCDC OVER VOLTAGE"));
+      Serial.println(F("[CoreS3_Power][BOOT] Power-off cause: DCDC OVER VOLTAGE"));
     if (status & AXP2101_PWROFF_DCDC_UV_MASK)
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] Power-off cause: DCDC UNDER VOLTAGE"));
+      Serial.println(F("[CoreS3_Power][BOOT] Power-off cause: DCDC UNDER VOLTAGE"));
     if (status & AXP2101_PWROFF_VBUS_OV_MASK)
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] Power-off cause: VBUS OVER VOLTAGE"));
+      Serial.println(F("[CoreS3_Power][BOOT] Power-off cause: VBUS OVER VOLTAGE"));
     if (status & AXP2101_PWROFF_VSYS_UV_MASK)
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] Power-off cause: VSYS UNDER VOLTAGE"));
+      Serial.println(F("[CoreS3_Power][BOOT] Power-off cause: VSYS UNDER VOLTAGE"));
     if (status & AXP2101_PWROFF_PWRON_LOW_MASK)
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] Power-off cause: PWRON HELD LOW / EN MODE"));
+      Serial.println(F("[CoreS3_Power][BOOT] Power-off cause: PWRON HELD LOW / EN MODE"));
     if (status & AXP2101_PWROFF_SOFTWARE_MASK)
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] Power-off cause: SOFTWARE POWER OFF"));
+      Serial.println(F("[CoreS3_Power][BOOT] Power-off cause: SOFTWARE POWER OFF"));
     if (status & AXP2101_PWROFF_PWRON_PULLDOWN_MASK)
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] Power-off cause: PWRON / POWER KEY PULL-DOWN"));
+      Serial.println(F("[CoreS3_Power][BOOT] Power-off cause: PWRON / POWER KEY PULL-DOWN"));
   }
 
   bool probeI2C(uint8_t address)
@@ -260,119 +271,26 @@ private:
     return result.has_value();
   }
 
-  bool readRuntimeAdcH5L8(uint8_t highReg, uint8_t lowReg, uint16_t& value)
-  {
-    uint8_t high = 0;
-    uint8_t low = 0;
-    if (!readRuntimeRegister(AXP2101_ADDR, highReg, high)) return false;
-    if (!readRuntimeRegister(AXP2101_ADDR, lowReg, low)) return false;
-    value = ((uint16_t)(high & 0x1F) << 8) | low;
-    return true;
-  }
-
-  bool readRuntimeAdcH6L8(uint8_t highReg, uint8_t lowReg, uint16_t& value)
-  {
-    uint8_t high = 0;
-    uint8_t low = 0;
-    if (!readRuntimeRegister(AXP2101_ADDR, highReg, high)) return false;
-    if (!readRuntimeRegister(AXP2101_ADDR, lowReg, low)) return false;
-    value = ((uint16_t)(high & 0x3F) << 8) | low;
-    return true;
-  }
-
   void captureBootAxpDiagnostics()
   {
-    uint8_t status1 = 0;
-    uint8_t status2 = 0;
-    uint8_t pwroffEnable = 0;
-    uint8_t dcProtection = 0;
-    uint8_t voff = 0;
-    uint8_t pkeyConfig = 0;
-    uint8_t adcCtrl = 0;
-    uint8_t gaugeWdtCtrl = 0;
-    uint8_t wdtCtrl = 0;
-    uint8_t lowBat = 0;
-    uint8_t batteryPercent = 0;
+    bootPowerOnStatusValid =
+      readRegister(AXP2101_ADDR, AXP2101_REG_PWRON_STATUS, bootPowerOnStatus);
+    bootPowerOffStatusValid =
+      readRegister(AXP2101_ADDR, AXP2101_REG_PWROFF_STATUS, bootPowerOffStatus);
 
-    bootPowerOnStatusValid = readRegister(AXP2101_ADDR, AXP2101_REG_PWRON_STATUS, bootPowerOnStatus);
-    bootPowerOffStatusValid = readRegister(AXP2101_ADDR, AXP2101_REG_PWROFF_STATUS, bootPowerOffStatus);
-    bool status1Valid = readRegister(AXP2101_ADDR, AXP2101_REG_STATUS1, status1);
-    bool status2Valid = readRegister(AXP2101_ADDR, AXP2101_REG_STATUS2, status2);
-    bool pwroffEnableValid = readRegister(AXP2101_ADDR, AXP2101_REG_PWROFF_ENABLE, pwroffEnable);
-    bool dcProtectionValid = readRegister(AXP2101_ADDR, AXP2101_REG_DC_OVP_UVP, dcProtection);
-    bool voffValid = readRegister(AXP2101_ADDR, AXP2101_REG_VOFF_SET, voff);
-    bool pkeyConfigValid = readRegister(AXP2101_ADDR, AXP2101_REG_PKEY_CONFIG, pkeyConfig);
-    bool adcCtrlValid = readRegister(AXP2101_ADDR, AXP2101_REG_ADC_CTRL, adcCtrl);
-    bool gaugeWdtValid = readRegister(AXP2101_ADDR, AXP2101_REG_GAUGE_WDT_CTRL, gaugeWdtCtrl);
-    bool wdtCtrlValid = readRegister(AXP2101_ADDR, AXP2101_REG_WDT_CTRL, wdtCtrl);
-    bool lowBatValid = readRegister(AXP2101_ADDR, AXP2101_REG_LOW_BAT_WARN, lowBat);
-    bool batteryPercentValid = readRegister(AXP2101_ADDR, AXP2101_REG_BAT_PERCENT, batteryPercent);
+    if (bootPowerOnStatusValid) {
+      Serial.printf("[CoreS3_Power][BOOT] AXP2101 PWRON_STATUS=0x%02X\n", bootPowerOnStatus);
+    }
+    else {
+      Serial.println(F("[CoreS3_Power][BOOT] AXP2101 PWRON_STATUS read FAILED"));
+    }
 
-    Serial.println(F("[CoreS3_Power][BOOT_DIAG] ========================================"));
-    Serial.printf("[CoreS3_Power][BOOT_DIAG] ESP reset reason: %s (%d)\n", resetReasonText(bootResetReason), (int)bootResetReason);
-
-    if (bootPowerOnStatusValid)
-      Serial.printf("[CoreS3_Power][BOOT_DIAG] AXP2101 PWRON_STATUS=0x%02X\n", bootPowerOnStatus);
-    else
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] AXP2101 PWRON_STATUS read FAILED"));
-
-    if (bootPowerOffStatusValid)
+    if (bootPowerOffStatusValid) {
       printPowerOffSource(bootPowerOffStatus);
-    else
-      Serial.println(F("[CoreS3_Power][BOOT_DIAG] AXP2101 PWROFF_STATUS read FAILED"));
-
-    if (status1Valid && status2Valid) {
-      Serial.printf(
-        "[CoreS3_Power][BOOT_DIAG] STATUS1=0x%02X STATUS2=0x%02X VBUS=%s BAT=%s DIR=%s LIMIT=%s THERMAL=%s\n",
-        status1,
-        status2,
-        (status1 & AXP2101_STATUS1_VBUS_GOOD_MASK) ? "GOOD" : "NOT_GOOD",
-        (status1 & AXP2101_STATUS1_BAT_PRESENT_MASK) ? "PRESENT" : "ABSENT",
-        batteryDirectionText(status2),
-        (status1 & AXP2101_STATUS1_CURRENT_LIMIT_MASK) ? "YES" : "NO",
-        (status1 & AXP2101_STATUS1_THERMAL_MASK) ? "YES" : "NO"
-      );
     }
-
-    if (batteryPercentValid)
-      Serial.printf("[CoreS3_Power][BOOT_DIAG] Battery fuel gauge: %u%%\n", batteryPercent);
-
-    if (voffValid) {
-      uint16_t voffMv = 2600 + ((uint16_t)(voff & 0x07) * 100);
-      Serial.printf("[CoreS3_Power][BOOT_DIAG] VOFF_SET=0x%02X -> VSYS shutdown %u mV\n", voff, voffMv);
+    else {
+      Serial.println(F("[CoreS3_Power][BOOT] AXP2101 PWROFF_STATUS read FAILED"));
     }
-
-    if (pwroffEnableValid)
-      Serial.printf("[CoreS3_Power][BOOT_DIAG] PWROFF_EN=0x%02X\n", pwroffEnable);
-
-    if (dcProtectionValid)
-      Serial.printf("[CoreS3_Power][BOOT_DIAG] DC_OVP_UVP_CTRL=0x%02X\n", dcProtection);
-
-    if (pkeyConfigValid)
-      Serial.printf("[CoreS3_Power][BOOT_DIAG] PKEY_CONFIG=0x%02X\n", pkeyConfig);
-
-    if (adcCtrlValid)
-      Serial.printf("[CoreS3_Power][BOOT_DIAG] ADC_CTRL=0x%02X\n", adcCtrl);
-
-    if (gaugeWdtValid && wdtCtrlValid) {
-      Serial.printf(
-        "[CoreS3_Power][BOOT_DIAG] GAUGE_WDT_CTRL=0x%02X PMIC_WDT=%s WDT_CTRL=0x%02X\n",
-        gaugeWdtCtrl,
-        (gaugeWdtCtrl & 0x01) ? "ENABLED" : "DISABLED",
-        wdtCtrl
-      );
-    }
-
-    if (lowBatValid) {
-      uint8_t lowBatteryShutdownPercent = lowBat & 0x0F;
-      Serial.printf(
-        "[CoreS3_Power][BOOT_DIAG] LOW_BAT_WARN=0x%02X shutdown threshold=%u%%\n",
-        lowBat,
-        lowBatteryShutdownPercent
-      );
-    }
-
-    Serial.println(F("[CoreS3_Power][BOOT_DIAG] ========================================"));
   }
 
   bool configureAW9523()
@@ -386,17 +304,32 @@ private:
     return ok;
   }
 
-  bool enableExternal5V()
+  // ------------------------------------------------------------
+  // CoreS3 External 5V startup enable
+  //
+  // CoreS3 external 5V:
+  //   AW9523B P0 bit1 = BUS_EN
+  //   AW9523B P1 bit7 = BOOST_EN
+  //
+  // Both outputs are enabled for normal CoreS3 external 5V operation.
+  // Enable BOOST first, then BUS, matching the previously validated CoreS3
+  // external-5V startup ordering.
+  //
+  // ------------------------------------------------------------
+  bool enableExternal5VAtStartup()
   {
-    powerEnableAttempted = true;
+    external5VEnableAttempted = true;
+
     if (!readRegister(AW9523B_ADDR, REG_OUTPUT_P0, p0Before)) return false;
     if (!readRegister(AW9523B_ADDR, REG_OUTPUT_P1, p1Before)) return false;
     if (!configureAW9523()) return false;
 
+    // Bring up the boost source first.
     uint8_t newP1 = p1Before | BOOST_EN_MASK;
     if (!writeRegister(AW9523B_ADDR, REG_OUTPUT_P1, newP1)) return false;
     delay(10);
 
+    // Then connect the external BUS.
     uint8_t newP0 = p0Before | BUS_EN_MASK;
     if (!writeRegister(AW9523B_ADDR, REG_OUTPUT_P0, newP0)) return false;
     delay(10);
@@ -406,7 +339,59 @@ private:
 
     busEnabled   = (p0After & BUS_EN_MASK) != 0;
     boostEnabled = (p1After & BOOST_EN_MASK) != 0;
+
     return busEnabled && boostEnabled;
+  }
+
+  // Re-assert the intended ON state after CoreS3_Display/M5GFX has taken
+  // ownership of the internal I2C bus.
+  bool applyRuntimeExternal5VEnable()
+  {
+    uint8_t p0 = 0;
+    uint8_t p1 = 0;
+
+    if (!readRuntimeRegister(AW9523B_ADDR, REG_OUTPUT_P0, p0)) return false;
+    if (!readRuntimeRegister(AW9523B_ADDR, REG_OUTPUT_P1, p1)) return false;
+
+    uint8_t newP1 = p1 | BOOST_EN_MASK;
+    if (!writeRuntimeRegister(AW9523B_ADDR, REG_OUTPUT_P1, newP1)) return false;
+    delay(2);
+
+    uint8_t newP0 = p0 | BUS_EN_MASK;
+    if (!writeRuntimeRegister(AW9523B_ADDR, REG_OUTPUT_P0, newP0)) return false;
+    delay(2);
+
+    uint8_t verifyP0 = 0;
+    uint8_t verifyP1 = 0;
+
+    if (!readRuntimeRegister(AW9523B_ADDR, REG_OUTPUT_P0, verifyP0)) return false;
+    if (!readRuntimeRegister(AW9523B_ADDR, REG_OUTPUT_P1, verifyP1)) return false;
+
+    p0After = verifyP0;
+    p1After = verifyP1;
+
+    busEnabled   = (verifyP0 & BUS_EN_MASK) != 0;
+    boostEnabled = (verifyP1 & BOOST_EN_MASK) != 0;
+
+    return busEnabled && boostEnabled;
+  }
+
+  void serviceRuntimeExternal5VEnable()
+  {
+    if (!powerKeyMonitorReady || runtimeExternal5VEnableAttempted) return;
+
+    runtimeExternal5VEnableAttempted = true;
+    runtimeExternal5VEnableSuccess = applyRuntimeExternal5VEnable();
+    coreS3PowerExternal5VReadyState = runtimeExternal5VEnableSuccess;
+
+    Serial.printf(
+      "[CoreS3_Power][EXT5V] Runtime External 5V enable: %s BUS_EN=%s BOOST_EN=%s P0=0x%02X P1=0x%02X\n",
+      runtimeExternal5VEnableSuccess ? "APPLIED" : "FAILED",
+      busEnabled ? "ON" : "OFF",
+      boostEnabled ? "ON" : "OFF",
+      p0After,
+      p1After
+    );
   }
 
   bool configureRuntimePowerKeyMonitor()
@@ -443,7 +428,7 @@ private:
 
       if (stalePowerKeyFlags != 0) {
         Serial.printf(
-          "[CoreS3_Power][BOOT_DIAG] Stale PKEY IRQ before clear: 0x%02X%s%s%s%s\n",
+          "[CoreS3_Power][BOOT] Stale PKEY IRQ before clear: 0x%02X%s%s%s%s\n",
           stalePowerKeyFlags,
           (stalePowerKeyFlags & AXP2101_PKEY_POSITIVE_MASK) ? " RELEASE" : "",
           (stalePowerKeyFlags & AXP2101_PKEY_NEGATIVE_MASK) ? " PRESS" : "",
@@ -454,7 +439,7 @@ private:
         writeRuntimeRegister(AXP2101_ADDR, AXP2101_REG_IRQ_STATUS_1, stalePowerKeyFlags);
       }
       else {
-        Serial.println(F("[CoreS3_Power][BOOT_DIAG] Stale PKEY IRQ before clear: NONE"));
+        Serial.println(F("[CoreS3_Power][BOOT] Stale PKEY IRQ before clear: NONE"));
       }
     }
 
@@ -467,74 +452,99 @@ private:
     return true;
   }
 
-  void servicePowerDiagnostics()
+  // ------------------------------------------------------------
+  // Phase 10.4.6p-R5A DCDC3 Always-PWM stability candidate
+  //
+  // R4A and R4C remained stable with DCDC3 in Always-PWM, while R4B
+  // reproduced DCDC OVP with DCDC3 in Auto mode. R5A therefore keeps
+  // the minimum effective change: set DCDC3 Always-PWM and leave DCDC1
+  // plus every unrelated REG0x81 bit untouched.
+  //
+  // DCDC voltages, DCDC enables, charger settings, input limits, ADC
+  // settings, and REG0x23 DCDC OVP/UVP protection are not changed.
+  // ------------------------------------------------------------
+  void serviceDcdc3StabilityMode()
   {
-    if (!powerKeyMonitorReady || safeShutdownBlankActive) return;
+    if (dcdc3StabilityAttempted || !powerKeyMonitorReady) return;
 
-    unsigned long now = millis();
-    if (lastPowerDiag != 0 && now - lastPowerDiag < POWER_DIAG_INTERVAL_MS) return;
+    dcdc3StabilityAttempted = true;
 
-    lastPowerDiag = now;
-    powerDiagSampleCount++;
-
-    uint8_t status1 = 0;
-    uint8_t status2 = 0;
-    uint8_t batteryPercent = 0;
-    uint8_t pwroffStatus = 0;
-    uint8_t voff = 0;
-    uint8_t gaugeWdtCtrl = 0;
-
-    uint16_t batteryMv = 0;
-    uint16_t vbusMv = 0;
-    uint16_t vsysMv = 0;
-
-    bool status1Ok = readRuntimeRegister(AXP2101_ADDR, AXP2101_REG_STATUS1, status1);
-    bool status2Ok = readRuntimeRegister(AXP2101_ADDR, AXP2101_REG_STATUS2, status2);
-    bool batteryPercentOk = readRuntimeRegister(AXP2101_ADDR, AXP2101_REG_BAT_PERCENT, batteryPercent);
-    bool pwroffOk = readRuntimeRegister(AXP2101_ADDR, AXP2101_REG_PWROFF_STATUS, pwroffStatus);
-    bool voffOk = readRuntimeRegister(AXP2101_ADDR, AXP2101_REG_VOFF_SET, voff);
-    bool gaugeWdtOk = readRuntimeRegister(AXP2101_ADDR, AXP2101_REG_GAUGE_WDT_CTRL, gaugeWdtCtrl);
-    bool batteryVoltageOk = readRuntimeAdcH5L8(AXP2101_REG_ADC_BAT_H, AXP2101_REG_ADC_BAT_L, batteryMv);
-    bool vbusVoltageOk = readRuntimeAdcH6L8(AXP2101_REG_ADC_VBUS_H, AXP2101_REG_ADC_VBUS_L, vbusMv);
-    bool vsysVoltageOk = readRuntimeAdcH6L8(AXP2101_REG_ADC_VSYS_H, AXP2101_REG_ADC_VSYS_L, vsysMv);
-
-    if (!status1Ok || !status2Ok) {
-      Serial.printf(
-        "[CoreS3_Power][DIAG] t=%lus sample=%lu PMIC STATUS READ FAILED\n",
-        (unsigned long)(now / 1000),
-        (unsigned long)powerDiagSampleCount
-      );
+    if (!readRuntimeRegister(AXP2101_ADDR, AXP2101_REG_DCDC_FORCE_PWM, dcdcModeBefore)) {
+      Serial.println(F("[CoreS3_Power][DCDC3] REG81 read FAILED - mode unchanged"));
       return;
     }
 
-    bool batteryPresent = (status1 & AXP2101_STATUS1_BAT_PRESENT_MASK) != 0;
-    bool vbusGood = (status1 & AXP2101_STATUS1_VBUS_GOOD_MASK) != 0;
-    bool currentLimited = (status1 & AXP2101_STATUS1_CURRENT_LIMIT_MASK) != 0;
-    bool thermalRegulation = (status1 & AXP2101_STATUS1_THERMAL_MASK) != 0;
+    // R5A minimal stability change:
+    // set DCDC3 Always-PWM only; preserve DCDC1 and every unrelated REG81 bit.
+    const uint8_t target = dcdcModeBefore | AXP2101_DCDC3_ALWAYS_PWM_MASK;
 
-    uint16_t voffMv = voffOk ? (2600 + ((uint16_t)(voff & 0x07) * 100)) : 0;
+    if (!writeRuntimeRegister(AXP2101_ADDR, AXP2101_REG_DCDC_FORCE_PWM, target)) {
+      Serial.println(F("[CoreS3_Power][DCDC3] REG81 write FAILED"));
+      return;
+    }
+
+    if (!readRuntimeRegister(AXP2101_ADDR, AXP2101_REG_DCDC_FORCE_PWM, dcdcModeAfter)) {
+      Serial.println(F("[CoreS3_Power][DCDC3] REG81 verify read FAILED"));
+      return;
+    }
+
+    dcdc3StabilityApplied =
+      (dcdcModeAfter & AXP2101_DCDC3_ALWAYS_PWM_MASK) != 0;
 
     Serial.printf(
-      "[CoreS3_Power][DIAG] t=%lus sample=%lu S1=0x%02X S2=0x%02X VBUS=%s BAT=%s DIR=%s SOC=%d VBAT=%u VBUSmV=%u VSYS=%u VOFF=%u LIMIT=%s THERM=%s WDT=%s POFF=0x%02X bri=%u strip=%u\n",
-      (unsigned long)(now / 1000),
-      (unsigned long)powerDiagSampleCount,
-      status1,
-      status2,
-      vbusGood ? "GOOD" : "NOT_GOOD",
-      batteryPresent ? "PRESENT" : "ABSENT",
-      batteryDirectionText(status2),
-      batteryPercentOk ? (int)batteryPercent : -1,
-      batteryVoltageOk ? batteryMv : 0,
-      vbusVoltageOk ? vbusMv : 0,
-      vsysVoltageOk ? vsysMv : 0,
-      voffMv,
-      currentLimited ? "YES" : "NO",
-      thermalRegulation ? "YES" : "NO",
-      gaugeWdtOk ? ((gaugeWdtCtrl & 0x01) ? "ON" : "OFF") : "?",
-      pwroffOk ? pwroffStatus : 0,
-      bri,
-      strip.getBrightness()
+      "[CoreS3_Power][DCDC3] REG81 0x%02X -> 0x%02X result=%s DCDC1=%s DCDC3=%s OVP_PROTECTION=UNCHANGED\n",
+      dcdcModeBefore,
+      dcdcModeAfter,
+      dcdc3StabilityApplied ? "APPLIED" : "VERIFY_FAILED",
+      (dcdcModeAfter & AXP2101_DCDC1_ALWAYS_PWM_MASK) ? "ALWAYS_PWM" : "AUTO",
+      (dcdcModeAfter & AXP2101_DCDC3_ALWAYS_PWM_MASK) ? "ALWAYS_PWM" : "AUTO"
     );
+  }
+
+  void serviceRuntimePowerHealth()
+  {
+    if (!powerKeyMonitorReady || safeShutdownBlankActive) return;
+
+    const unsigned long now = millis();
+    if (
+      lastRuntimePowerHealthPoll != 0 &&
+      now - lastRuntimePowerHealthPoll < RUNTIME_POWER_HEALTH_POLL_MS
+    ) return;
+
+    lastRuntimePowerHealthPoll = now;
+
+    uint8_t p0 = 0;
+    uint8_t p1 = 0;
+    const bool p0Ok = readRuntimeRegister(AW9523B_ADDR, REG_OUTPUT_P0, p0);
+    const bool p1Ok = readRuntimeRegister(AW9523B_ADDR, REG_OUTPUT_P1, p1);
+
+    if (!p0Ok || !p1Ok) {
+      coreS3PowerExternal5VReadyState = false;
+      if (!runtimeExternal5VViolationLogged) {
+        runtimeExternal5VViolationLogged = true;
+        Serial.println(F("[CoreS3_Power][EXT5V] WARNING: runtime state read failed"));
+      }
+      return;
+    }
+
+    busEnabled = (p0 & BUS_EN_MASK) != 0;
+    boostEnabled = (p1 & BOOST_EN_MASK) != 0;
+    const bool healthy = busEnabled && boostEnabled;
+    coreS3PowerExternal5VReadyState = healthy;
+
+    if (!healthy && !runtimeExternal5VViolationLogged) {
+      runtimeExternal5VViolationLogged = true;
+      Serial.printf(
+        "[CoreS3_Power][EXT5V] WARNING: runtime path changed BUS_EN=%s BOOST_EN=%s P0=0x%02X P1=0x%02X\n",
+        busEnabled ? "ON" : "OFF",
+        boostEnabled ? "ON" : "OFF",
+        p0,
+        p1
+      );
+    }
+    else if (healthy) {
+      runtimeExternal5VViolationLogged = false;
+    }
   }
 
   void waitForLedOutputComplete()
@@ -706,10 +716,11 @@ public:
     bootResetReason = esp_reset_reason();
 
     Serial.println();
-    Serial.println(F("[CoreS3_Power] Power Enable test start"));
+    Serial.println(F("[CoreS3_Power][BUILD] Phase 10.4.6p-R5A DCDC3 ALWAYS-PWM STABILITY CANDIDATE"));
+    Serial.println(F("[CoreS3_Power] R5A power stability candidate start"));
     Serial.printf("[CoreS3_Power] I2C SDA=%d SCL=%d\n", i2c_sda, i2c_scl);
     Serial.printf(
-      "[CoreS3_Power][BOOT_DIAG] ESP reset reason: %s (%d)\n",
+      "[CoreS3_Power][BOOT] ESP reset reason: %s (%d)\n",
       resetReasonText(bootResetReason),
       (int)bootResetReason
     );
@@ -727,15 +738,15 @@ public:
     Serial.printf("[CoreS3_Power] AXP2101 (0x34): %s\n", axp2101Found ? "FOUND" : "NOT FOUND");
 
     if (!aw9523Found || !axp2101Found) {
-      Serial.println(F("[CoreS3_Power] Power enable canceled"));
+      Serial.println(F("[CoreS3_Power] External 5V enable canceled"));
       coreS3PowerInitializationCompleteState = true;
       return;
     }
 
     captureBootAxpDiagnostics();
 
-    powerEnableSuccess = enableExternal5V();
-    coreS3PowerExternal5VReadyState = powerEnableSuccess;
+    external5VEnableSuccess = enableExternal5VAtStartup();
+    coreS3PowerExternal5VReadyState = external5VEnableSuccess;
 
     powerKeyMonitorReady = false;
     runtimePowerKeyMonitorAttempted = false;
@@ -745,20 +756,22 @@ public:
     Serial.printf("[CoreS3_Power] Safe shutdown: PRESS fallback >= %lu ms\n", SAFE_SHUTDOWN_FALLBACK_HOLD_MS);
     Serial.printf("[CoreS3_Power] BUS_EN: %s\n", busEnabled ? "ON" : "OFF");
     Serial.printf("[CoreS3_Power] BOOST_EN: %s\n", boostEnabled ? "ON" : "OFF");
-    Serial.printf("[CoreS3_Power] External 5V: %s\n", powerEnableSuccess ? "ENABLED" : "FAILED");
+    Serial.printf("[CoreS3_Power] External 5V: %s\n", external5VEnableSuccess ? "ENABLED" : "FAILED");
     Serial.printf("[CoreS3_Power] AW9523 P0: 0x%02X -> 0x%02X\n", p0Before, p0After);
     Serial.printf("[CoreS3_Power] AW9523 P1: 0x%02X -> 0x%02X\n", p1Before, p1After);
 
     coreS3PowerInitializationCompleteState = true;
 
-    Serial.println(F("[CoreS3_Power] Power Enable test end"));
+    Serial.println(F("[CoreS3_Power] R5A setup end"));
     Serial.println();
   }
 
   void loop() override
   {
     servicePhysicalPowerKey();
-    servicePowerDiagnostics();
+    serviceRuntimeExternal5VEnable();
+    serviceDcdc3StabilityMode();
+    serviceRuntimePowerHealth();
   }
 
   void addToJsonInfo(JsonObject& root) override
@@ -774,6 +787,22 @@ public:
 
     JsonArray axpInfo = user.createNestedArray("CoreS3 AXP2101");
     axpInfo.add(axp2101Found ? "Found (0x34)" : "Not found");
+
+    JsonArray stabilityInfo = user.createNestedArray("CoreS3 Power Stability");
+    stabilityInfo.add("R5A DCDC3 Always-PWM candidate");
+
+    JsonArray pwmInfo = user.createNestedArray("CoreS3 DCDC3 Mode");
+    if (!dcdc3StabilityAttempted) {
+      pwmInfo.add("PENDING");
+    }
+    else if (!dcdc3StabilityApplied) {
+      pwmInfo.add("FAILED / NOT APPLIED");
+    }
+    else {
+      pwmInfo.add((dcdcModeAfter & AXP2101_DCDC1_ALWAYS_PWM_MASK) ? "DCDC1 Always PWM" : "DCDC1 Auto PWM/PFM");
+      pwmInfo.add((dcdcModeAfter & AXP2101_DCDC3_ALWAYS_PWM_MASK) ? "DCDC3 Always PWM" : "DCDC3 Auto PWM/PFM");
+      pwmInfo.add("OVP protection unchanged");
+    }
 
     JsonArray shutdownInfo = user.createNestedArray("CoreS3 Safe Shutdown");
     if (!powerKeyMonitorReady) {
@@ -811,9 +840,26 @@ public:
     shutdownInfo.add(irqText);
 
     JsonArray powerInfo = user.createNestedArray("CoreS3 Ext 5V");
-    if (!powerEnableAttempted) powerInfo.add("Not attempted");
-    else if (powerEnableSuccess) powerInfo.add("ENABLED");
-    else powerInfo.add("FAILED");
+    if (!external5VEnableAttempted) {
+      powerInfo.add("Enable not attempted");
+    }
+    else if (external5VEnableSuccess) {
+      powerInfo.add("ENABLED - ON");
+    }
+    else {
+      powerInfo.add("Enable FAILED");
+    }
+
+    JsonArray comparisonInfo = user.createNestedArray("CoreS3 Ext 5V Runtime");
+    if (!runtimeExternal5VEnableAttempted) {
+      comparisonInfo.add("Startup enabled; runtime confirmation pending");
+    }
+    else if (runtimeExternal5VEnableSuccess && busEnabled && boostEnabled) {
+      comparisonInfo.add("ACTIVE - BUS_EN ON / BOOST_EN ON");
+    }
+    else {
+      comparisonInfo.add("FAILED / external 5V path changed");
+    }
 
     JsonArray busInfo = user.createNestedArray("CoreS3 BUS_EN");
     busInfo.add(busEnabled ? "ON" : "OFF");

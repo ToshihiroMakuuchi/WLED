@@ -1,16 +1,17 @@
-# Phase 10.4.6p-RMT-DIAG - M5Stack CoreS3 / WLED V17 NeoPixelBus diagnostic patch
+# Phase 10.4.6p-RMT-R2 - M5Stack CoreS3 / WLED V17 NeoPixelBus DMA1024 patch
 #
 # This PlatformIO PRE script preserves the verified CoreS3 NeoPixelBus/RMT
-# stabilization changes and changes only the ESP32-S3 RMT memory allocation
-# from 48 symbols to 96 symbols for diagnostic testing.
+# stabilization changes and configures ESP32-S3 RMT TX for DMA with a
+# 1024-symbol buffer.
 #
-# Diagnostic purpose:
-#   Investigate the observed LED-tail anomaly where LEDs beyond the configured
-#   logical count can light when a frame is turned OFF.
+# Purpose:
+#   Prevent the intermittent LED-tail anomaly where LEDs 33-36 can light even
+#   when WLED is configured for 32 LEDs. Hardware A/B testing showed no
+#   recurrence with DMA / 1024 symbols under the reproduced test paths.
 #
 # Applied behavior:
-#   1) ESP32-S3 uses 96 RMT symbols per TX channel for this diagnostic test.
-#      This is two ESP32-S3 RMT memory blocks (48 symbols per block).
+#   1) ESP32-S3 uses DMA with a 1024-symbol TX buffer.
+#      A 32-pixel RGB frame uses 768 RMT symbols and fits in one DMA buffer.
 #   2) Other ESP32 targets remain at 192 symbols.
 #   3) IsReadyToUpdate() no longer calls rmt_tx_wait_all_done(..., 0), avoiding
 #      the ESP-IDF 5.5 "flush timeout" log flood and its runtime overhead.
@@ -18,10 +19,9 @@
 #      allocation does not cascade into invalid RMT API calls.
 #
 # IMPORTANT:
-#   - Diagnostic only. Do not Git-save as the stable baseline yet.
-#   - The unique marker intentionally differs from the existing 48-symbol
-#     stable patch so a normal PlatformIO build will re-patch an already
-#     modified NeoEsp32RmtXMethod.h from 48 -> 96.
+#   - The unique marker identifies the DMA1024 version so PlatformIO can
+#     verify that the intended patch is already present.
+#   - ESP32 targets other than ESP32-S3 keep the existing non-DMA behavior.
 #
 # The patch remains idempotent once this diagnostic marker is present.
 
@@ -29,7 +29,7 @@ from pathlib import Path
 
 Import("env")
 
-MARKER = "CoreS3 V17 RMT diagnostic 96-symbol patch 10.4.6p"
+MARKER = "CoreS3 V17 RMT DMA1024 patch 10.4.6p-R2"
 
 
 def _replace_function(source: str, signature: str, replacement: str) -> str:
@@ -143,7 +143,7 @@ def _apply_patch() -> None:
 
     # Fast path: this 96-symbol diagnostic patch is already present.
     if MARKER in text:
-        print(f"[CoreS3 RMT DIAG96] diagnostic patch already present: {target.name}")
+        print(f"[CoreS3 RMT DMA1024] patch already present: {target.name}")
         return
 
     destructor = f'''    ~NeoEsp32RmtMethodBase()
@@ -192,11 +192,12 @@ def _apply_patch() -> None:
         config.gpio_num = static_cast<gpio_num_t>(_pin);
 
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
-        // Phase 10.4.6p-RMT-DIAG:
-        // ESP32-S3 has 48 symbols per RMT memory block.
-        // Use two blocks (96 symbols) to test whether the observed
-        // LED-tail anomaly is caused by RMT encoder refill/underrun timing.
-        config.mem_block_symbols = 96;
+        // Phase 10.4.6p-RMT-R2:
+        // CoreS3 / ESP32-S3 uses DMA with a 1024-symbol buffer.
+        // A 32-pixel RGB frame is 768 RMT symbols, so the complete frame
+        // fits in one DMA buffer and avoids the non-DMA refill boundary
+        // implicated in the LED 33-36 tail-pixel anomaly.
+        config.mem_block_symbols = 1024;
 #else
         config.mem_block_symbols = 192;
 #endif
@@ -204,7 +205,11 @@ def _apply_patch() -> None:
         config.resolution_hz = T_SPEED::RmtTicksPerSecond;
         config.trans_queue_depth = 4;
         config.flags.invert_out = T_INVERTED::Inverted;
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+        config.flags.with_dma = true;
+#else
         config.flags.with_dma = false;
+#endif
 
         esp_err_t ret = rmt_new_tx_channel(&config, &_channel);
         if (ret != ESP_OK || _channel == nullptr)
@@ -284,21 +289,22 @@ def _apply_patch() -> None:
         text = _replace_function(text, "void Initialize()", initialize)
         text = _replace_function(text, "void Update(bool maintainBufferConsistency)", update)
     except RuntimeError as exc:
-        raise RuntimeError(f"CoreS3 RMT diagnostic patch failed for {target}: {exc}") from exc
+        raise RuntimeError(f"CoreS3 RMT DMA1024 patch failed for {target}: {exc}") from exc
 
     required = [
         MARKER,
-        "config.mem_block_symbols = 96;",
+        "config.mem_block_symbols = 1024;",
+        "config.flags.with_dma = true;",
         "return (_channel != nullptr && _led_encoder != nullptr);",
     ]
     for item in required:
         if item not in text:
             raise RuntimeError(
-                f"CoreS3 RMT diagnostic patch verification failed: missing {item}"
+                f"CoreS3 RMT DMA1024 patch verification failed: missing {item}"
             )
 
     target.write_text(text, encoding="utf-8", newline="\n")
-    print(f"[CoreS3 RMT DIAG96] applied ESP32-S3 96-symbol diagnostic patch: {target}")
+    print(f"[CoreS3 RMT DMA1024] applied ESP32-S3 DMA / 1024-symbol patch: {target}")
 
 
 if not env.IsIntegrationDump():
