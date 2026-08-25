@@ -1,4 +1,4 @@
-# Phase 10.4.6p-RMT-R2 - M5Stack CoreS3 / WLED V17 NeoPixelBus DMA1024 patch
+# Phase 10.4.6p-RMT-R2 - M5Stack CoreS3 / WLED V17 NeoPixelBus DMA1024 Production Baseline
 #
 # This PlatformIO PRE script preserves the verified CoreS3 NeoPixelBus/RMT
 # stabilization changes and configures ESP32-S3 RMT TX for DMA with a
@@ -23,7 +23,7 @@
 #     verify that the intended patch is already present.
 #   - ESP32 targets other than ESP32-S3 keep the existing non-DMA behavior.
 #
-# The patch remains idempotent once this diagnostic marker is present.
+# The patch remains idempotent once this DMA1024 marker is present.
 
 from pathlib import Path
 
@@ -141,7 +141,7 @@ def _apply_patch() -> None:
     target = _find_target()
     text = target.read_text(encoding="utf-8")
 
-    # Fast path: this 96-symbol diagnostic patch is already present.
+    # Fast path: this DMA1024 production patch is already present.
     if MARKER in text:
         print(f"[CoreS3 RMT DMA1024] patch already present: {target.name}")
         return
