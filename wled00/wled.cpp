@@ -25,6 +25,20 @@
 #endif
 extern "C" void usePWMFixedNMI();
 
+// -----------------------------------------------------------------------------
+// Phase 10.5.0d-R2N - optional usermod bus re-init gate
+//
+// Default/weak implementation keeps upstream WLED behavior unchanged.
+// CoreS3_Power provides a strong implementation in the CoreS3 build.
+//
+// Return true  -> keep doInitBusses asserted and defer finalizeInit().
+// Return false -> perform the normal WLED bus re-initialization now.
+// -----------------------------------------------------------------------------
+extern "C" bool __attribute__((weak)) coreS3PowerShouldDeferBusReinit()
+{
+  return false;
+}
+
 // millis()-rollover counter (millis() wraps every ~50 days) - previously
 // WLED_GLOBAL. json.cpp and usermods only ever read it for uptime reporting,
 // so it gets a by-value getter rather than a mutable reference: an accidental
@@ -60,18 +74,6 @@ void WLED::loop()
 {
   static uint16_t      heapTime = 0;   // timestamp for heap check
   static uint8_t       heapDanger = 0; // counter for consecutive low-heap readings
-
-#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(WLED_HAS_PARALLEL_I2S)
-  // Phase 10.5.0b - ESP32-S3 parallel-I2S LED settings safe reboot.
-  //
-  // Runtime teardown/re-init of the NeoPixelBus LCD/GDMA backend has been
-  // observed to leave parallel-I2S outputs unable to accept new frames.
-  // Keep the normal WLED re-init path so the pending BusConfig objects are
-  // converted into BusManager objects and can be serialized to cfg.json,
-  // then reboot only after the configuration writer has completed.
-  static bool parallelI2SLedConfigRebootPending = false;
-#endif
-
 #ifdef WLED_DEBUG
   static unsigned long lastRun = 0;
   unsigned long        loopMillis = millis();
@@ -249,31 +251,22 @@ void WLED::loop()
   //LED settings have been saved, re-init busses
   //This code block causes severe FPS drop on ESP32 with the original "if (busConfigs[0] != nullptr)" conditional. Investigate!
   if (doInitBusses) {
-#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(WLED_HAS_PARALLEL_I2S)
-    bool parallelI2SConfigured = false;
-    for (const auto &bus : busConfigs) {
-      if (Bus::isDigital(bus.type) && !Bus::is2Pin(bus.type) && bus.driverType == 1) {
-        parallelI2SConfigured = true;
-        break;
-      }
+    // Phase 10.5.0d-R2N:
+    // Give an interested usermod one guaranteed main-loop opportunity to
+    // prepare the OLD LED range before finalizeInit() destroys/recreates buses.
+    //
+    // The weak default hook returns false, so non-CoreS3 builds retain the
+    // original WLED behavior without any compile-time platform dependency.
+    if (!coreS3PowerShouldDeferBusReinit()) {
+      doInitBusses = false;
+      DEBUG_PRINTLN(F("Re-init busses."));
+      bool aligned = strip.checkSegmentAlignment(); //see if old segments match old bus(ses)
+      strip.finalizeInit(); // will create buses and also load default ledmap if present
+      if (aligned) strip.makeAutoSegments();
+      else strip.fixInvalidSegments();
+      BusManager::setBrightness(scaledBri(bri)); // fix re-initialised bus' brightness #4005 and #4824
+      configNeedsWrite = true;
     }
-#endif
-
-    doInitBusses = false;
-    DEBUG_PRINTLN(F("Re-init busses."));
-    bool aligned = strip.checkSegmentAlignment(); //see if old segments match old bus(ses)
-    strip.finalizeInit(); // will create buses and also load default ledmap if present
-    if (aligned) strip.makeAutoSegments();
-    else strip.fixInvalidSegments();
-    BusManager::setBrightness(scaledBri(bri)); // fix re-initialised bus' brightness #4005 and #4824
-    configNeedsWrite = true;
-
-#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(WLED_HAS_PARALLEL_I2S)
-    if (parallelI2SConfigured) {
-      parallelI2SLedConfigRebootPending = true;
-      DEBUG_PRINTLN(F("[CoreS3 LED] Parallel I2S LED settings changed; safe reboot pending after cfg.json write."));
-    }
-#endif
   }
   if (loadLedmap >= 0) {
     strip.deserializeMap(loadLedmap);
@@ -281,16 +274,6 @@ void WLED::loop()
   }
   yield();
   if (configNeedsWrite) serializeConfigToFS();
-
-#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(WLED_HAS_PARALLEL_I2S)
-  // Do not request the reboot until WLED has finished its normal config write.
-  // This preserves the newly-created BusManager configuration in cfg.json.
-  if (parallelI2SLedConfigRebootPending && !configNeedsWrite) {
-    parallelI2SLedConfigRebootPending = false;
-    DEBUG_PRINTLN(F("[CoreS3 LED] cfg.json write complete; rebooting to cold-init parallel I2S."));
-    doReboot = true;
-  }
-#endif
 
   yield();
   handleWs();
