@@ -25,15 +25,9 @@
 #endif
 extern "C" void usePWMFixedNMI();
 
-// -----------------------------------------------------------------------------
-// Phase 10.5.0d-R2N - optional usermod bus re-init gate
-//
-// Default/weak implementation keeps upstream WLED behavior unchanged.
-// CoreS3_Power provides a strong implementation in the CoreS3 build.
-//
-// Return true  -> keep doInitBusses asserted and defer finalizeInit().
-// Return false -> perform the normal WLED bus re-initialization now.
-// -----------------------------------------------------------------------------
+// Optional usermod bus re-init gate.
+// The weak default preserves standard WLED behavior. CoreS3_Power provides
+// the strong implementation used to protect old LED output before bus rebuild.
 extern "C" bool __attribute__((weak)) coreS3PowerShouldDeferBusReinit()
 {
   return false;
@@ -251,12 +245,8 @@ void WLED::loop()
   //LED settings have been saved, re-init busses
   //This code block causes severe FPS drop on ESP32 with the original "if (busConfigs[0] != nullptr)" conditional. Investigate!
   if (doInitBusses) {
-    // Phase 10.5.0d-R2N:
-    // Give an interested usermod one guaranteed main-loop opportunity to
-    // prepare the OLD LED range before finalizeInit() destroys/recreates buses.
-    //
-    // The weak default hook returns false, so non-CoreS3 builds retain the
-    // original WLED behavior without any compile-time platform dependency.
+    // Allow a usermod to defer this rebuild until the old LED output is safe.
+    // The weak default returns false, preserving standard WLED behavior.
     if (!coreS3PowerShouldDeferBusReinit()) {
       doInitBusses = false;
       DEBUG_PRINTLN(F("Re-init busses."));
