@@ -5,7 +5,7 @@
 // ===========================================================
 // M5Stack CoreS3 Audio Usermod
 //
-// Phase 10.4.6q-R2 - Audio Production Cleanup
+// CoreS3 Audio Production Baseline
 //
 // Responsibilities
 //   - Access the CoreS3 internal I2C bus through the M5GFX
@@ -449,7 +449,7 @@ public:
     initializationFinished = false;
 
     Serial.println();
-    Serial.println(F("[CoreS3_Audio][BUILD] Phase 10.4.6q-R2 AUDIO PRODUCTION BASELINE"));
+    Serial.println(F("[CoreS3_Audio][BUILD] CoreS3 Audio v0.1.5"));
     Serial.println(F("[CoreS3_Audio] Initialization start"));
 
     audioPinsReserved = reserveInternalAudioPins();
