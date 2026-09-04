@@ -227,6 +227,23 @@ GPIO0 は ES7210 MCLK として使用するため、WLED の物理 Button から
 
 ---
 
+
+### 公開用 Build Example
+
+CoreS3 用の PlatformIO 設定サンプルを次の場所に同梱しています。
+
+```text
+usermods/CoreS3_Display/platformio_override.ini.example
+```
+
+このファイルを WLED リポジトリ直下へコピーし、次の名前に変更して使用します。
+
+```text
+platformio_override.ini
+```
+
+このサンプルには、検証済みの CoreS3 Environment、Quad PSRAM 設定、CoreS3 Usermod、Audio Reactive 定義、NeoPixelBus patch 用 pre-script、および Upload 後の watchdog-reset 処理が含まれています。
+
 ## Build
 
 ### 1. Requirements
@@ -240,7 +257,7 @@ GPIO0 は ES7210 MCLK として使用するため、WLED の物理 Button から
 
 WLED リポジトリを VS Code で開きます。
 
-`platformio_override.ini` がリポジトリ直下にあることを確認してください。
+`platformio_override.ini` がリポジトリ直下にあることを確認してください。存在しない場合は、`usermods/CoreS3_Display/platformio_override.ini.example` をリポジトリ直下へコピーし、`platformio_override.ini` にリネームしてください。
 
 ### 3. Build
 

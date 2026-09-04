@@ -227,6 +227,23 @@ GPIO0 is used for the ES7210 MCLK and is therefore excluded from the WLED physic
 
 ---
 
+
+### Public Build Example
+
+A ready-to-use CoreS3 PlatformIO override example is included at:
+
+```text
+usermods/CoreS3_Display/platformio_override.ini.example
+```
+
+Copy it to the WLED repository root and rename it to:
+
+```text
+platformio_override.ini
+```
+
+The example includes the validated CoreS3 environment, Quad PSRAM settings, CoreS3 usermods, Audio Reactive definitions, NeoPixelBus patch pre-scripts, and the post-upload watchdog-reset handling.
+
 ## Build
 
 ### 1. Requirements
@@ -240,7 +257,7 @@ GPIO0 is used for the ES7210 MCLK and is therefore excluded from the WLED physic
 
 Open the WLED repository in VS Code.
 
-Confirm that `platformio_override.ini` exists at the repository root.
+Confirm that `platformio_override.ini` exists at the repository root. If it does not, copy `usermods/CoreS3_Display/platformio_override.ini.example` to the repository root and rename it to `platformio_override.ini`.
 
 ### 3. Build
 
