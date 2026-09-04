@@ -5,7 +5,7 @@
 #include <esp_system.h>
 
 /*
- * Phase 10.5.0d-R2P - CoreS3 Power Production Cleanup
+ * CoreS3 Power Production Baseline
  *
  * Production baseline for M5Stack CoreS3 power and LED-bus runtime handling.
  *
@@ -1066,7 +1066,7 @@ public:
     bootResetReason = esp_reset_reason();
 
     Serial.println();
-    Serial.println(F("[CoreS3_Power][BUILD] Phase 10.5.0d-R2P POWER PRODUCTION CLEANUP"));
+    Serial.println(F("[CoreS3_Power][BUILD] CoreS3 Power v0.1.0"));
     Serial.println(F("[CoreS3_Power] Initialization start"));
     Serial.printf("[CoreS3_Power] I2C SDA=%d SCL=%d\n", i2c_sda, i2c_scl);
     Serial.printf(
