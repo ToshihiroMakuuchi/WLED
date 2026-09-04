@@ -7271,7 +7271,7 @@ class CoreS3DisplayUsermod : public Usermod {
   void setup() override {
     Serial.println();
 
-    Serial.println( F( "[CoreS3_Display][BUILD] Phase 10.4.6r-R1B SCREENSHOT RGB565 BYTE ORDER FIX" ) );
+    Serial.println( F( "[CoreS3_Display][BUILD] CoreS3 Display v0.1.0" ) );
     Serial.println( F( "[CoreS3_Display] Initialization start" ) );
 
     registerScreenshotEndpoint();
