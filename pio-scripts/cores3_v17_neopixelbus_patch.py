@@ -27,8 +27,8 @@ from pathlib import Path
 
 Import("env")
 
-RMT_MARKER = "CoreS3 V17 RMT DMA1024 patch 10.4.6p-R2"
-LCD_MARKER = "CoreS3 V17 LCD GDMA teardown production patch 10.5.0d-R2Q"
+RMT_MARKER = "CoreS3 NeoPixelBus RMT DMA1024 production patch"
+LCD_MARKER = "CoreS3 NeoPixelBus LCD GDMA teardown production patch"
 
 LCD_TEST_PRAGMAS = (
     '#pragma message("=== CORES3 TEST: ACTIVE NeoPixelBus NeoEsp32LcdXMethod.h IS COMPILED ===")',
