@@ -1,0 +1,54 @@
+diff a/wled00/asyncDNS.h b/wled00/asyncDNS.h	(rejected hunks)
+@@ -2,19 +2,51 @@
+ /*
+   asyncDNS.h - wrapper class for asynchronous DNS lookups using lwIP
+   by @dedehai, C++ improvements & hardening by @willmmiles
++
++  ESP-IDF 5.x TCP/IP task safety
++  ------------------------------
++  dns_gethostbyname() is a lwIP raw API. On ESP-IDF 5.x, calling it
++  directly from the Arduino/WLED loop task can trigger the lwIP assertion:
++
++    assert failed: udp_new_ip_type ...
++    (Required to lock TCPIP core functionality!)
++
++  For ESP32 builds using ESP-IDF 5.x or newer, DNS startup is scheduled
++  into the lwIP TCP/IP task with tcpip_callback() before calling
++  dns_gethostbyname().
++
++  ESP8266 and ESP32 builds using ESP-IDF 4.x retain the original
++  asynchronous callback path.
+ */
+ 
+ #include <Arduino.h>
+ #include <atomic>
+ #include <memory>
++#include <new>
++#include <cstring>
++#include <cstdlib>
++
+ #include <lwip/dns.h>
+ #include <lwip/err.h>
+ 
++#if defined(ARDUINO_ARCH_ESP32)
++  #include <esp_idf_version.h>
++
++  #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
++    #include <lwip/tcpip.h>
++    #define WLED_ASYNCDNS_TCPIP_SAFE 1
++  #else
++    #define WLED_ASYNCDNS_TCPIP_SAFE 0
++  #endif
++#else
++  #define WLED_ASYNCDNS_TCPIP_SAFE 0
++#endif
++
++
+ class AsyncDNS {
+ 
+   // C++14 shim
+ #if __cplusplus < 201402L
+-  // Really simple C++11 shim for non-array case; implementation from cppreference.com
+   template<class T, class... Args>
+   static std::unique_ptr<T>
+   make_unique(Args&&... args)
