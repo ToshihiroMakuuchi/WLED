@@ -8,6 +8,8 @@ This project runs the WLED v17 series natively on M5Stack CoreS3 and combines
 > **Status:** CoreS3 production baseline  
 > **Base:** WLED 17.0.0-devV5  
 > **Target:** M5Stack CoreS3 (ESP32-S3 / 16MB Flash / 8MB Quad PSRAM)
+>
+> This is a community-maintained CoreS3 port/extension of WLED and is not an official WLED or M5Stack firmware release.
 
 ---
 
@@ -26,7 +28,7 @@ This project runs the WLED v17 series natively on M5Stack CoreS3 and combines
 - Safe Shutdown using the AXP2101 Power Key
 - LED BLACK frame before hard power-off
 - Restore of the previous LED state when Safe Shutdown is canceled
-- ESP32-S3 / NeoPixelBus RMT DMA1024 stabilization
+- ESP32-S3 / NeoPixelBus RMT DMA1024 and LCD/GDMA runtime-rebuild stabilization
 - Browser capture of the current LCD as a BMP image
 
 ---
@@ -266,7 +268,7 @@ For CoreS3, the PlatformIO post-upload reset is changed to watchdog-reset to imp
 
 ---
 
-## NeoPixelBus / RMT DMA1024 Patch
+## NeoPixelBus / RMT DMA1024 + LCD/GDMA Patches
 
 With ESP32-S3 + NeoPixelBus RMT output, hardware testing found an intermittent condition where pixels beyond the configured LED Count could light unexpectedly.
 
@@ -297,7 +299,22 @@ When already present:
 [CoreS3 RMT DMA1024] patch already present: NeoEsp32RmtXMethod.h
 ```
 
-This reproducibility has been validated by deleting the NeoPixelBus dependency and rebuilding.
+The same pre-script also applies the validated LCD/GDMA teardown fix used during runtime LED-bus rebuilds.  
+When the last LCD mux bus is destroyed, the GDMA channel is stopped, reset, disconnected, and deleted so stale LCD peripheral ownership is not carried into the next bus initialization.
+
+Example when the LCD/GDMA patch is applied:
+
+```text
+[CoreS3 LCD GDMA] applied full GDMA teardown production patch: ...
+```
+
+When already present:
+
+```text
+[CoreS3 LCD GDMA] patch already present: NeoEsp32LcdXMethod.h
+```
+
+Both patches are idempotent. Their reproducibility has been validated by deleting the NeoPixelBus dependency and rebuilding from a clean dependency state.
 
 ---
 
@@ -542,10 +559,19 @@ The following items have been validated on CoreS3 hardware:
 
 This project is based on WLED:
 
-https://github.com/wled/WLED
+https://github.com/wled-dev/WLED
 
 WLED itself remains the upstream project.  
 Please refer to the upstream repository for WLED documentation, supported LED types, API behavior, and licensing.
+
+---
+
+## Licensing
+
+WLED source in this repository follows the upstream **EUPL v1.2** license.  
+NeoPixelBus remains licensed under **LGPL-3.0-or-later**. The CoreS3 build-time patch script modifies the PlatformIO-downloaded NeoPixelBus source while preserving the upstream library license header.
+
+Refer to the repository `LICENSE` file and the respective upstream projects for complete license terms.
 
 ---
 
@@ -560,7 +586,7 @@ Remaining work toward CoreS3 v1.0:
 - [x] Battery / Health UX
 - [x] Recovery AP
 - [x] Safe Shutdown
-- [x] RMT DMA1024 stabilization
+- [x] NeoPixelBus RMT DMA1024 / LCD-GDMA stabilization
 - [x] Browser Screenshot
 - [ ] Final release branch / tag
 - [ ] Release notes

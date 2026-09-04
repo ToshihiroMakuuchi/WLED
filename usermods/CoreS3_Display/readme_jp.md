@@ -8,6 +8,8 @@ M5Stack CoreS3 上で WLED v17 系をネイティブ動作させ、
 > **Status:** CoreS3 production baseline  
 > **Base:** WLED 17.0.0-devV5  
 > **Target:** M5Stack CoreS3 (ESP32-S3 / 16MB Flash / 8MB Quad PSRAM)
+>
+> 本プロジェクトはコミュニティによる WLED の CoreS3 向け移植・拡張であり、WLED または M5Stack の公式ファームウェアではありません。
 
 ---
 
@@ -26,7 +28,7 @@ M5Stack CoreS3 上で WLED v17 系をネイティブ動作させ、
 - AXP2101 Power Key を使った Safe Shutdown
 - 電源OFF前に LED BLACK frame を送信
 - Safe Shutdown のキャンセル時は直前の LED 状態を復元
-- ESP32-S3 / NeoPixelBus 向け RMT DMA1024 安定化
+- ESP32-S3 / NeoPixelBus 向け RMT DMA1024 および LCD/GDMA runtime-rebuild 安定化
 - ブラウザから現在の LCD 画面を BMP で取得
 
 ---
@@ -266,7 +268,7 @@ CoreS3 では ESP32-S3 native USB の Upload 後復帰を安定させるため�
 
 ---
 
-## NeoPixelBus / RMT DMA1024 Patch
+## NeoPixelBus / RMT DMA1024 + LCD/GDMA Patch
 
 ESP32-S3 + NeoPixelBus の RMT 出力では、LED Count より後ろのピクセルが不定期に点灯する問題を実機で確認しました。
 
@@ -297,7 +299,22 @@ Build 時の例:
 [CoreS3 RMT DMA1024] patch already present: NeoEsp32RmtXMethod.h
 ```
 
-この再適用性は、NeoPixelBus dependency を削除した状態からの再 Build でも確認済みです。
+同じ pre-script では、runtime の LED Bus 再構築時に使用する LCD/GDMA teardown 修正も適用します。  
+最後の LCD mux bus を破棄する際に GDMA channel を stop / reset / disconnect / delete し、次回の Bus 初期化へ古い LCD peripheral ownership が残らないようにします。
+
+LCD/GDMA patch 適用時の例:
+
+```text
+[CoreS3 LCD GDMA] applied full GDMA teardown production patch: ...
+```
+
+すでに適用済みの場合:
+
+```text
+[CoreS3 LCD GDMA] patch already present: NeoEsp32LcdXMethod.h
+```
+
+2つの patch はどちらも idempotent です。NeoPixelBus dependency を削除したクリーンな状態からの再 Build でも再適用性を確認済みです。
 
 ---
 
@@ -544,10 +561,19 @@ CoreS3 実機で次の項目を確認しています。
 
 This project is based on WLED:
 
-https://github.com/wled/WLED
+https://github.com/wled-dev/WLED
 
 WLED itself remains the upstream project.  
 Please also refer to the upstream repository for WLED documentation, supported LED types, API behavior, and licensing.
+
+---
+
+## Licensing
+
+このリポジトリの WLED ソースは、upstream と同じ **EUPL v1.2** に従います。  
+NeoPixelBus は **LGPL-3.0-or-later** のままです。CoreS3 の build-time patch script は PlatformIO が取得した NeoPixelBus ソースへ修正を適用しますが、upstream library のライセンスヘッダーは保持します。
+
+完全なライセンス条件については、リポジトリの `LICENSE` と各 upstream project を参照してください。
 
 ---
 
@@ -562,7 +588,7 @@ CoreS3 v1.0 までの残作業:
 - [x] Battery / Health UX
 - [x] Recovery AP
 - [x] Safe Shutdown
-- [x] RMT DMA1024 stabilization
+- [x] NeoPixelBus RMT DMA1024 / LCD-GDMA stabilization
 - [x] Browser Screenshot
 - [ ] Final release branch / tag
 - [ ] Release notes
