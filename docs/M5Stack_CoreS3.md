@@ -15,6 +15,6 @@ The complete documentation is maintained with the CoreS3 Display usermod:
 - `usermods/audioreactive/`
 - `pio-scripts/cores3_upload_watchdog_reset.py`
 - `pio-scripts/cores3_v17_neopixelbus_patch.py`
-- `platformio_override.ini`
+- `usermods/CoreS3_Display/platformio_override.ini.example`
 
-The CoreS3-specific implementation is intentionally kept as separate from the WLED core as practical, to make future upstream synchronization easier.
+The CoreS3-specific implementation is kept outside the WLED core as much as practical, with only a minimal integration hook in `wled00/wled.cpp`, to make future upstream synchronization easier.
