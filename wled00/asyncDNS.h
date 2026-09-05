@@ -1,7 +1,7 @@
 #pragma once
 /*
   asyncDNS.h - wrapper class for asynchronous DNS lookups using lwIP
-  by @dedehai, C++ improvements & hardening by @willmmiles
+  by @dedehai, C++ improvements & hardening by @willmmiles 
 */
 
 #include <Arduino.h>
